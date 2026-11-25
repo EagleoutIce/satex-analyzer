@@ -335,7 +335,8 @@ fn missing_italic_correction(report: &mut Report) {
         let (Some(from), Some(to)) = (view.span(a), view.span(b)) else { continue };
         // The `\/` goes into the source right after the letter, so only a
         // letter the next character follows there can take one.
-        if from.file != to.file || closed.binary_search(&(b as u32)).is_ok() {
+        // nor one in another box (a forest or TikZ node, `\\mbox`): nothing it leans over
+        if from.file != to.file || closed.binary_search(&(b as u32)).is_ok() || !view.beside(b) {
             continue;
         }
         let (Some(left), Some(right)) = (view.font(a), view.font(b)) else { continue };

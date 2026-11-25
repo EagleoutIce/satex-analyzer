@@ -274,10 +274,12 @@ fn csname_is_matched_to_the_interface_for_what_it_was_formed_for() {
     // fallback, only etoolbox's: with no fix to offer, satex now reports
     // none of the three at all rather than repeating "this is plain TeX"
     // back with nothing to act on.
+    // The kernel's `\\@namedef`, `\\@ifundefined` and `\\@nameuse` are no
+    // fix for the document either: `@` is not a letter there, so the
+    // written fix would break the line. No role is reported then.
     let without = analyze(&format!("\\documentclass{{article}}\n{body}"));
     let found = fixes(&without);
-    let expected = [Some("use `\\@namedef`"), Some("use `\\@ifundefined`"), Some("use `\\@nameuse`")];
-    assert_eq!(found.iter().map(Option::as_deref).collect::<Vec<_>>(), expected);
+    assert!(found.is_empty(), "{found:?}");
 }
 
 #[test]
@@ -400,7 +402,9 @@ fn preamble_cost_speaks_only_for_a_preamble_that_is_most_of_a_costly_build() {
     let doc = |preamble: &str, body: &str| {
         format!("\\documentclass{{article}}\n{COSTLY}\n{preamble}\n\\begin{{document}}\n{body}\n\\end{{document}}")
     };
-    assert_eq!(findings(&analyze(&doc(&calls, "x")), "preamble-cost").len(), 1);
+    let found = findings(&analyze(&doc(&calls, "x")), "preamble-cost");
+    // no `\usepackage` of its own: the class is named, never "0 packages requested directly"
+    assert!(found.len() == 1 && found[0].0.starts_with("the class article reads"), "{found:?}");
     for quiet in [doc("", "x"), doc(&calls, &format!("{calls}{calls}"))] {
         assert!(findings(&analyze(&quiet), "preamble-cost").is_empty(), "{quiet}");
     }
@@ -763,6 +767,27 @@ fn begin_document_stands_at_its_own_line_after_any_number_of_packages() {
         let begin: Vec<(String, u32, u32)> = places(&analysis, OccKind::BeginEnvironment);
         assert_eq!(begin, [("document".to_string(), 2 + packages.len() as u32, 1)], "{packages:?}: {begin:?}");
     }
+}
+
+/// The window of given-back positions is each file's own. A file read while the main
+/// file's peeked token waits may give back any number of its own: here `\the\toks0`
+/// puts back 70 tokens that stand in `burst.tex`. One window for all pushed the main
+/// file's `\begin` out, the `document` environment began at `\peek`'s line, and with a
+/// class in that place (acmart, hyperxmp does the same) the class was "loaded after
+/// `\begin{document}`".
+#[test]
+fn a_file_read_under_a_peeked_token_keeps_that_token_the_main_file_s() {
+    if !installed() {
+        return;
+    }
+    let burst = ["a"; 70].join(" ");
+    let preamble = format!(
+        "\\documentclass{{article}}\n\\begin{{filecontents}}[overwrite]{{burst.tex}}\n\\toks0{{{burst}}}\\expandafter\\toks\\expandafter0\\expandafter{{\\the\\toks0 b}}\n\\end{{filecontents}}\n\\newcommand\\peek[1][]{{\\input{{burst}}}}\n\\peek\n"
+    );
+    let begin_line = preamble.lines().count() as u32 + 1;
+    let analysis = analyze(&format!("{preamble}\\begin{{document}}\nx\n\\end{{document}}\n"));
+    let begin: Vec<(String, u32, u32)> = places(&analysis, OccKind::BeginEnvironment);
+    assert_eq!(begin.last(), Some(&("document".to_string(), begin_line, 1)), "{begin:?}");
 }
 
 /// BibTeX writes the `.bbl`: its typography is the style's, not the

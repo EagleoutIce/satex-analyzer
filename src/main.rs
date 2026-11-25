@@ -170,6 +170,21 @@ static ALLOCATOR: satex::analysis::budget::Counted = satex::analysis::budget::Co
 const EMPTY_DOCUMENT: &str = "\\documentclass{article}\n\\begin{document}\n\\end{document}\n";
 
 fn main() {
+    // a warm engine's reaper (src/cli/warm.rs): not a command of the user's
+    #[cfg(target_os = "linux")]
+    if let (Some(flag), Some(keep)) = (std::env::args_os().nth(1), std::env::args_os().nth(2))
+        && flag == satex::cli::warm::REAP
+    {
+        return satex::cli::warm::reap(Path::new(&keep));
+    }
+    // a format dumped aside of a build (src/cli/compile.rs): not a command of the user's
+    let args: Vec<std::ffi::OsString> = std::env::args_os().skip(1).take(5).collect();
+    if let [flag, dir, file, job, keep] = &args[..]
+        && flag == satex::cli::compile::DUMP
+    {
+        let text = |s: &std::ffi::OsString| s.to_string_lossy().into_owned();
+        return satex::cli::compile::Dump::aside(Path::new(dir), &text(file), &text(job), Path::new(keep));
+    }
     if let Err(message) = run() {
         eprintln!("satex: {message}");
         std::process::exit(1);
@@ -331,10 +346,26 @@ fn command_json(cmd: &clap::Command) -> serde_json::Value {
     })
 }
 
+/// Every `--set` in the order given: clap keeps only the last level's values of a global
+/// argument, so `satex --set a=1 lint --set b=2` lost `a=1`. `parsed` when the words hold no more.
+fn every_set(args: impl Iterator<Item = String>, parsed: Vec<String>) -> Vec<String> {
+    let mut sets = Vec::new();
+    let mut args = args.take_while(|a| a != "--");
+    while let Some(arg) = args.next() {
+        if arg == "--set" {
+            sets.extend(args.next());
+        } else if let Some(value) = arg.strip_prefix("--set=") {
+            sets.push(value.to_string());
+        }
+    }
+    if sets.len() > parsed.len() { sets } else { parsed }
+}
+
 fn run() -> Result<(), String> {
     #[cfg(not(target_os = "emscripten"))]
     clap_complete::CompleteEnv::with_factory(<Cli as clap::CommandFactory>::command).complete();
     let mut cli = Cli::parse();
+    cli.set = every_set(std::env::args().skip(1), std::mem::take(&mut cli.set));
     if let Some(command) = &cli.command
         && !cli.version
     {
@@ -353,6 +384,22 @@ fn run() -> Result<(), String> {
         let options =
             satex::cli::gui::Options { open: !no_open, dev: *dev, verbose: cli.verbose > 0, flags: config_flags(&cli) };
         return satex::cli::gui::run(&dir, *port, site.as_deref(), options);
+    }
+    // `satex new`: the project written first, then the run below reads its main file
+    if let Some(Command::New { dir, template, from, options, list: false, force, no_check }) = &cli.command {
+        let (cfg, _) = configure(&cli, None)?;
+        let o = satex::cli::new::Options {
+            dir: dir.as_deref(),
+            template: template.as_deref(),
+            from: from.as_deref(),
+            options,
+            force: *force,
+        };
+        let (main, _) = satex::cli::new::write(&o, &cfg.templates)?;
+        if *no_check {
+            return Ok(());
+        }
+        cli.file = Some(main);
     }
     anstream::ColorChoice::from(cli.color).write_global();
     // Progress is for a person reading text, not for a program reading output.
@@ -431,6 +478,20 @@ fn run() -> Result<(), String> {
 }
 
 /// One run of the command on `file`, on what `cli` names, or on the `piped` text.
+/// The document an input file `path` is read through: none for a document, a literate source
+/// (`.dtx`, `.ins`), or a file no project document names.
+fn root_of_input(path: &std::path::Path, text: &str) -> Option<PathBuf> {
+    use satex::plugins::discovery;
+    let literate = path.extension().is_some_and(|e| matches!(e.to_str(), Some("dtx" | "ins" | "fdd" | "sty" | "cls")));
+    if literate || discovery::is_document(text) {
+        return None;
+    }
+    let dir = satex::project::paths::dir_of(path);
+    discovery::declared_root(path, text)
+        .or_else(|| discovery::scan(&dir).naming_roots(path).into_iter().next())
+        .filter(|root| !satex::project::paths::same_file(root, path))
+}
+
 fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<String>) -> Result<(), String> {
     cli.file = file.or(cli.file.take());
     let mut source = match (piped, cli.file.as_deref()) {
@@ -443,6 +504,16 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
         }
         (None, None) => EMPTY_DOCUMENT.to_string(),
     };
+    // An input file (no `\\documentclass`) is read through the document that reads it, as the editor
+    // reads it: its `% !TeX root` line, else the first root a scan finds naming it. Alone, a chapter
+    // reads `\\section` as undefined.
+    if let Some(path) = cli.file.clone().filter(|_| cli.command().needs_source())
+        && let Some(root) = root_of_input(&path, &source)
+    {
+        eprintln!("satex: {} is read through its root {}", path.display(), root.display());
+        source = satex::project::overlay::read_to_string(&root).map_err(|e| format!("{}: {e}", root.display()))?;
+        cli.file = Some(root);
+    }
     if cli.file.is_none() && explaining && cli.command().needs_source() && source.trim().is_empty() {
         note_minimal_document("nothing was piped in");
         source = EMPTY_DOCUMENT.to_string();
@@ -536,12 +607,31 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     if !early.is_empty() && keys.is_none() {
         anstream::eprint!("{}", listing());
     }
-    // a build explained by rules only waits for no analysis: one that reads nothing
-    let sketched = matches!(cli.command, Some(Command::Compile { .. })) && !cfg.compile.explain;
-    let analysis = if sketched {
-        let mut sketch = Analysis::sketch(&source, &cli.file.iter().cloned().collect::<Vec<_>>(), &cfg, Vec::new());
-        sketch.plugins.read_kernel(&cfg, &source);
-        sketch
+    // A build runs on a sketch, the analysis after it: only where a logged message needs a
+    // finding, and no stored explanation of that log has inputs as they are now.
+    let mut compiled = None;
+    let analysis = if let Some(Command::Compile { system, view }) = &cli.command {
+        let sketch = Analysis::sketch(&source, &cli.file.iter().cloned().collect::<Vec<_>>(), &cfg, Vec::new());
+        let context = Context { analysis: &sketch, source: &source, format: cli.format, links };
+        // a satex started aside explains the build its starter ran
+        let build = match satex::cli::compile::Built::resumed(&context) {
+            Some(None) => return Ok(()),
+            Some(Some(build)) => build,
+            None => satex::cli::compile::build_only(&context, system.as_deref(), *view)?,
+        };
+        let needed = cfg.compile.explain && build.needs_analysis();
+        // the PDF is there: the analysis is waited for only where asked, else it runs aside
+        let analyzed = needed && (cfg.compile.wait || build.is_aside());
+        if needed && !analyzed && build.aside() {
+            let note = "satex: the analysis explains the messages aside, `satex compile` shows it when done \
+                        (compile.wait: true waits for it)";
+            anstream::eprintln!("{}", render::status(note));
+        }
+        compiled = Some((build, analyzed));
+        match analyzed {
+            true => Machine::analyze(&source, cli.file.as_deref(), &cfg),
+            false => sketch,
+        }
     } else if cli.command().needs_analysis() {
         Machine::analyze(&source, cli.file.as_deref(), &cfg)
     } else {
@@ -600,7 +690,11 @@ fn run_on(cli: &mut Cli, file: Option<PathBuf>, explaining: bool, piped: Option<
     let links = cli.link_policy(satex::util::progress::terminal(io::stdout()));
     let context = Context { analysis: &analysis, source: &source, format: cli.format, links };
     let mut out = anstream::stdout().lock();
-    let mut output = cli.command().run(&context, &mut out)?;
+    let mut output = match compiled {
+        Some((built, analyzed)) => satex::cli::compile::explained(built, &analysis, analyzed),
+        None if matches!(cli.command, Some(Command::Updates)) => satex::cli::updates::run(&analysis, &cfg)?,
+        None => cli.command().run(&context, &mut out)?,
+    };
     if matches!(cli.command, Some(Command::Summary { .. })) && cli.format.is_text() {
         let project = satex::project::build_files::Project::discover(&base_dir(cli.file.as_deref()));
         let _ = write!(out, "{}", environment_text(&cfg, &project));
@@ -1121,6 +1215,7 @@ fn read_stdin() -> Result<String, String> {
 }
 
 /// The config and limit flags as given, for the runs `satex gui` starts.
+#[cfg(not(target_os = "emscripten"))]
 fn config_flags(cli: &Cli) -> Vec<String> {
     let mut flags = Vec::new();
     let mut add = |flag: &str, value: Option<String>| flags.extend([flag.to_string()].into_iter().chain(value));
@@ -1176,6 +1271,14 @@ mod tests {
         assert_eq!(super::config_flags(&cli), ["--no-packages", "--set", "a.b=1", "--max-steps", "9"]);
         let plain = super::Cli::parse_from(["satex", "gui"]);
         assert!(super::config_flags(&plain).is_empty());
+    }
+
+    /// A `--set` before the subcommand stays when another follows it. Bug pinned:
+    /// clap kept only the subcommand's, so `--set limits.steps=500 lint --set x=y` ran unbounded.
+    #[test]
+    fn every_set_keeps_both_levels() {
+        let words = ["--set", "a=1", "lint", "--set=b=2", "--", "--set", "c"].map(String::from);
+        assert_eq!(super::every_set(words.into_iter(), vec!["b=2".into()]), ["a=1", "b=2"]);
     }
 
     /// `--help` is short sentences: no `;` or `—` joins two clauses.

@@ -306,7 +306,7 @@ mod tests {
         fn metrics(&mut self, _: u32) -> Option<(std::rc::Rc<crate::engine::tfm::Metrics>, Scaled)> {
             None
         }
-        fn patterns(&mut self) -> Option<(std::rc::Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)> {
+        fn patterns(&mut self) -> Option<crate::engine::hyph::HyphTables> {
             None
         }
         fn mins(&mut self) -> (usize, usize) {

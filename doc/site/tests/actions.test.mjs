@@ -126,8 +126,13 @@ test('libraries, colors, mixes, cuts', () => {
   const doc = '\\documentclass{article}\n\\usepackage{tikz}\n\\usetikzlibrary{arrows.meta}\n\\begin{document}\n\\usetikzlibrary{x}\n\\end{document}\n';
   assert.deepEqual(PA.libEdit(doc, doc, [], 'arrows.meta'), { have: true });
   assert.deepEqual(PA.libEdit(doc, doc, ['shapes.geometric'], 'shapes.geometric'), { have: true }, 'the run loaded it');
-  const at = doc.indexOf('\\begin{document}');
-  assert.deepEqual(PA.libEdit(doc, doc, [], 'shapes.symbols'), { edit: { from: at, to: at, now: '\\usetikzlibrary{shapes.symbols}\n' } });
+  // joined to the file's list (its `}`), comma-separated in the list's style; a file with none gets a line
+  const at = doc.indexOf('arrows.meta}') + 'arrows.meta'.length;
+  assert.deepEqual(PA.libEdit(doc, doc, [], 'shapes.symbols'), { edit: { from: at, to: at, now: ',shapes.symbols' } });
+  const spaced = doc.replace('{arrows.meta}', '{arrows.meta, calc}'), at2 = spaced.indexOf('calc}') + 4;
+  assert.deepEqual(PA.libEdit(spaced, spaced, [], 'matrix'), { edit: { from: at2, to: at2, now: ', matrix' } });
+  const bare = '\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\end{document}\n', at3 = bare.indexOf('\\begin');
+  assert.deepEqual(PA.libEdit(bare, bare, [], 'shapes.symbols'), { edit: { from: at3, to: at3, now: '\\usetikzlibrary{shapes.symbols}\n' } });
   const commented = '\\usepackage{tikz}\n% \\usetikzlibrary{shapes.arrows}\n';
   assert.ok('edit' in PA.libEdit(commented, commented, [], 'shapes.arrows'), 'a comment loads nothing');
   assert.deepEqual(PA.libEdit('\\section{A}\n', doc + '\\section{A}', [], 'shapes.symbols'), { line: '\\usetikzlibrary{shapes.symbols}' }, 'chapter.tex: the line to add');
@@ -371,7 +376,7 @@ test('writes prefer a matching document style', withStore(() => {
 // in both group styles), keeps every other key, ticks the value in force, and the document still parses as a tree. Pins
 // a growth switch that left the old anchors (edges from the south of a tree growing right).
 test('forest: feature model look via its styles', withStore(() => {
-  const SITE = new URL('../', import.meta.url), text = readFileSync(new URL('examples/feature-model.tex', SITE), 'utf8'), F = self.satexViews.forest;
+  const SITE = new URL('../', import.meta.url), text = readFileSync(new URL('tests/fixtures/feature-model.tex', SITE), 'utf8'), F = self.satexViews.forest;
   const from = text.indexOf('\\begin{forest}') + 14, to = text.indexOf('\\end{forest}'), t = F.parse(text.slice(from, to));
   const rows = (tx) => PA.groups({ kind: 'forest-node', f: { from, to, body: tx.slice(from, to), t, n: t.root } }, ctxOf(tx)).find((g) => g.title === 'Feature model look').items;
   const run = (tx, ...path) => { const c = ctxOf(tx); const its = PA.groups({ kind: 'forest-node', f: { from, to, body: tx.slice(from, to), t, n: t.root } }, c).find((g) => g.title === 'Feature model look').items;
@@ -398,9 +403,16 @@ test('forest and table rows', withStore(() => {
   const F = self.satexViews.forest, body = '\n[Car [Engine, circle] [Body]]\n', t = F.parse(body), n = t.root.children[0];
   const text = `\\begin{forest}${body}\\end{forest}`, f = { from: 14, to: 14 + body.length, body, t, n };
   const c = ctxOf(text), gs = PA.groups({ kind: 'forest-node', f }, c);
-  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label + (i.on ? '*' : ''))), ['Rectangle', 'Rounded rectangle', 'Circle*', 'Frame', 'Add child', 'Add sibling', 'Delete', 'Edit text…', 'Transform to feature model']);
+  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label + (i.on ? '*' : ''))), ['Rectangle', 'Rounded rectangle', 'Circle*', 'Frame', 'Add child', 'Add sibling', 'Delete', 'Edit text…',
+    'Leaves Car at', 'Arrives at Engine at', 'Add label…', 'Style level 1…', 'Transform to feature model']);
   gs[2].items[0].run();
   assert.match(edit(text, c.writes[0]), /\[Engine, circle\s*\[new\]\]/);
+  // the edge's anchors from the run's list, on the parent and the child
+  const e = ctxOf(text);
+  e.facts = { anchors: ['north', 'east'] };
+  const t2 = F.parse(body), edge = PA.groups({ kind: 'forest-node', f: { ...f, t: t2, n: t2.root.children[0] } }, e).find((g) => g.title === 'Edge from parent').items;
+  edge[0].items.find((i) => i.label === 'east').run();
+  assert.match(edit(text, e.writes[0]), /\[Car, parent anchor=east/);
   const col = PA.groups({ kind: 'table-column', t: 0, k: 1, col: { spec: [1, 2], align: 'r' } }, c);
   assert.deepEqual(col[0].items.map((i) => i.label[0] + (i.on ? '*' : '')), ['l', 'c', 'r*']);
   col[0].items[1].run();
@@ -463,7 +475,7 @@ test('plugins switched per viewer and with their type plugin', withStore(() => {
   assert.equal(PA.groups(t, ctxOf(text)).length, 0);
   PA.setOn('tikz-node', true);
   assert.ok(PA.groups(t, ctxOf(text)).length);
-  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract', 'insert']);
+  assert.deepEqual(PA.plugins.map((p) => p.name), ['tikz-node', 'tikz-label', 'tikz-edge', 'tikz-bend', 'tikz-grid', 'forest-node', 'table-column', 'slice', 'refactor-float', 'refactor-math', 'refactor-extract', 'format', 'insert']);
 }));
 
 // Intuition: a dragged node is written beside its reference as positioning does: a side when the centres line up, a
@@ -716,4 +728,9 @@ test('table column spacing', withStore(() => {
   const arr = '\\[\\begin{array}{ll} a & b \\end{array}\\]';
   assert.equal(menu(arr, 'array').g.items[0].label, 'default (2.5pt)');
   assert.match(menu(arr, 'array').set('4pt'), /\{\\setlength\{\\arraycolsep\}\{4pt\}%\n\\begin\{array\}/);
+  // a table without its \end (typed half-way): no place for the group's `}`, so no spacing is offered rather than a
+  // \setlength at document level that every later table takes
+  const open = '\\begin{document}\nx\n\\begin{tabular}{ll}\na & b \\\\\nz\n\\end{document}\n';
+  assert.equal(menu(open).g, undefined, 'no \\end: no spacing menu');
+  assert.equal(self.satexPdfEdit.padding(open, open.indexOf('\\begin{tabular}'), 'tabular'), null, 'no \\end: no local padding');
 }));

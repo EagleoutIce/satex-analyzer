@@ -123,10 +123,34 @@ test('prose: plain words, the empty first and last piece', () => {
 // \textbf{Quokka} measured upright, the caret 4 px short of where the build set it.
 test('prose: the context of a command argument or a group declaration', () => {
   assert.equal(prose(' \\textbf{Quokka} x'), ' _Quokka:textbf _x');
-  assert.equal(prose('{\\bfseries Big} small'), ' _Big:bfseries _small');
+  // (no gap before Big: TeX skips the space after `\\bfseries`)
+  assert.equal(prose('{\\bfseries Big} small'), 'Big:bfseries _small');
   assert.equal(prose('Q\\textbf{uo}kka'), 'Q uo:textbf kka');
   assert.equal(prose('{a \\bfseries b} c'), 'a _b:bfseries _c');
   assert.equal(prose('a \\foo b'), 'a _b:foo');
+});
+// Intuition: an environment's arguments are read by its `\begin`, never set. Pins the thesis's table (user 2026-11-25):
+// the echo of `runs.` ran on into the float and showed `runs. [ht] l>p3.9cmr`.
+test('prose: an environment\'s arguments set nothing', () => {
+  assert.equal(prose('runs.\n\\begin{table}[ht]\n\\centering\n\\begin{tabular}{l>{\\raggedleft\\arraybackslash}p{3.9cm}r}\nDoc'), 'runs. _Doc:centering');
+  assert.equal(prose('\\begin{center} x \\end{center}'), ' _x _');
+});
+// Intuition: TeX skips the spaces after a control word (one line end too, never a blank line), and a symbol command
+// sets its glyph. Pins title-markup: ` a\S $x_1` echoed as `a x` (a space, no §), the caret 6 px short of the build's.
+test('prose: a control word eats its spaces, a symbol sets its glyph', () => {
+  const sym = (n) => ({ S: '§' })[n];
+  const p = (raw) => E.prose(raw, undefined, [], sym).map((q) => `${q.par ? '¶' : ''}${q.gap ? '_' : ''}${q.t}`).join(' ');
+  assert.equal(p(' a\\S x'), ' _a§x');
+  assert.equal(p('a\\foo\n b'), 'a b');
+  assert.equal(p('a\\foo\n\nb'), 'a ¶_b');
+});
+// Intuition: a command the run sets as a box of its own (`\TeX`: T, a kern, a lowered E, X) is one piece holding that
+// box, its spaces eaten, the words around it apart. Pins the echo dropping text macros until the build.
+test('prose: a command set as a box is a piece of its own', () => {
+  const box = { w: 1.6 }, sym = (n) => (n === 'TeX' ? { t: 'TEX', box } : undefined);
+  const q = E.prose('a \\TeX{} b', undefined, [], sym);
+  assert.deepEqual(q.map((x) => `${x.gap ? '_' : ''}${x.t}${x.box ? '#' : ''}`), ['a', '_TEX#', '_b']);
+  assert.equal(q[1].box, box);
 });
 // Intuition: an environment's name is a csname the kernel reads, never text on the row (`center Quokka center`).
 test('prose: \\begin and \\end set no word', () => {
@@ -158,4 +182,24 @@ test('prose and reflow: a forced line break', () => {
   assert.equal(brk('a\\\\\\\\ b'), 'a ↵ ↵_b', 'two breaks: an empty row between');
   assert.ok(!E.prose('a \\, b').some((q) => q.brk), 'a thin space is no break');
   assert.deepEqual(shape(E.reflow([p(10, 0), p(10, 3, { brk: true })], 0, { ...LINE, parskip: 4 })), ['-2@0:0', '-1@0:0 dy12']);
+});
+// Intuition: a paragraph typed after Enter is broken by TeX's total fit too (not greedily): a formula in it breaks
+// after its relation at the lower penalty, its operators' spaces shrunk, as pdfTeX did in the probe
+// (target/scratch/preview/probe/math3: greedy broke after `h+`, pdfTeX after `=`). Pins preview wish 3.
+spec('a typed last paragraph takes the total fit', () => {
+  // the new paragraph: a word of 44, `a+` `b+` `c=` (10, 10, 16 wide, operator spaces 2 that shrink to 0), `d` after
+  // the relation's space (3, no shrink), a word of 20; 85 bp after the indent: up to `=` is 87, 2 to shrink
+  const pieces = [p(30, 0), p(44, 3, { par: true }), { gap: 3, n: 10, pen: 700 }, { gap: 2, n: 10, pen: 700, mg: true, st: 1, sh: 2 }, { gap: 2, n: 16, pen: 500, mg: true, st: 1, sh: 2 }, { gap: 3, n: 10, mg: true, st: 3, sh: 0 }, p(20)];
+  const f = E.reflow(pieces, 30, { ...LINE, rows: [], fit: true });
+  assert.equal(f.rows.length, 3, 'the old row, then the paragraph in two rows');
+  assert.equal(f.rows[1].out.at(-1).pen, 500, 'its first row ends after the relation');
+  const end = (r) => r.out.at(-1).x + r.out.at(-1).n;
+  assert.ok(Math.abs(end(f.rows[1]) - 100) < 1e-9, 'justified to the edge');
+});
+// Intuition: text typed inside a command's argument keeps that command's font, text after its `}` the paragraph's:
+// prose starts in the groups the caret stands in (`outer`). Pins "Next words" echoed bold after Enter at `\textbf{world|}`.
+test('prose: the groups the typed text starts in', () => {
+  const ctx = (raw, outer) => E.prose(raw, undefined, outer).map((q) => `${q.t}:${q.ctx}`).join(' ');
+  assert.equal(ctx('ld}\n\nNext', ['textbf']), 'ld:textbf Next:');
+  assert.equal(ctx('more', ['emph']), 'more:emph');
 });

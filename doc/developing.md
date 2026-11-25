@@ -88,6 +88,14 @@ Use `tests/it/latex.rs` for documents loading packages, `tests/it/semantics.rs` 
 Keep examples anonymous: generic text, the `article` class, no names or paths from the original document.
 `broken_gaps` and `document_gaps` in `tests/it/latex.rs` collect gaps a test can assert are absent.
 
+### Older TeX Live
+
+CI runs the suite on the current TeX Live and on TeX Live 2022 and 2019.
+`tests/texlive.yaml` lists the local installations by year, and `TEXLIVE=<year>` runs against one: `TEXLIVE=2019 scripts/t.sh xref::` puts its binaries first on `PATH`.
+`TEXLIVE` also takes an installation directory. `scripts/test-tier.sh` and `scripts/ci-test.sh` accept it too.
+The same file lists tests that do not run on a TeX Live older than a given year, each with the feature that installation lacks.
+A test that satex gets wrong on an old TeX Live is a bug. It stays red and is not listed there.
+
 ### One command for CI
 
 `scripts/regress.sh` runs what CI runs: the 8 shards, `lib`, the quick modules and compliance, each through the known-red gate of `scripts/ci-test.sh`. It uses `target/scratch/lock2.sh` when that exists.
@@ -204,6 +212,9 @@ Write the documentation in American English, in short sentences.
 - Further packages are a gzip file each: those `doc/site/packages.txt` names, then `cache.index.common` of satex.yaml.
   The build runs satex on a document loading each one, once per kernel, and keeps the files that kernel's download lacks.
   The playground fetches a package when a finding or a run says it is not in this installation, then starts over.
+- Compile in the browser runs BusyTeX's pdfTeX on the core of TeX Live's basic tree. `play/texfiles` holds the pdfTeX files of the offered packages and every file an example's build reads: the build runs each example twice with the installation's pdfLaTeX and reads kpathsea's trace (`compile_reads`).
+  It also holds the virtual font of every metric there, and the font map gains the installation's lines the release lacks.
+  The page asks the site first, then TeXlyre's package server. What the trace looked up and TeX Live lacks (`tex.absent`, a metric's missing `.vf` too) is asked of nobody.
 - The page also carries data from satex itself: `satex query --list`, the rules with their explanations (`satex lint --rules`, `satex lint --explain`),
   and `satex completions json` (the command tree, the config keys and the rule codes) for the argument line's completion.
 

@@ -205,7 +205,9 @@ verbatim and in the typewriter family (`\\ttdefault`, as `\\texttt` and
 list of single words or nothing, as in `plot(x, y)` or `c(1, 2, 3)`.  What an
 undefined command or environment leaves behind is unknown code as well, so
 every prose rule skips it: the command's arguments and the rest of its
-statement or line, an environment's body up to its `\\end`.
+statement or line, an environment's body up to its `\\end`.  So is text that
+only a path the analysis could not decide sets: it may be code whose reading
+the analysis lost, as TikZ path text in a macro body.
 
 Fix by moving the space to the other side of the parenthesis.",
         references: &[Ref { source: Source::Chktex, at: "36" }, Ref { source: Source::Chktex, at: "37" }],
@@ -545,6 +547,11 @@ fn sentence_capital(report: &mut Report) {
         // `$x$` or `\texttt{x}` after `?` is no word, so no sentence start.
         let Some(next) = view.text_char(i + 2).filter(|c| c.is_lowercase()) else { continue };
         if !view.is_word_prose(i) || !plain_space(report, i + 1) || !view.beside(i + 1) || !view.beside(i + 2) {
+            continue;
+        }
+        // A mark with no word before it ends no sentence: `\enquote{! object not found}` opens with it.
+        let closes = |c: char| c.is_alphanumeric() || matches!(c, ')' | ']' | '\'' | '"' | '’' | '”' | '»' | '›');
+        if !view.char_at(i.wrapping_sub(1)).is_some_and(closes) {
             continue;
         }
         if mark == "." && (view.char_at(i.wrapping_sub(1)) == Some('.') || !ends_sentence(report, i)) {

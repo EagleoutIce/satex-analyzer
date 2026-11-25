@@ -11,9 +11,9 @@ use satex::engine::builtins::OccKind;
 /// Steps a fixture may take.
 const STEP_BUDGET: u64 = 20_000_000;
 /// Target 20M; measured 43.2M on 2026-11-04 (rerun-checked), see plan.
-/// Target three of the fixture's line budgets (1M); measured 4.12M on 2026-11-16, reaching
-/// the end with no library error; 1.25 times that.
-const CUT_LIBRARY_STEPS: u64 = 5_150_000;
+/// Three of the fixture's line budgets (1M); measured 1.89M on 2026-11-24 on TL2025 and TL2026,
+/// reaching the end with no library error (4.01M on TL2026 while a cut kept l3fp's lists).
+const CUT_LIBRARY_STEPS: u64 = 3_000_000;
 const NOTEBOOK_A4_STEPS: u64 = 53_952_069;
 /// Target 20M; measured 44.2M on 2026-11-04 (rerun-checked), see plan.
 const FLOAT_AFTER_TITLE_STEPS: u64 = 55_299_093;
@@ -51,16 +51,32 @@ fn check_allowing(id: &str, main: &str, also: &[&str], allowed: &[&str]) -> Opti
 
 /// `check_allowing`, with a step budget of the fixture's own.
 fn check_within(id: &str, main: &str, also: &[&str], allowed: &[&str], budget: u64) -> Option<Analysis> {
+    check_with(id, main, also, allowed, budget, |_| {})
+}
+
+/// `check_within`, the discovered configuration changed by `edit` first.
+fn check_with(
+    id: &str,
+    main: &str,
+    also: &[&str],
+    allowed: &[&str],
+    budget: u64,
+    edit: impl Fn(&mut satex::project::config::Config),
+) -> Option<Analysis> {
     if !installed() {
         return None;
     }
     let root = dir(id);
     let path = root.join(main);
     let source = std::fs::read_to_string(&path).expect("fixture source");
+    if !crate::support::ships_what_it_loads(&root, &source) {
+        return None;
+    }
     let mut cfg = crate::support::discover(&root);
     cfg.cache.dir = Some(crate::support::scratch_dir(
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch").join(format!("documents-{id}")),
     ));
+    edit(&mut cfg);
     crate::support::seed_kernel(&cfg);
     // A cut fails the fixture: an open one must not hold up the suite.
     cfg.limits.seconds = satex::project::config::Limits::default().seconds;
@@ -275,6 +291,121 @@ fn forest_names_and_relative_nodes() {
     check_within("forest_names", "mwe.tex", &[], &[], FOREST_NAMES_STEPS);
 }
 
+/// memoize writes a picture's source to its `.memo` file and ships the
+/// extern with `\pdf@primitive\shipout` (memoize.sty `\mmz@shipout@extern`).
+/// Pinned: the frozen `\pdfprimitive` froze `\shipout` again without end
+/// until limits.memory stopped the run; and the `.memo` line, which starts
+/// with `\begin` itself, made `tikzpicture` look like a citation.
+#[test]
+fn memoize_ships_an_extern_and_cites_nothing() {
+    let Some(analysis) = check("memoize_extern", "main.tex", &[]) else { return };
+    let cites: Vec<_> = analysis.facts.occurrences.iter().filter(|o| o.kind == OccKind::Cite).map(|o| &o.key).collect();
+    assert!(cites.is_empty(), "cited: {cites:?}");
+}
+
+/// The md5 sums naming the memos of the `memoize_pictures` fixture's two pictures, in order.
+const MEMO_PICTURES: [&str; 2] = ["12A6F4D53C2B126731CA304386EB3517", "A1C333FB3D8D176A2B438AD2380CD847"];
+
+/// The width the context memo of the picture named `md5` records for its extern.
+fn memo_width(md5: &str) -> String {
+    let memos = std::fs::read_dir(dir("memoize_pictures").join("main.memo.dir")).expect("the memo directory");
+    let memo = memos.flatten().map(|e| e.path()).find(|p| {
+        let name = p.file_name().unwrap_or_default().to_string_lossy().into_owned();
+        name.starts_with(&format!("{md5}-")) && name.ends_with(".memo")
+    });
+    let text = std::fs::read_to_string(memo.expect("a context memo")).expect("its text");
+    text.split("\\hbox {").nth(1).and_then(|rest| rest.split('}').next()).expect("the extern's width").to_string()
+}
+
+/// The `memoize_pictures` fixture in a scratch copy named `name`, its source with `edits` applied
+/// and the memo files whose names hold one of `drop` deleted, analyzed. Gives the analysis, each
+/// picture's width (`\FirstWidth`, `\SecondWidth`) and the code memos the run wrote, which memoize
+/// writes only for a picture it compiled (memoize.sty `\mmz@write@cmemo`).
+fn memoize_pictures(name: &str, edits: &[(&str, &str)], drop: &[&str]) -> Option<(Analysis, [String; 2], Vec<String>)> {
+    if !installed() {
+        return None;
+    }
+    let root = crate::support::tmp_root().join(name);
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("main.memo.dir")).unwrap();
+    for entry in std::fs::read_dir(dir("memoize_pictures").join("main.memo.dir")).unwrap().flatten() {
+        if !drop.iter().any(|d| entry.file_name().to_string_lossy().contains(d)) {
+            std::fs::copy(entry.path(), root.join("main.memo.dir").join(entry.file_name())).unwrap();
+        }
+    }
+    let mut source = std::fs::read_to_string(dir("memoize_pictures").join("main.tex")).unwrap();
+    if !crate::support::ships_what_it_loads(&root, &source) {
+        return None;
+    }
+    for (from, to) in edits {
+        assert!(source.contains(from), "the fixture holds `{from}`");
+        source = source.replace(from, to);
+    }
+    let path = root.join("main.tex");
+    std::fs::write(&path, &source).unwrap();
+    let mut cfg = crate::support::config();
+    // one cache for all cases: the packages are the same, the document cache keys on the source
+    cfg.cache.dir = Some(crate::support::scratch_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/documents-memoize_pictures"),
+    ));
+    crate::support::seed_kernel(&cfg);
+    let analysis = Machine::analyze(&source, Some(&path), &cfg);
+    assert!(defined(&analysis, "SatexReachedEnd"), "the end was not reached");
+    let widths = ["FirstWidth", "SecondWidth"].map(|w| crate::support::body(&analysis, w));
+    let mut written: Vec<String> = (analysis.written.iter().map(|(n, _)| n.rsplit('/').next().unwrap_or(n)))
+        .filter(|n| n.ends_with(".memo") && !n.contains('-'))
+        .map(str::to_string)
+        .collect();
+    written.sort();
+    written.dedup();
+    let _ = std::fs::remove_dir_all(&root);
+    Some((analysis, widths, written))
+}
+
+/// memoize names a picture's memo by the md5 sum of its code (memoize.sty `\Memoize`,
+/// `\mmz@cmemo@path`). With the memos and externs the last pdflatex build left, the next build
+/// reads each memo and includes the extern at the size the memo records, and so does satex: no
+/// picture's code runs, each box has its recorded width. Pins: an unchanged picture costs its memo.
+#[test]
+fn a_memoized_picture_is_read_from_its_memo() {
+    let Some((_, widths, written)) = memoize_pictures("memoize-present", &[], &[]) else { return };
+    assert_eq!(widths, MEMO_PICTURES.map(memo_width));
+    assert!(written.is_empty(), "compiled although memoized: {written:?}");
+}
+
+/// A stale memo: the first picture edited, the md5 sum of its code names no memo, so memoize
+/// compiles it, and so does satex. The memo of the old code is never read (its width is not the
+/// box's). Pins the md5 check: a memo is trusted only for the code satex itself sees.
+#[test]
+fn an_edited_picture_is_compiled_not_read_from_the_old_memo() {
+    let edit = [("rectangle (2,1)", "rectangle (3,1)")];
+    let Some((_, widths, written)) = memoize_pictures("memoize-stale", &edit, &[]) else { return };
+    assert_ne!(widths[0], memo_width(MEMO_PICTURES[0]), "the old memo's width was used");
+    assert_eq!(written.len(), 1, "one picture compiled: {written:?}");
+    assert!(!written[0].starts_with(MEMO_PICTURES[0]), "the old memo was written again");
+}
+
+/// Memos missing (the externs deleted with them): memoize compiles both pictures and writes
+/// their memos, which are named by the same md5 sums the last build used. Pins the no-memo path:
+/// it reaches the end and memoizes each picture under its code's md5 sum.
+#[test]
+fn pictures_without_memos_are_compiled_and_memoized() {
+    let Some((_, _, written)) = memoize_pictures("memoize-missing", &[], &MEMO_PICTURES) else { return };
+    let expected: Vec<String> = MEMO_PICTURES.iter().map(|m| format!("{m}.memo")).collect();
+    assert_eq!(written, expected);
+}
+
+/// An edit to one picture leaves the other memoized: only the second picture's code changes, so
+/// only it is compiled, the first keeps its recorded width. Pins that the memo key is per picture.
+#[test]
+fn an_edit_to_one_picture_leaves_the_others_memoized() {
+    let edit = [("circle (1)", "circle (2)")];
+    let Some((_, widths, written)) = memoize_pictures("memoize-one-edit", &edit, &[]) else { return };
+    assert_eq!(widths[0], memo_width(MEMO_PICTURES[0]));
+    assert_eq!(written.len(), 1, "only the edited picture compiled: {written:?}");
+    assert!(!MEMO_PICTURES.iter().any(|m| written[0].starts_with(m)), "an old memo was written: {written:?}");
+}
+
 /// Math nodes (`\frac`, a subscript): the tree typesets its contents and nothing else, as
 /// pdftotext reads `x2 1 2 yi`. Unknown packing typesets stray `pt` text (open root R1).
 #[test]
@@ -307,6 +438,21 @@ fn tcolorbox_with_a_footnote_in_a_list_item_ends() {
 fn tcolorbox_of_unknown_height_keeps_its_anchors_local() {
     let Some(analysis) = check("tcolorbox_unknown_height_anchors", "mwe.tex", &[]) else { return };
     assert!(undefined(&analysis, "southwest"), "\\southwest leaked out of the box's groups");
+}
+
+/// Unknown text in a pgfkeys key name: pgfkeys splits the key at its `/`s
+/// and strips the path's last `/` with `#1/\relax`, so for no text without
+/// control sequences does a key name hold `\relax`. Bug pinned: the split
+/// loop runs out of paths, the strip reads on past `\relax\fi` to cover
+/// both ends (`unforked-argument-end`), and `\ifcsname pgfk@…` meets that
+/// `\relax`: missing-endcsname at pgfkeys.code.tex:214, the gap of the
+/// unknown-height tcolorbox reds (their key is `skin@` and a widened state).
+/// RED (owner: Root X, pgfkeys key of unknown text).
+#[test]
+fn a_pgfkeys_key_of_unknown_text_keeps_its_name_whole() {
+    // The fixture's stub is its source of unknown text: the suite clears stubs.
+    let stubs = satex::project::config::Config::discover(&dir("pgfkeys_key_of_unknown_text")).stubs;
+    check_with("pgfkeys_key_of_unknown_text", "main.tex", &[], &[], STEP_BUDGET, |cfg| cfg.stubs = stubs.clone());
 }
 
 /// Mutations of the box above: known height, a nested box, and anchors
@@ -637,15 +783,49 @@ fn cut_inside_library_call_drops_the_call() {
     assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
     assert_eq!(count(&a, "caused-library-error"), 0, "{:#?}", codes(&a));
     let steps = a.steps - a.load_steps;
+    crate::support::record_steps("cut-library", steps);
     assert!(steps < CUT_LIBRARY_STEPS, "{steps} analysis steps, budget {CUT_LIBRARY_STEPS}");
+}
+
+/// A `\clist_map_inline:nn` over 400 of the document's items runs past the
+/// line budget. Wherever the cut lands, l3clist's list below it holds the
+/// items not mapped yet beside its own tokens. The cut drops the whole map,
+/// so its line costs one budget. The bug: a library list holding document
+/// tokens was kept as if it called the document's text, so the map read on
+/// with its outer calls gone, over the rest of the items, until the budget
+/// cut it a second time (on TL2026 the l3fp parser of
+/// [`cut_inside_library_call_drops_the_call`] went the same way: 4.0M steps
+/// and 36 paths, where TL2025 cut elsewhere and took 1.9M).
+#[test]
+fn cut_inside_a_map_over_document_items_drops_the_map() {
+    if !installed() {
+        return;
+    }
+    let root = dir("cut_inside_library_map");
+    let path = root.join("main.tex");
+    let source = std::fs::read_to_string(&path).expect("fixture source");
+    let cfg = crate::support::discover(&root);
+    let a = Machine::analyze(&source, Some(&path), &cfg);
+    assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
+    // The document without the map: what the other lines cost.
+    let rest: String = source.lines().filter(|l| !l.contains("clist_map")).map(|l| format!("{l}\n")).collect();
+    let b = Machine::analyze(&rest, Some(&path), &cfg);
+    let line = (a.steps - a.load_steps).saturating_sub(b.steps - b.load_steps);
+    // One budget, and what the cut leaves to read: less than half another.
+    let budget = cfg.limits.line_steps;
+    assert!(
+        line < budget + budget / 2,
+        "the map's line took {line} steps, its budget {budget}: it read on after the cut"
+    );
 }
 
 /// [`cut_inside_library_call_drops_the_call`], then `\fp_use:N` of the fp
 /// variable the cut widened. Its hull is text of a class, with none of
 /// l3fp's delimiters, so `\__fp_to_decimal:w` runs away to the end of the
 /// file on every arm, each refuted as an arm over unknown text: no path
-/// is left, `\end{document}` was eaten, and `missing-end` is false. Open
-/// root: a widened structured value (fp, seq) read by its own parser.
+/// is left, `\end{document}` was eaten, and `missing-end` is false. The
+/// widened fp keeps its kind's shape (`variable-kind-shape`): the ends
+/// l3fp's constants share around typed text.
 #[test]
 fn cut_widened_fp_read_back_reaches_the_end() {
     if !installed() {
@@ -657,6 +837,10 @@ fn cut_widened_fp_read_back_reaches_the_end() {
     let a = Machine::analyze(&source, Some(&path), &crate::support::discover(&root));
     assert!(defined(&a, "SatexReachedEnd"), "{}", crate::support::presence(&a, "SatexReachedEnd"));
     assert_eq!(count(&a, "missing-end"), 0, "{:#?}", codes(&a));
+    let meaning = a.interner.lookup("l_tmpa_fp").map(|sym| a.env.meaning(sym));
+    let text = meaning.as_ref().and_then(|m| m.as_macro()).map(|m| m.replacement_text.clone()).unwrap_or_default();
+    let fp = satex::engine::tex::detokenize(&text, &a.interner);
+    assert!(fp.starts_with("\\s__fp \\__fp_chk:w "), "the fp lost its shape: {fp}");
 }
 
 /// The diagnostic codes of `a` with their counts, for failure messages.
@@ -1044,7 +1228,15 @@ fn reparsing_a_pgfmath_result_of_unknown_width_raises_nothing() {
 /// A float after the thesis title page: the output routine stays bounded.
 #[test]
 fn a_float_after_the_title_page_stays_bounded() {
-    check_within("thesis_notebook_a4", "float_after_title.tex", &[], &[], FLOAT_AFTER_TITLE_STEPS);
+    if koma_takes_unexpandable_options() {
+        check_within("thesis_notebook_a4", "float_after_title.tex", &[], &[], FLOAT_AFTER_TITLE_STEPS);
+    }
+}
+
+/// Whether KOMA-Script takes a class option holding `\ ` (the thesis's `field=Computer\ Science`):
+/// TeX Live 2022's scrbase puts it in a `\csname`, so pdflatex itself errs on the fixture.
+fn koma_takes_unexpandable_options() -> bool {
+    crate::support::engine_accepts(r"\documentclass[x=a\ b]{article}\usepackage{scrhack}\begin{document}\end{document}")
 }
 
 /// Past `limits.output_forks` an undecided choice in the output routine takes
@@ -1093,7 +1285,9 @@ fn a_nesting_cut_keeps_what_the_text_read_before_it_assigned() {
 
 #[test]
 fn thesis_class_with_notebook_figure_a4() {
-    check_within("thesis_notebook_a4", "main.tex", &[], &[], NOTEBOOK_A4_STEPS);
+    if koma_takes_unexpandable_options() {
+        check_within("thesis_notebook_a4", "main.tex", &[], &[], NOTEBOOK_A4_STEPS);
+    }
 }
 
 /// A notecolumn thesis reads its `.slnc` file back line by line: the loop
@@ -1125,7 +1319,10 @@ fn a_map_at_an_unknown_depth_keeps_its_items() {
 #[test]
 fn notecolumn_clear_loop_ships_the_stale_note_page() {
     let Some(a) = check("notecolumn_stale_note", "main.tex", &[]) else { return };
-    assert_eq!(crate::support::body(&a, "Shipped"), "4");
+    // TeX Live 2022's scrlayer-notecolumn ships 2: the installed engine says which.
+    let source = std::fs::read_to_string(dir("notecolumn_stale_note").join("main.tex")).unwrap();
+    let source = source.replacen("\\gdef\\SatexReachedEnd", "\\typeout{SHIPPED \\Shipped}\\gdef\\SatexReachedEnd", 1);
+    assert_eq!(crate::support::body(&a, "Shipped"), crate::support::engine_typeout(&source, "SHIPPED", "4"));
 }
 
 /// `\pop` drops the top of a token-list stack. Its first two runs pop
@@ -1199,4 +1396,25 @@ fn pgfmath_signed_random_count_plus_a_constant_stays_in_range() {
     assert!(!undefined(&a, "InRange"), "the true value's arm is live");
     let outside: Vec<_> = ["Low", "High"].into_iter().filter(|n| !undefined(&a, n)).collect();
     assert!(outside.is_empty(), "\\pgfmathresult may lie outside {lo}..{hi}: {outside:?}");
+}
+
+/// Intuition: pgfmath seeds `rand` from `\time` and `\year` when it loads, so under an unknown
+/// clock the seed and every number `rand` draws are unknown, yet the document compiles at any
+/// time: some path reaches its end.
+/// Bug: `\pgfmathrand@@#1#2#3#4\pgfmath@` read the printed number of any length whole as `#1`
+/// (or `#2` after a `-`), its next parameter took `\pgfmath@`, and every path ran away to the
+/// end of the file: "every path was dropped", then a certain `missing-end`.
+#[test]
+fn pgfmath_rand_under_an_unknown_clock_reaches_the_end() {
+    if !installed() {
+        return;
+    }
+    let mut cfg = crate::support::config();
+    cfg.clock = satex::project::config::Clock::Unknown;
+    let source = "\\documentclass{article}\\usepackage{pgfmath}\\pgfmathparse{rand}\\gdef\\SatexReachedEnd{}\\begin{document}x\\end{document}";
+    let a = Machine::analyze(source, None, &cfg);
+    assert!(crate::support::maybe_defined(&a, "SatexReachedEnd"), "the true run's path reaches the end");
+    let dropped: Vec<_> =
+        a.facts.diagnostics.iter().filter(|d| d.code == "unread-document").map(|d| &d.message).collect();
+    assert!(dropped.is_empty(), "{dropped:?}");
 }

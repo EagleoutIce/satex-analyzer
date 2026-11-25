@@ -29,7 +29,7 @@
 
 <section class="band alt" id="run">
   <h2>Why interpret the code</h2>
-  <p class="sub">In TeX, the same text can expand to something else every time. What a macro does depends on its context: the definitions in effect, the catcodes, the arguments it reads, the names built before it. A tool that only reads the text has to guess that context. SaTeX runs the kernel, the class and every package as TeX would, so each expansion happens in its real context, on every path at once, and joins the paths soundly where it cannot decide.</p>
+  <p class="sub">What a macro does depends on what is in effect when it runs: the definitions, the catcodes, the arguments it reads, the names built before it. Reading the text means guessing all that. SaTeX runs the kernel, the class and the packages, and keeps every path it cannot decide.</p>
   <div class="contrast" role="tablist" aria-label="examples of what a run knows">
     <button type="button" role="tab" aria-selected="true" data-case="0">A name built by <code>\csname</code></button>
     <button type="button" role="tab" aria-selected="false" data-case="1">An expl3 variant</button>
@@ -60,7 +60,7 @@ a | b \gdef\Maybe{}</code></pre>
 
 <section class="band" id="compare">
   <h2>Comparison</h2>
-  <p class="sub">The other tools are good at what they do. SaTeX runs the code abstractly, so it can check what the others infer from names and text.</p>
+  <p class="sub">Each of these tools is good at its job. The others read the text. SaTeX runs the code.</p>
   <div class="table-wrap"><table class="compare">
     <thead><tr><th scope="col"></th><th scope="col">SaTeX</th><th scope="col"><a href="https://github.com/witiko/expltools">explcheck</a></th><th scope="col"><a href="https://github.com/latex-lsp/texlab">TeXLab</a></th><th scope="col"><a href="https://github.com/astoff/digestif">digestif</a></th><th scope="col"><a href="https://www.nongnu.org/chktex/">ChkTeX</a></th></tr></thead>
     <tbody>
@@ -81,6 +81,9 @@ a | b \gdef\Maybe{}</code></pre>
   <ol class="refs">
     <li id="ref-dynamic">V. Novotný: “[the analyzer] cannot detect function definitions or calls that arise only through dynamic expansion and are not obvious from the surface text of the program”, <a href="https://witiko.github.io/Expl3-Linter-11.5/">Static analysis of expl3 programs (11½)</a>. The series is a careful account of what a text-based approach can do: <a href="https://witiko.github.io/Expl3-Linter-3/">related work</a>, <a href="https://witiko.github.io/Expl3-Linter-2.5/">TeX language servers</a>.</li>
   </ol>
+  <h3 id="compile">Compiling</h3>
+  <p class="sub"><code>satex compile</code> builds the PDF with the TeX engine. It reruns until the files rest, as latexmk does, and skips the build when nothing it read changed.</p>
+  {{compilestats}}
 </section>
 
 <section class="band alt" id="about">
@@ -90,7 +93,7 @@ a | b \gdef\Maybe{}</code></pre>
 
 <section class="band" id="install">
   <h2>Install</h2>
-  <p class="sub">SaTeX works where you write. One language server serves every editor that speaks LSP. TeXstudio reads its findings from the log.</p>
+  <p class="sub">One language server serves every editor that speaks LSP. TeXstudio reads the findings from its log.</p>
   <ul class="editors">
     <li><b>VS Code</b><span class="ed-gets">full LSP</span><p>Install <code>eagleoutice.satex</code> from the Marketplace.</p><a href="wiki/vscode.html">Setup →</a></li>
     <li><b>JetBrains IDEs</b><span class="ed-gets">full LSP</span><p>Through LSP4IJ. The plugin installs from disk for now.</p><a href="wiki/intellij.html">Setup →</a></li>
@@ -101,17 +104,8 @@ a | b \gdef\Maybe{}</code></pre>
     <li><b>Browser</b><span class="ed-gets">everything, no install</span><p>The playground runs SaTeX in the page.</p><a href="play/index.html">Open →</a></li>
     <li><b><code>satex gui</code></b><span class="ed-gets">everything, on your files</span><p>The playground on your project, with your TeX. Edits are saved.</p><a href="wiki/cli.html#the-playground-on-your-machine">Setup →</a></li>
   </ul>
-  <div class="install-tabs" role="tablist" aria-label="ways to install">
-    <button type="button" role="tab" aria-selected="true" data-way="0">VS Code</button>
-    <button type="button" role="tab" aria-selected="false" data-way="1">Binary</button>
-    <button type="button" role="tab" aria-selected="false" data-way="2">Cargo</button>
-  </div>
-  <div class="ways">
-    <div class="way" data-way="0"><p>Install <b>SaTeX</b> from the Visual Studio Marketplace (<code>eagleoutice.satex</code>): findings in the Problems view, hover, completion, traces and quick fixes.</p></div>
-    <div class="way" data-way="1" hidden><p>Download the binary for your platform from the <a href="{{repository}}/releases">latest release</a> and put <code>satex</code> on your <code>PATH</code>.</p></div>
-    <div class="way" data-way="2" hidden><pre><code>cargo install satex-analyzer
-satex lint -f main.tex</code></pre></div>
-  </div>
-  <p>Installed, <code>satex gui</code> opens <a href="play/index.html">the playground</a> on your own project, with the TeX installed on your computer.</p>
+  <p>Binaries for Linux, macOS and Windows are on the <a href="{{repository}}/releases">releases page</a>. With Rust, <code>cargo install satex-analyzer</code> builds it. The first run reads the LaTeX kernel and caches it, which takes a minute or two. Later runs reuse the cache.</p>
+  <h3 id="texlive">TeX Live</h3>
+  <p>SaTeX reads the TeX installation on your computer. CI runs the whole test suite on Linux with TeX Live 2025, 2022 and 2019, and part of it on macOS and Windows with the newest TeX Live. With more than one installed, <code>texlive.root</code> and <code>texlive.year</code> in <code>satex.yaml</code> choose the one SaTeX reads.</p>
   <details class="more"><summary>Shell completion, building from source, the language server</summary>{{install}}</details>
 </section>

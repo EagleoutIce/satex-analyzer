@@ -13,23 +13,33 @@ pub type Entry = (Option<Binding>, u32);
 /// Entries the maps of one [`super::Env`] walked since [`Walked::take`]: the work of joins,
 /// comparisons and resumes, which reads no token (`Machine::charge` pays them). A copy
 /// starts at 0, so each machine pays its own.
+/// The second field counts what walks through texts opened since then ([`Walked::spend`]).
 #[derive(Default)]
-pub struct Walked(Cell<u64>);
+pub struct Walked(Cell<u64>, Cell<u64>);
 
 impl Walked {
     fn add(&self, n: usize) {
         self.0.set(self.0.get() + n as u64);
     }
 
+    /// Charges `n` texts a walk opens (macro bodies, one-of members): whether this step's walks stay
+    /// within `cap`. One budget for every walk inside a step, where no budget check runs: a walk
+    /// past it stops and over-approximates, and what it did is paid like a join's entries.
+    pub fn spend(&self, n: usize, cap: u64) -> bool {
+        let spent = self.1.get() + n as u64;
+        self.1.set(spent);
+        spent <= cap
+    }
+
     /// The entries walked since the last call.
     pub fn take(&self) -> u64 {
-        self.0.replace(0)
+        self.0.replace(0) + self.1.replace(0)
     }
 }
 
 impl Clone for Walked {
     fn clone(&self) -> Self {
-        Walked::default()
+        Self::default()
     }
 }
 

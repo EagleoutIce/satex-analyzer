@@ -150,8 +150,9 @@ test('plugins: one Refactor group per target', () => {
     assert.deepEqual(gs.map((g) => g.title), ['Refactor']);
     assert.deepEqual(gs[0].items.map((i) => i.label), ['Wrap in a figure']);
     const ms = 'a \\[ x = 1 \\] b', mg = PA.groups({ kind: 'source', at: 5, sel: [5, 10] }, { ...ctx, text: ms, all: ms });
-    assert.deepEqual(mg[0].items.map((i) => i.label), ['Math', 'Extract to \\newcommand…']);
-    assert.ok(PA.plugins.filter((p) => p.category === 'refactor').length === 3);
+    assert.deepEqual(mg.map((g) => g.title), ['Format', 'Color', 'Font', 'Refactor'], 'the shared order: Format ▸ before Refactor ▸');
+    assert.deepEqual(mg.find((g) => g.title === 'Refactor').items.map((i) => i.label), ['Math', 'Extract to \\newcommand…']);
+    assert.ok(PA.plugins.filter((p) => p.category === 'refactor').length === 4, 'wrap, math, extract, format');
   } finally { self.satexStore = was; }
 });
 
@@ -263,7 +264,7 @@ test('insert: footnote after the sentence, citation before it with a tie', () =>
 test('insert: at the caret, displays on own lines, headings at the level before', () => {
   const c = DOC.indexOf('paragraph') + 9;
   const eq = insert(DOC, 'equation', { caret: c });
-  assert.match(eq.out, /First paragraph\n\\begin\{equation\}\n  \n\\end\{equation\}\nruns on\./);
+  assert.match(eq.out, /First paragraph\n\\begin\{equation\}\n  \\end\{equation\}\nruns on\./);
   const h = insert(DOC, 'heading', { caret: c });
   assert.match(h.out, /First paragraph\n\n\\section\{\}\n\nruns on\./);
   const sub = DOC.replace('\\section{Intro}', '\\subsection{Intro}');
@@ -288,12 +289,30 @@ test('insert: every kind at every place keeps the document paired', () => {
 // none. Pins marks offered between paragraphs and a switched-off plugin still offering rows.
 test('insert: the menu rows by target, switched by the viewer', () => {
   const ctx = { text: DOC, all: DOC, x: 0, y: 0, facts: null, write() {}, toast() {}, pick() {}, colAlign() {}, insert() {} };
-  const rows = (t, cfg) => PA.groups(t, ctx, cfg).filter((g) => g.title === 'Insert').flatMap((g) => g.items.map((i) => i.label));
+  const rows = (t, cfg) => PA.groups(t, ctx, cfg).filter((g) => g.title === 'Insert').flatMap((g) => g.items.flatMap((i) => i.items.map((r) => r.label)));
   assert.equal(rows({ kind: 'block', block: { file: 'a.tex', from: 5, to: 6, what: 'paragraph' } }).length, R.inserts.length);
   assert.ok(!rows({ kind: 'block', block: { file: 'a.tex', from: 5, to: 6, what: 'figure' } }).includes('Footnote'));
   assert.ok(!rows({ kind: 'block', place: 10, block: { file: 'a.tex', from: 5, to: 6, what: 'paragraph' } }).includes('Citation'));
   assert.ok(rows({ kind: 'caret', caret: 3 }).includes('Footnote'));
   assert.equal(rows({ kind: 'caret', caret: 3 }, { 'type_plugins.insert.enabled': false }).length, 0);
+});
+
+// Intuition: Insert is nested by kind (Math, Floats, Lists, Structure, References, Pictures, in that order), each row
+// hinted with the LaTeX it writes, the heading's at the level of the last one; at the Type caret Math starts with
+// inline, display and align* math in the document's inline convention. Pins a flat menu and hints that said "same level".
+test('insert: rows nested by kind, hinted with their LaTeX', () => {
+  const text = '\\begin{document}\n\\subsection{A}\nText.\n\\end{document}\n', ran = [];
+  const ctx = { text, all: text, x: 0, y: 0, facts: null, write() {}, toast() {}, pick() {}, colAlign() {}, insert() {}, math: (k) => ran.push(k), mathInline: '$…$' };
+  const menu = PA.groups({ kind: 'caret', caret: text.indexOf('Text') }, ctx).find((g) => g.title === 'Insert').items;
+  assert.deepEqual(menu.map((g) => g.label), ['Math', 'Floats', 'Lists', 'Structure', 'References', 'Pictures']);
+  const math = menu[0].items;
+  assert.deepEqual(math.map((r) => [r.label, r.hint]).slice(0, 3), [['Inline math', '$…$'], ['Display math', '\\[…\\]'], ['Aligned', 'align*']]);
+  math[1].run();
+  assert.deepEqual(ran, ['display']);
+  assert.equal(menu[3].items.find((r) => r.label === 'Section heading').hint, '\\subsection{…}');
+  assert.equal(menu[1].items.find((r) => r.label === 'Table').hint, '\\begin{table} tabular');
+  // no caret math outside the Type caret (a right click between paragraphs)
+  assert.ok(!PA.groups({ kind: 'block', place: 3, block: { file: 'a.tex', from: 1, to: 2, what: 'paragraph' } }, ctx).find((g) => g.title === 'Insert').items[0].items.some((r) => r.label === 'Inline math'));
 });
 
 // Intuition: Insert at the caret puts a block where the caret is, unless that splits a group: a caret inside a macro's
@@ -306,6 +325,189 @@ test('insert: a block at the caret never splits a group', () => {
   const free = text.indexOf(' and');
   assert.deepEqual(R.insertSpot(text, { caret: free }, false), { at: free, mode: 'caret' });
   const { out } = insert(text, 'equation', { caret: at });
-  assert.match(out, /\\greet\{world\} and more\n\n\\begin\{equation\}\n {2}\n\\end\{equation\}\n\nNext\./);
+  assert.match(out, /\\greet\{world\} and more\n\n\\begin\{equation\}\n {2}\\end\{equation\}\n\nNext\./);
   assert.deepEqual(R.insertSpot('\\greet{wo', { caret: 8 }, false), { at: 8, mode: 'caret' }, 'a group never closed: at the caret');
+});
+
+// Intuition: a block needs paragraph mode and a float outer paragraph mode. With the caret in math, a tabular, a
+// picture or any alignment (a body with a top-level `&`, which TeX takes only in an alignment, tex.web § 1128), the
+// block goes after the line that box ends on; a float also leaves the float around it. A list item or a float's
+// own body takes a display at the caret. Pins a figure written into a tabular cell or `$…$` ("Not in outer par mode").
+test('insert: a block at the caret never lands in math, a table or a picture', () => {
+  const after = (text, end) => ({ at: text.indexOf('\n', text.indexOf(end)), mode: 'after' });
+  const spot = (text, mark, kind) => { const it = R.inserts.find((k) => k.kind === kind); return R.insertSpot(text, { caret: text.indexOf(mark) + 1 }, !!it.flow, !!it.wrap); };
+  const tab = 'x\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\ny\n';
+  assert.deepEqual(spot(tab, 'b ', 'figure-image'), after(tab, '\\end{tabular}'), 'float: after the tabular');
+  assert.deepEqual(spot(tab, 'b ', 'equation'), after(tab, '\\end{tabular}'), 'display: after the tabular');
+  const flt = 'x\n\\begin{table}\n\\caption{c}\n\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n\\end{table}\ny\n';
+  assert.deepEqual(spot(flt, 'b ', 'table'), after(flt, '\\end{table}'), 'a float never inside a float');
+  assert.deepEqual(spot(flt, 'b ', 'itemize'), after(flt, '\\end{tabular}'), 'a list may stand in the float');
+  const inl = 'so $a+b$ and more\n\nNext.\n';
+  assert.deepEqual(spot(inl, 'a+', 'equation'), { at: inl.indexOf('\n'), mode: 'after' }, 'inline math');
+  assert.deepEqual(spot(inl, 'a+', 'footnote'), { at: inl.indexOf('a+') + 1, mode: 'caret' }, 'a mark stays at the caret');
+  const al = 'x\n\\begin{align}\n  a &= b\n\\end{align}\ny\n';
+  assert.deepEqual(spot(al, 'a ', 'itemize'), after(al, '\\end{align}'));
+  const own = 'x\n\\begin{mygrid}\n  a & b\n\\end{mygrid}\ny\n';
+  assert.deepEqual(spot(own, 'a ', 'table'), after(own, '\\end{mygrid}'), 'an alignment of any name');
+  const pic = 'x\n\\begin{tikzpicture}\n  \\node {A};\n\\end{tikzpicture}\ny\n';
+  assert.deepEqual(spot(pic, 'node', 'figure-image'), after(pic, '\\end{tikzpicture}'));
+  const box = 'x \\mbox{\\begin{tabular}{l} a \\end{tabular}} more\ny\n';
+  assert.deepEqual(spot(box, ' a ', 'equation'), { at: box.indexOf(' more') + 5, mode: 'after' }, 'a box around the table, left too');
+    assert.deepEqual(spot('x\n\\begin{itemize}\n  \\item one\n\\end{itemize}\n', 'one', 'equation').mode, 'caret', 'a list item takes it');
+});
+
+// Intuition: a selection's Format, Color, Font and Size rows wrap it in the command they name; in math the math
+// commands (bold by the loaded package: \boldsymbol with amsmath), no text sizes; a color loads xcolor; Remove formatting
+// unwraps the command around the selection. Pins the user's Format ▸ table (2026-11-21) and text commands offered in math.
+test('format: a selection wrapped, math-aware, unwrapped', () => {
+  const text = '\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\nSay \\textbf{hello} world and $x+y$.\n\\end{document}\n';
+  const written = [];
+  const ctx = { text, all: text, x: 0, y: 0, facts: null, write: (e) => written.push(edit(text, e)), toast() {}, pick() {}, colAlign() {} };
+  const menu = (from, to) => Object.fromEntries(PA.groups({ kind: 'source', at: from, end: to, sel: [from, to] }, ctx).filter((g) => ['Format', 'Color', 'Font', 'Size'].includes(g.title)).map((g) => [g.title, g.items]));
+  const w = text.indexOf('world'), m = menu(w, w + 5);
+  assert.deepEqual(Object.keys(m), ['Format', 'Color', 'Font', 'Size']);
+  assert.deepEqual(m.Format.map((r) => r.hint), ['\\textbf', '\\textit', '\\emph', '\\texttt', '\\textsc'], 'no underline without ulem or soul');
+  m.Format[0].run();
+  assert.match(written.pop(), /\\textbf\{world\} and/);
+  m.Size.find((r) => r.label === 'large').run();
+  assert.match(written.pop(), /\{\\large world\} and/);
+  m.Color.find((r) => r.label === 'red').run();
+  const colored = written.pop();
+  assert.match(colored, /\\textcolor\{red\}\{world\}/); assert.match(colored, /\\usepackage\{xcolor\}\n/);
+  const x = text.indexOf('x+y'), mm = menu(x, x + 3);
+  assert.deepEqual(mm.Format.map((r) => r.hint), ['\\boldsymbol']);
+  assert.ok(!mm.Size, 'no text sizes in math');
+  // in math Font ▸ lists the alphabets, each with the selection set in it; \mathbb and \mathfrak load amssymb
+  assert.deepEqual(mm.Font.map((r) => r.hint), ['\\mathrm', '\\mathit', '\\mathbf', '\\mathsf', '\\mathtt', '\\mathcal', '\\mathbb · amssymb', '\\mathfrak · amssymb']);
+  assert.deepEqual(mm.Font.map((r) => r.sample.text), ['xy', '𝑥𝑦', '𝐱𝐲', '𝗑𝗒', '𝚡𝚢', '𝓍𝓎', '𝕩𝕪', '𝔵𝔶']);
+  mm.Font.find((r) => r.label === 'Blackboard bold').run();
+  const bb = written.pop();
+  assert.match(bb, /\$\\mathbb\{x\+y\}\$/); assert.match(bb, /\\usepackage\{amssymb\}\n/);
+  mm.Color.find((r) => r.label === 'red').run();
+  assert.match(written.pop(), /\$\{\\color\{red\}x\+y\}\$/, 'a group where the kernel date is unknown');
+  const h = text.indexOf('hello'), um = menu(h + 1, h + 3);
+  um.Format.find((r) => r.label === 'Remove formatting').run();
+  assert.match(written.pop(), /Say hello world/);
+});
+
+// Intuition: every Insert row writes a document that builds before anything is typed. A body line of blanks is an
+// empty line, a \par: Insert ▸ Aligned equations wrote `\begin{align}\n  \n\end{align}` and the build failed
+// ("Paragraph ended before \align was complete"). No environment an insert opens holds a blank line.
+test('insert: no blank line inside an environment, every kind, caret and after a paragraph', () => {
+  for (const it of R.inserts) for (const t of [{ caret: DOC.indexOf('runs on') - 1 }, { block: { to: 6, what: 'paragraph' } }]) {
+    const r = insert(DOC, it.kind, t);
+    if (!r) continue;
+    for (const m of r.out.matchAll(/\\begin\{(\w+\*?)\}[^]*?\\end\{\1\}/g)) if (m[1] !== 'document') assert.ok(!/\n[ \t]*\n/.test(m[0]), `${it.kind}: ${JSON.stringify(m[0])}`);
+  }
+});
+
+// Intuition: Ctrl+B over a selection on the page bolds its source, and again unbolds it; the caret stays at the
+// argument's end inside, so Right leaves the call (`\textbf{bold}X`). Pins Ctrl+B over a page selection doing nothing.
+test('math: Ctrl+M enters math, leaves it past its closer, unwraps a whole body', () => {
+  // at a caret outside math: an empty inline formula, the caret inside
+  const t = 'Let x be big.', at = t.indexOf('x');
+  const on = R.mathToggle(t, at, at), w = edit(t, [on.edit]);
+  assert.equal(w, 'Let \\(\\)x be big.');
+  assert.equal(w.slice(on.caret), '\\)x be big.');
+  // inside an empty one: it goes
+  const off = R.mathToggle(w, on.caret, on.caret);
+  assert.equal(edit(w, [off.edit]), t);
+  // inside a formula with a body: the caret leaves past `\)`
+  const f = 'see \\(x+y\\) here', inside = f.indexOf('+');
+  const out = R.mathToggle(f, inside, inside);
+  assert.equal(edit(f, [out.edit]), f);
+  assert.equal(f.slice(out.caret), ' here');
+  // a selection: wrapped, and its whole body unwrapped again
+  const s = 'take x+y now', a = s.indexOf('x'), b = a + 3, wr = edit(s, [R.mathToggle(s, a, b).edit]);
+  assert.equal(wr, 'take \\(x+y\\) now');
+  const un = R.mathToggle(wr, wr.indexOf('x'), wr.indexOf('x') + 3);
+  assert.equal(edit(wr, [un.edit]), s);
+  // part of a body: nothing
+  assert.equal(R.mathToggle(wr, wr.indexOf('x'), wr.indexOf('x') + 1), null);
+});
+
+test('format: a selection across a group end is wrapped in balanced parts (user 2026-11-22)', () => {
+  const t = '\\textit{In the end everything we} do has its benefits', a = t.indexOf('everything'), b = t.indexOf(' has');
+  const parts = R.pieces(t, a, b).map(([x, y]) => t.slice(x, y));
+  assert.deepEqual(parts, ['everything we', ' do']);
+  // one that ends inside a later group: the part before its command, the rest inside it
+  const u = 'plain words \\textbf{bold part} tail', c = u.indexOf('words'), d = u.indexOf(' part');
+  assert.deepEqual(R.pieces(u, c, d).map(([x, y]) => u.slice(x, y)), ['words ', 'bold']);
+  // balanced: one part, as before
+  assert.deepEqual(R.pieces(u, 0, u.length).map(([x, y]) => u.slice(x, y)), [u]);
+});
+
+test('format: Ctrl+B wraps a selection and unwraps its own call', () => {
+  const t = 'make bold later', a = t.indexOf('bold'), b = a + 4;
+  const on = R.formatToggle(t, a, b, 'textbf'), w = edit(t, [on.edit]);
+  assert.equal(w, 'make \\textbf{bold} later');
+  assert.equal(w.slice(on.caret), '} later');
+  const off = R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 4, 'textbf');
+  assert.equal(edit(w, [off.edit]), t);
+  // another command around it, or only part of its argument: wrapped again
+  assert.equal(edit(w, [R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 4, 'textit').edit]), 'make \\textbf{\\textit{bold}} later');
+  assert.equal(edit(w, [R.formatToggle(w, w.indexOf('bold'), w.indexOf('bold') + 2, 'textbf').edit]), 'make \\textbf{\\textbf{bo}ld} later');
+});
+
+// Intuition: the format bar's toggles show the style in force at the selection, read from the groups around it, a
+// heading's argument (bold, its size; KOMA's sans) and declarations before it in the same group, never after it or
+// from a group already closed. Pins B shown off inside \textbf (the bar showed nothing pressed) and a closed group leaking.
+test('fontAt: the style in force from the groups and switches around a place', () => {
+  const at = (t, w) => R.fontAt(t, t.indexOf(w));
+  assert.deepEqual(at('make \\textbf{bold word} later', 'word'), { bold: true, italic: false, family: 'rm', size: 'normalsize' });
+  assert.equal(at('make \\textbf{bold} later', 'later').bold, false);
+  assert.deepEqual(at('{\\small\\itshape a \\ttfamily here} x', 'here'), { bold: false, italic: true, family: 'tt', size: 'small' });
+  assert.equal(at('{\\small a} here', 'here').size, 'normalsize');
+  assert.equal(at('\\emph{a \\emph{b} c}', 'b').italic, false);
+  assert.deepEqual(at('\\documentclass{article}\\section{Title}', 'Title'), { bold: true, italic: false, family: 'rm', size: 'Large' });
+  assert.equal(at('\\documentclass{scrartcl}\\subsection[short]{Title}', 'Title').family, 'sf');
+  assert.equal(at('\\begin{small}\\textit{x} y\\end{small} z', 'y').size, 'small');
+  assert.equal(at('\\begin{small} y\\end{small} z', 'z').size, 'normalsize');
+  assert.equal(at('% \\bfseries\nplain', 'plain').bold, false);
+  const D = '\\documentclass{article}\n\\begin{document}\n\\section{Start}\nPlain words and \\textbf{boldword here} end.\n';
+  assert.deepEqual(at(D, 'boldword'), { bold: true, italic: false, family: 'rm', size: 'normalsize' });
+  assert.deepEqual(at(D, '\\textbf'), { bold: false, italic: false, family: 'rm', size: 'normalsize' });
+});
+
+// Intuition: the format bar's color button shows the color in force: a \textcolor's text group, a \color switch in
+// the group, none outside both. Pins the bar showing no color inside \textcolor{red}{…}.
+test('fontAt: the color in force from \\textcolor and \\color', () => {
+  const at = (t, w) => R.fontAt(t, t.indexOf(w)).color;
+  assert.equal(at('a \\textcolor{red}{here} b', 'here'), 'red');
+  assert.equal(at('a \\textcolor{red}{x} here', 'here'), undefined);
+  assert.equal(at('{\\color{blue!30} a here} b', 'here'), 'blue!30');
+  assert.equal(at('{\\color{blue} a} here', 'here'), undefined);
+});
+
+// Intuition: a math alphabet's sample is Unicode's math letters, with the letters Unicode keeps outside the block
+// (ℝ, ℋ, ℎ) in their places: a hole drew a missing glyph box in the font picker.
+test('alphabet: math letters, holes, digits', () => {
+  assert.equal(R.alphabet('mathbb', 'RZ1'), 'ℝℤ𝟙');
+  assert.equal(R.alphabet('mathcal', 'HA'), 'ℋ𝒜');
+  assert.equal(R.alphabet('mathit', 'h2'), 'ℎ2', 'no italic digits');
+  assert.equal(R.alphabet('mathfrak', 'Cg'), 'ℭ𝔤');
+  assert.equal(R.alphabet('nosuch', 'ab'), 'ab');
+});
+
+// Intuition: letters typed in math come back as upright text: the selection or the word at the caret, as \text with
+// amsmath and as the kernel's \mbox without it, never a command's name (user 2026-11-25).
+test('math: letters as text, \\text or \\mbox', () => {
+  const was = self.satexStore;
+  self.satexStore = { get: () => null, set: () => {} };
+  try {
+    const run = (t, at, sel = null) => {
+      const out = [], ctx = { text: t, all: t, x: 0, y: 0, facts: null, write: (e) => out.push(edit(t, e)), toast() {}, pick() {}, colAlign() {} };
+      const row = PA.groups({ kind: 'source', at, sel }, ctx).find((g) => g.title === 'Refactor')?.items.find((i) => i.label === 'Math')?.items.find((i) => /as text$/.test(i.label));
+      row?.run();
+      return row && [row.label, out.pop()];
+    };
+    const plain = 'a $x where y$ b', ams = '\\usepackage{amsmath}\n' + plain;
+    assert.deepEqual(run(plain, plain.indexOf('here')), ['“where” as text', 'a $x \\mbox{where} y$ b']);
+    assert.deepEqual(run(ams, ams.indexOf('where') + 5), ['“where” as text', '\\usepackage{amsmath}\na $x \\text{where} y$ b']);
+    const sel = ams.indexOf('where');
+    assert.equal(run(ams, sel, [sel, sel + 7])[1], '\\usepackage{amsmath}\na $x \\text{where y}$ b');
+    const cs = 'a $\\alpha$ b';
+    assert.equal(run(cs, cs.indexOf('pha')), undefined, 'a command name is no word');
+    assert.equal(run(plain, plain.indexOf('x') + 1), undefined, 'one letter is a variable');
+  } finally { self.satexStore = was; }
 });

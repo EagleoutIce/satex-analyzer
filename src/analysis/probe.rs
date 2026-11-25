@@ -34,6 +34,8 @@ struct Context {
     started: Option<std::time::Instant>,
     /// Whether the run is no longer wanted (a newer edit came): [`cancellable`].
     cancel: Option<Rc<dyn Fn() -> bool>>,
+    /// A stale [`cancel`](Context::cancel) unwinds the work whole: [`abandonable`].
+    abandon: bool,
 }
 
 thread_local! {
@@ -88,6 +90,45 @@ pub fn cancellable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -
     )
 }
 
+/// What unwinds a request [`abandonable`] once a newer text made it stale.
+pub struct Abandoned;
+
+/// `f`, a question nobody waits for once `cancelled` says a newer text came: `None` then, and
+/// not begun when it says so already. It unwinds at its next budget check or pause instead of returning what its stopped probes
+/// found, so no cache along the way keeps a half answer (a `OnceLock` whose init unwinds stays
+/// empty), and the newer text's run starts at once.
+pub fn abandonable<T>(cancelled: Box<dyn Fn() -> bool>, f: impl FnOnce() -> T) -> Option<T> {
+    // stale before it began: not begun
+    if cancelled() {
+        return None;
+    }
+    let set = |c: &mut Context| (c.cancel, c.abandon) = (Some(cancelled.into()), true);
+    let pause: crate::util::progress::Pause = Box::new(abandon_if_stale);
+    let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        within(set, || crate::util::progress::pausing(pause, f))
+    }));
+    match run {
+        Ok(out) => Some(out),
+        Err(payload) if payload.is::<Abandoned>() => None,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
+/// Unwinds an [`abandonable`] question that went stale. `resume_unwind` runs no panic hook.
+pub(crate) fn abandon_if_stale() {
+    if CONTEXT.with_borrow(|c| c.abandon) && stale() {
+        std::panic::resume_unwind(Box::new(Abandoned));
+    }
+}
+
+/// A catch of all panics lets an [`Abandoned`] question's unwinding through.
+pub(crate) fn pass_abandoned(payload: Box<dyn std::any::Any + Send>) -> Box<dyn std::any::Any + Send> {
+    if payload.is::<Abandoned>() {
+        std::panic::resume_unwind(payload);
+    }
+    payload
+}
+
 /// `f`, a request answered in a pause of other work: none of that work's background,
 /// deadline or cancellation holds for it.
 pub fn apart<T>(f: impl FnOnce() -> T) -> T {
@@ -103,7 +144,11 @@ fn stale() -> bool {
 pub(crate) fn run_cancelled() -> bool {
     let n = POLLS.get().wrapping_add(1);
     POLLS.set(n);
-    n.is_multiple_of(16) && stale()
+    let stale = n.is_multiple_of(16) && stale();
+    if stale {
+        abandon_if_stale();
+    }
+    stale
 }
 
 /// Stops every run at its next budget check (the server's `exit`).
@@ -355,6 +400,103 @@ pub fn probe(analysis: &Analysis, sym: Sym, at: State) -> Option<Probed> {
         probes.insert((sym, at), found.clone());
     }
     found
+}
+
+/// [`probe`] at the run's end, and for a command that raises an error alone before it reads its
+/// arguments (`\caption` outside a float) the first complete probe inside the environments whose
+/// code shares the rarest part of its reach: what a completion shows. Kept as that probe.
+pub fn probe_inside(analysis: &Analysis, sym: Sym) -> Option<Probed> {
+    let bare = probe(analysis, sym, State::End);
+    if !bare.as_ref().is_some_and(|p| p.error.is_some() && (!p.complete || p.spec.items.is_empty())) {
+        return bare;
+    }
+    let cfg = sandbox_config(&analysis.settings);
+    let inside = |env: Sym| {
+        Prober {
+            cfg: &cfg,
+            analysis,
+            sym,
+            at: State::End,
+            context: Some(env),
+            seen: Default::default(),
+            spent: Spent::of(&cfg),
+        }
+        .derive()
+        .filter(|p| p.complete)
+    };
+    // where the document calls it first, then the closest by code
+    let tried = called_in(analysis, sym).into_iter().chain(rare_environments(analysis, sym));
+    let found = tried.take(analysis.settings.limits.probe_contexts).find_map(inside)?;
+    if whole(&cfg)
+        && let Ok(mut probes) = analysis.probes.lock()
+    {
+        probes.insert((sym, State::End), Some(found.clone()));
+    }
+    Some(found)
+}
+
+/// The innermost environments the document's own calls of `sym` stand in: each call's place
+/// inside the `\begin`/`\end` pairs of its file.
+fn called_in(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
+    use crate::engine::builtins::OccKind;
+    let key = |s: crate::engine::tex::Span| (s.line, s.col);
+    let mut out: Vec<Sym> = Vec::new();
+    for call in analysis.facts.expansions.iter().filter(|e| e.name == sym && e.package.is_none()) {
+        let mut open: Vec<&str> = Vec::new();
+        for o in
+            analysis.facts.occurrences.iter().filter(|o| o.span.file == call.span.file && key(o.span) < key(call.span))
+        {
+            match o.kind {
+                OccKind::BeginEnvironment => open.push(&o.key),
+                OccKind::EndEnvironment => _ = open.pop(),
+                _ => {}
+            }
+        }
+        let env = open.iter().rev().find(|e| **e != "document").and_then(|e| analysis.interner.lookup(e));
+        if let Some(env) = env.filter(|e| !out.contains(e)) {
+            out.push(env);
+        }
+    }
+    out
+}
+
+/// The environments whose code sets up what `sym` reads: names their reach defines (`\@float`
+/// defines `\@captype`) or calls that `sym`'s reach expands, each weighted by how few
+/// environments reach it, so machinery every one reaches (`\@ifnextchar`) says little.
+fn rare_environments(analysis: &Analysis, sym: Sym) -> Vec<Sym> {
+    let mut reach = closure(analysis, sym);
+    // and the names its macros' texts name without calling them (`\ifx\@captype\@undefined`)
+    let named: Vec<Sym> = (reach.iter())
+        .filter_map(|&m| analysis.env.meaning(m).as_macro().cloned())
+        .flat_map(|m| m.replacement_text.iter().filter_map(|t| t.cs()).collect::<Vec<_>>())
+        .collect();
+    reach.extend(named);
+    // the names each macro defines while it expands (`via`)
+    let mut defines: crate::fixed::HashMap<Sym, Vec<Sym>> = crate::fixed::HashMap::default();
+    for def in &analysis.facts.defs {
+        if let Some(via) = def.via.filter(|_| reach.contains(&def.name)) {
+            defines.entry(via).or_default().push(def.name);
+        }
+    }
+    let envs: Vec<(Sym, crate::fixed::HashSet<Sym>)> = (all_environments(analysis).into_iter())
+        .filter(|&env| env != sym)
+        .map(|env| {
+            let mut c = closure(analysis, env);
+            let made: Vec<Sym> = c.iter().filter_map(|m| defines.get(m)).flatten().copied().collect();
+            c.extend(made);
+            (env, c.intersection(&reach).copied().collect())
+        })
+        .collect();
+    let mut reached: crate::fixed::HashMap<Sym, u64> = crate::fixed::HashMap::default();
+    for n in envs.iter().flat_map(|(_, c)| c) {
+        *reached.entry(*n).or_default() += 1;
+    }
+    let mut ranked: Vec<(u64, Sym)> = (envs.iter())
+        .map(|(env, c)| (c.iter().map(|n| 1_000_000 / reached[n]).sum(), *env))
+        .filter(|&(shared, _)| shared > 0)
+        .collect();
+    ranked.sort_by_key(|&(shared, env)| (std::cmp::Reverse(shared), analysis.interner.name(env).to_string()));
+    ranked.into_iter().map(|(_, env)| env).collect()
 }
 
 /// What `sym`'s braced arguments are, for a command the run never called:
@@ -609,10 +751,11 @@ pub fn probe_contexts(analysis: &Analysis, sym: Sym) -> Vec<(Option<Sym>, Option
 fn enter_environment(machine: &mut Machine, env: Sym) {
     let Some(begin) = machine.out.interner.lookup("begin") else { return };
     let name = machine.out.interner.name(env).to_string();
-    machine.run_probe(begin, &format!("{{{name}}}"));
+    // a lookahead (`\@ifnextchar[` in `\@float`) needs a token to compare, as in `probe_bare_error`
+    machine.run_probe(begin, &format!("{{{name}}}\\relax "));
 }
 
-fn sandbox_config(base: &Config) -> Config {
+pub(crate) fn sandbox_config(base: &Config) -> Config {
     Config {
         load: crate::project::config::Load {
             packages: false,
@@ -839,18 +982,20 @@ impl Prober<'_, '_> {
                     continue;
                 }
                 let open = c.to_string();
-                if adds(&open).is_some() {
+                // A character after which the command wants a delimiter opens a delimited argument
+                // (ltcmd `d()`): taken alone it only seems a flag, its argument running to the end.
+                let close = self.run(&prefix, &open).and_then(|(_, w)| {
+                    w.demand.clone().filter(|d| d.at == at + 1 && d.want == Want::Until).map(|d| d.text)
+                });
+                if close.is_none() && adds(&open).is_some() {
                     found = Some((ArgType::TokenFlag(c), open));
                     break;
                 }
                 let embellished = format!("{c}{ARG}");
-                if adds(&embellished).is_some() {
+                if close.is_none() && adds(&embellished).is_some() {
                     found = Some((ArgType::Embellishment(open), embellished));
                     break;
                 }
-                let close = self.run(&prefix, &open).and_then(|(_, w)| {
-                    w.demand.clone().filter(|d| d.at == at + 1 && d.want == Want::Until).map(|d| d.text)
-                });
                 if let Some(close) = close {
                     let text = format!("{c}P{close}");
                     if let Some(given) = adds(&text) {
@@ -1099,4 +1244,33 @@ fn default(given: &Watch, plain: &Watch, at: usize) -> Option<String> {
     let text = left_out.text.as_deref()?;
     let marker = matches!(text.trim(), r"\NoValue" | r"\c_novalue_tl");
     (left_out.positions.is_empty() && !text.trim().is_empty() && !marker).then(|| text.trim_end().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Intuition: a question about an older text gives way to the newer text at its next pause,
+    /// whole: nothing it was building is kept. Pins [`abandonable`]: before, a hover or a
+    /// completion asked after a run held the page's single worker up to 0.3 s while the next
+    /// keystroke's run waited; a `OnceLock` filled on the way stays empty, a fresh question answers.
+    #[test]
+    fn a_question_a_newer_text_made_stale_unwinds_whole() {
+        let cell = std::sync::OnceLock::<u32>::new();
+        let stale = Rc::new(Cell::new(false));
+        let flag = stale.clone();
+        let asked = abandonable(Box::new(move || flag.get()), || {
+            *cell.get_or_init(|| {
+                stale.set(true);
+                loop {
+                    crate::util::progress::pause();
+                }
+            })
+        });
+        assert!(asked.is_none());
+        assert!(cell.get().is_none(), "a half answer was kept");
+        assert_eq!(abandonable(Box::new(|| false), || 7), Some(7));
+        // the context is the caller's again: an outer run is not abandoned
+        assert!(!CONTEXT.with_borrow(|c| c.abandon));
+    }
 }

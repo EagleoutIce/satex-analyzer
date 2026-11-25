@@ -89,6 +89,20 @@ pub fn recode(text: &str) -> Cow<'_, str> {
     }
 }
 
+/// Text an 8-bit engine read byte by byte (`H\u{c3}\u{a4}rer`) as the UTF-8 the file wrote
+/// (`Härer`): where every character is a byte and the bytes are UTF-8 with more than ASCII. A key
+/// compared with a `.bib` file, or shown to the author, is the written one.
+pub fn as_written(text: &str) -> Cow<'_, str> {
+    if text.is_ascii() || text.chars().any(|c| u32::from(c) > 0xFF) {
+        return Cow::Borrowed(text);
+    }
+    let bytes: Vec<u8> = text.chars().map(|c| c as u8).collect();
+    match String::from_utf8(bytes) {
+        Ok(written) => Cow::Owned(written),
+        Err(_) => Cow::Borrowed(text),
+    }
+}
+
 /// Each byte a character of its own, as an 8-bit engine reads it; only
 /// the unknown text a run wrote and the mark between the texts a file may
 /// hold stay one character each, so they read back as such.
@@ -155,5 +169,17 @@ pub fn columns(text: &str) -> usize {
     match encoding() {
         Encoding::Utf8 => text.chars().count(),
         Encoding::Bytes => text.len(),
+    }
+}
+
+#[cfg(test)]
+mod written_tests {
+    /// An 8-bit engine's bytes of UTF-8 text are the text the file wrote; other text stays.
+    #[test]
+    fn bytes_of_utf8_read_back_as_written() {
+        assert_eq!(super::as_written("H\u{c3}\u{a4}rer"), "Härer");
+        assert_eq!(super::as_written("plain"), "plain");
+        assert_eq!(super::as_written("Härer"), "Härer");
+        assert_eq!(super::as_written("caf\u{e9}"), "caf\u{e9}");
     }
 }

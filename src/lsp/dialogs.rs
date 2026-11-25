@@ -9,7 +9,7 @@ use serde_json::{Value as Json, json};
 
 use super::handlers::{to_lsp, to_pos};
 use super::snapshot::{self, Arg, Key, Package};
-use super::{graphic, tabular};
+use super::{graphic, tabular, tblr};
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::OccKind;
 use crate::text::{Pos, Text};
@@ -50,7 +50,8 @@ fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
     let text = doc.body();
     let at = |line: u32, col: u32| doc.offset(Pos::new(line, col)).or_else(|| doc.offset(Pos::new(line, 1)));
     let mut out: Vec<Target> = Vec::new();
-    let mut tables: Vec<String> = Vec::new();
+    let mut tables: std::collections::HashMap<String, bool> = Default::default();
+    let calls = tabular::Calls::default();
     for (begin, _, name) in crate::queries::query::environments(analysis) {
         if !mine(begin.file) {
             continue;
@@ -72,19 +73,17 @@ fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
         if !cfg.table.enabled {
             continue;
         }
-        let table = match tables.contains(&name) {
-            true => true,
-            false if tabular::is_table(analysis, &name) => {
-                tables.push(name.clone());
-                true
-            }
-            false => false,
-        };
+        let table = *tables.entry(name.clone()).or_insert_with(|| tabular::is_table(analysis, &name, &calls));
         let Some((start, end)) =
             table.then(|| at(begin.line, begin.col)).flatten().and_then(|o| tabular::extent(text, o, &name))
         else {
             continue;
         };
+        // code that reaches `\@array` is not yet a table (amsmath's `equation`): it takes a column spec
+        // (`{lr}` after `\begin{tabular}`), or its own body splits into cells or rows (`align`)
+        if !spec_follows(&text[start..end], &name) && !splits(&text[start..end]) {
+            continue;
+        }
         out.push(Target { kind: Kind::Table, start, end, detail: Some(name) });
     }
     // a figure is a call naming a file the run's graphics read: the driver reads a file once, so
@@ -111,6 +110,36 @@ fn targets(analysis: &Analysis, doc: &Text, path: &str) -> Vec<Target> {
     out.sort_by_key(|t| (t.start, t.end));
     out.dedup_by_key(|t| t.start);
     out
+}
+
+/// Whether `\begin{name}` at the start of `env` is followed by a braced argument (a column spec), after an
+/// optional `[…]` position.
+fn spec_follows(env: &str, name: &str) -> bool {
+    let rest = env.get(format!("\\begin{{{name}}}").len()..).unwrap_or_default().trim_start();
+    let rest = match rest.strip_prefix('[') {
+        Some(r) => r.split_once(']').map_or("", |(_, r)| r).trim_start(),
+        None => rest,
+    };
+    rest.starts_with('{')
+}
+
+/// Whether environment text `env` (`\begin{…}` to its `\end{…}`) holds `&` or `\\` of its own: outside the
+/// environments nested in it and outside comments.
+fn splits(env: &str) -> bool {
+    let (b, mut depth, mut i) = (env.as_bytes(), 0usize, 0);
+    while i < b.len() {
+        match b[i] {
+            b'%' => i = env[i..].find('\n').map_or(b.len(), |n| i + n),
+            b'\\' if env[i..].starts_with("\\begin{") => depth += 1,
+            b'\\' if env[i..].starts_with("\\end{") => depth = depth.saturating_sub(1),
+            b'\\' if depth == 1 && b.get(i + 1) == Some(&b'\\') => return true,
+            b'\\' => i += 1,
+            b'&' if depth == 1 => return true,
+            _ => {}
+        }
+        i += 1;
+    }
+    false
 }
 
 fn lsp_range(doc: &Text, start: usize, end: usize) -> Range {
@@ -366,7 +395,7 @@ pub fn dialog(analysis: &Analysis, doc: &Text, path: &str, pos: Position) -> Opt
     let t = target_at(analysis, doc, path, pos)?;
     let text = &doc.body()[t.start..t.end];
     let state = match t.kind {
-        Kind::Table => serde_json::to_value(tabular::parse(text)?).ok()?,
+        Kind::Table => serde_json::to_value(tabular::parse_with(text, &spec_key(analysis))?).ok()?,
         Kind::Image => {
             let (img, _) = graphic::parse(text, None)?;
             let natural = natural(t.detail.as_deref(), page(&img));
@@ -424,7 +453,7 @@ pub fn widths(analysis: &Analysis, doc: &Text, path: &str) -> Json {
 /// What the table dialog writes beyond the kernel, with the package that defines it: the
 /// installation's provider wins, the name here is the fallback where its index is missing (the
 /// browser), so a booktabs conversion or a merge never writes a command nothing loads.
-const WRITES: [(&str, &str); 8] = [
+const WRITES: [(&str, &str); 11] = [
     ("toprule", "booktabs"),
     ("midrule", "booktabs"),
     ("bottomrule", "booktabs"),
@@ -433,6 +462,9 @@ const WRITES: [(&str, &str); 8] = [
     ("cellcolor", "colortbl"),
     ("rowcolor", "colortbl"),
     ("tabularx", "tabularx"),
+    ("longtable", "longtable"),
+    ("tblr", "tabularray"),
+    ("longtblr", "tabularray"),
 ];
 
 /// The package a command or environment the written table uses needs that the run lacks.
@@ -474,12 +506,76 @@ fn columns(analysis: &Analysis, t: &tabular::Table) -> Option<Package> {
     Some(Package { name, options: String::new() })
 }
 
+/// Whether a table spec's first item names a key of the family that holds `colspec` (tabularray's inner
+/// spec), from the l3keys the run defined: `{hlines}` is a key list, `{lcr}` a column spec.
+fn spec_key(analysis: &Analysis) -> impl Fn(&str) -> bool + use<> {
+    let paths: Vec<String> = (0..analysis.interner.len() as u32)
+        .filter_map(|i| {
+            analysis.interner.name(crate::engine::tex::Sym(i)).strip_prefix("key code > ").map(str::to_string)
+        })
+        .collect();
+    let families: std::collections::BTreeSet<&str> = paths.iter().filter_map(|p| p.strip_suffix("/colspec")).collect();
+    let names: std::collections::BTreeSet<String> = (paths.iter())
+        .filter_map(|p| p.rsplit_once('/').filter(|(f, _)| families.contains(f)).map(|(_, k)| k.to_string()))
+        .collect();
+    move |k: &str| names.contains(k)
+}
+
+/// The tabularray libraries a written table needs that the run did not load (`\UseTblrLibrary{booktabs}`):
+/// added to the file's `\UseTblrLibrary` call, else a new one after its `\usepackage{tabularray}` or where
+/// that load goes (`\begin{document}`'s line); a note where the file has no preamble.
+fn libraries(analysis: &Analysis, doc: &Text, libs: &[&str], notes: &mut Vec<String>) -> Vec<snapshot::Node> {
+    let cmd = "UseTblrLibrary";
+    let loaded: Vec<String> = (analysis.facts.expansions.iter())
+        .filter(|e| analysis.interner.name(e.name) == cmd)
+        .filter_map(|e| e.arguments.first())
+        .flat_map(|a| {
+            crate::engine::tex::detokenize(a, &analysis.interner)
+                .split(',')
+                .map(|l| l.trim().to_string())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let wanted: Vec<&str> = libs.iter().copied().filter(|l| !loaded.iter().any(|x| x == l)).collect();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let text = doc.body();
+    let code = |at: usize| {
+        super::handlers::uncommented(&text[text[..at].rfind('\n').map_or(0, |n| n + 1)..at]).len()
+            == at - text[..at].rfind('\n').map_or(0, |n| n + 1)
+    };
+    // one line loads them all: a written call takes the new ones
+    if let Some((at, _)) = text.match_indices(&format!("\\{cmd}{{")).find(|(at, _)| code(*at))
+        && let Some(mut n) = snapshot::read(doc, at, &[], false)
+        && let Some(arg) = n.args.iter_mut().find(|a| a.open == '{')
+    {
+        arg.text =
+            std::iter::once(arg.text.trim()).chain(wanted).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(",");
+        return vec![n];
+    }
+    let begin = text.match_indices("\\begin{document}").find(|(at, _)| code(*at)).map(|(at, _)| at);
+    let line_end = |at: usize| text[at..].find('\n').map_or(text.len(), |n| at + n + 1);
+    let after_load = text
+        .match_indices("{tabularray}")
+        .find(|(at, _)| code(*at) && begin.is_none_or(|b| *at < b))
+        .map(|(at, _)| line_end(at));
+    let Some(at) = after_load.or(begin.map(|b| text[..b].rfind('\n').map_or(0, |n| n + 1))) else {
+        notes.push(format!("needs \\{cmd}{{{}}} in the preamble", wanted.join(",")));
+        return Vec::new();
+    };
+    let mut n = snapshot::Node::call(cmd, &[&wanted.join(",")], super::handlers::to_lsp(doc, doc.pos(at)));
+    n.package = Some(Package { name: "tabularray".into(), options: String::new() });
+    vec![n]
+}
+
 /// The edits a dialog's `state` makes of the text in `range`, through the snapshot printer:
 /// `{edits, notes, text}` (`text`: the range as written then); with `op` (`booktabs`, `siunitx`)
 /// the table rewritten first, and its new `state`.
 pub fn apply(
     analysis: &Analysis,
     doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
     kind: &str,
     range: Range,
     state: &Json,
@@ -491,23 +587,36 @@ pub fn apply(
     );
     let written = |keyed: &[usize], options| snapshot::read(doc, start, keyed, options).ok_or("no call here");
     let mut notes = Vec::new();
+    let mut more: Vec<snapshot::Node> = Vec::new();
     let (node, table) = match kind {
         "table" => {
             let mut t: tabular::Table = serde_json::from_value(state.clone()).map_err(|e| e.to_string())?;
             match op {
                 Some("booktabs") => tabular::booktabs(&mut t),
+                Some("siunitx") if t.inner.is_some() => {
+                    return Err("S columns in a tblr need \\UseTblrLibrary{siunitx}: not written here".into());
+                }
                 Some("siunitx") if !tabular::siunitx(&mut t) => return Err("no column holds only numbers".into()),
+                Some("tblr") => t = tblr::to_tblr(&t)?,
+                Some("tabular") => t = tblr::to_tabular(&t)?,
                 _ => {}
             }
-            // an S column's text cells braced, however the column became S
-            tabular::protect_s(&mut t);
-            let switched = tabular::to_tabularx(&mut t);
+            let mut switched = false;
+            // a tabularray table's columns and cells are tabularray's to read
+            if t.inner.is_none() {
+                // an S column's text cells braced, however the column became S
+                tabular::protect_s(&mut t);
+                switched = tabular::to_tabularx(&mut t);
+            }
             if switched {
                 notes.push("X columns: written as tabularx, \\linewidth wide".to_string());
             }
             let emitted = tabular::emit(&t);
             let mut n = snapshot::retarget(&written(&[], false)?, &emitted).ok_or("no table here")?;
-            n.package = columns(analysis, &t).or_else(|| writes(analysis, &t, &emitted));
+            let own = if t.inner.is_none() { columns(analysis, &t) } else { None };
+            n.package = own.or_else(|| writes(analysis, &t, &emitted));
+            let libs = if t.inner.is_some() { tblr::libraries(&t) } else { Vec::new() };
+            more = libraries(analysis, doc, &libs, &mut notes);
             (n, (switched || op.is_some()).then_some(t))
         }
         "image" => {
@@ -540,12 +649,13 @@ pub fn apply(
         }
         k => return Err(format!("no dialog `{k}`")),
     };
-    let (edits, more) = snapshot::printed(analysis, doc, &[node])?;
+    let nodes: Vec<snapshot::Node> = std::iter::once(node).chain(more).collect();
+    let (edits, more, roots) = snapshot::printed(analysis, doc, file, &nodes)?;
     notes.extend(more);
     let text = snapshot::reads(doc.body(), start, end, &edits);
     let edits = snapshot::lsp_edits(doc, edits);
     let state = table.map(|t| serde_json::to_value(t).unwrap_or_default());
-    Ok(json!({ "edits": edits, "notes": notes, "state": state, "text": text }))
+    Ok(json!({ "edits": edits, "notes": notes, "roots": roots, "state": state, "text": text }))
 }
 
 /// Code actions on the tables and figures `range` touches: open the dialog,
@@ -554,7 +664,7 @@ pub fn actions(analysis: &Analysis, doc: &Text, path: &str, uri: &str, range: Ra
     let (Some(a), Some(b)) = (doc.offset(to_pos(doc, range.start)), doc.offset(to_pos(doc, range.end))) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
+    let (mut out, mut refused) = (Vec::new(), Vec::new());
     for t in targets(analysis, doc, path).into_iter().filter(|t| t.start <= b && a <= t.end) {
         let at = to_lsp(doc, doc.pos(t.start));
         let cmd = open_command(t.kind, uri, at);
@@ -562,7 +672,7 @@ pub fn actions(analysis: &Analysis, doc: &Text, path: &str, uri: &str, range: Ra
         let text = &doc.body()[t.start..t.end];
         let r = lsp_range(doc, t.start, t.end);
         let mut edit = |title: &str, state: Json, kind: &str| {
-            if let Ok(e) = apply(analysis, doc, kind, r, &state, None) {
+            if let Ok(e) = apply(analysis, doc, super::type_at::file_of(analysis, path), kind, r, &state, None) {
                 let notes: Vec<String> = e["notes"]
                     .as_array()
                     .into_iter()
@@ -580,7 +690,19 @@ pub fn actions(analysis: &Analysis, doc: &Text, path: &str, uri: &str, range: Ra
         };
         match t.kind {
             Kind::Table => {
-                let Some(table) = tabular::parse(text) else { continue };
+                let Some(table) = tabular::parse_with(text, &spec_key(analysis)) else { continue };
+                // the other table form: written, or refused with the reason (LSP's `disabled`)
+                let other = tblr::other_form(&table.env);
+                let (title, conv): (&str, tblr::Conversion) = match other {
+                    Some("tblr" | "longtblr") => ("Convert table to tabularray (tblr)", tblr::to_tblr),
+                    _ => ("Convert table to tabular", tblr::to_tabular),
+                };
+                match conv(&table) {
+                    Ok(c) => edit(title, serde_json::to_value(&c).unwrap_or_default(), "table"),
+                    Err(why) if other.is_some() => refused
+                        .push(json!({ "title": title, "kind": "refactor.rewrite", "disabled": { "reason": why } })),
+                    Err(_) => {}
+                }
                 let mut b = table.clone();
                 tabular::booktabs(&mut b);
                 if b != table {
@@ -605,5 +727,6 @@ pub fn actions(analysis: &Analysis, doc: &Text, path: &str, uri: &str, range: Ra
             }
         }
     }
+    out.extend(refused);
     out
 }

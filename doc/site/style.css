@@ -271,7 +271,6 @@ code .arg { font-size: 12px; padding: 0 .3rem; }
 .stale { opacity: .55; transition: opacity var(--quick); }
 /* a dimmed panel the reader points at or works in is read again: full strength while hovered or focused */
 .stale:hover, .stale:focus-within { opacity: 1; }
-.ov-stale .pdf-ov { opacity: .35; }
 #explain-body .xcard + .xcard, .output .xcard + .xcard { margin-top: .7rem; padding-top: .6rem; border-top: 1px dashed var(--border); }
 .output .xcard { white-space: normal; } .upstream { font-size: .8rem; white-space: nowrap; }
 .b { font-weight: 700; } .d { opacity: .7; } .i { font-style: italic; } .u { text-decoration: underline; }
@@ -375,6 +374,9 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
 .diagnostics { list-style: none; margin: 0; padding: 0; font-size: .88rem; }
 .diagnostics li { padding: .45rem .6rem; border: 1px solid var(--border); border-left: 3px solid currentColor; margin-bottom: .4rem; background: var(--panel); border-radius: 6px; cursor: pointer; color: var(--fg); }
 .diagnostics li:hover { box-shadow: var(--shadow); }
+/* a build run's finding a later run may change (lsp.provisional) */
+.diagnostics li[data-provisional] { opacity: .62; border-left-style: dashed; }
+.cm-lintRange.cm-provisional { background-image: none; text-decoration: underline dotted color-mix(in srgb, var(--sev) 60%, transparent); text-underline-offset: 3px; }
 .diagnostics li { border-left-color: var(--sev); }
 /* code inside prose: a quiet tint, not a chip; a command in it explains itself on hover */
 .diagnostics code, .explain code { color: inherit; background: color-mix(in srgb, var(--fg) 6%, transparent); padding: 0 .2em; border-radius: 3px; }
@@ -397,6 +399,8 @@ body.play main { padding: 0; height: 100%; display: grid; grid-template-rows: mi
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); font-size: .82rem; animation: fade .12s var(--ease); }
 .complete li { padding: .2rem .5rem; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .complete li[aria-selected=true], .complete li:hover { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+/* the Type caret's list is picked by keys or a click: a pointer passing over it on the way to an item marks none */
+.type-complete li:hover:not([aria-selected=true]) { background: none; }
 .complete code { background: none; padding: 0; color: var(--fg); }
 /* findings: a fix to apply, the rule's explanation unfolded */
 button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
@@ -447,9 +451,16 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .toast.on { opacity: 1; transform: translate(-50%, 0); }
 .toast:has(.toast-undo) { pointer-events: auto; }
 .toast-undo { margin-left: .5rem; font: inherit; color: inherit; background: none; border: 1px solid currentColor; border-radius: 999px; padding: 0 .6rem; cursor: pointer; }
-.style-ask { position: fixed; right: 1rem; bottom: 1rem; z-index: 31; max-width: min(28rem, calc(100% - 32px)); padding: .6rem .8rem; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
+.style-ask { position: fixed; inset: auto 1rem 1rem auto; margin: 0; z-index: 1100; max-width: min(28rem, calc(100% - 32px)); padding: .6rem .8rem; display: flex; flex-wrap: wrap; gap: .4rem; align-items: center;
   background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 18px rgb(0 0 0 / .15); font-size: .88rem; }
 .style-ask p { margin: 0 0 .2rem; flex-basis: 100%; }
+.style-places { flex-basis: 100%; display: grid; gap: .25rem; margin-bottom: .2rem; }
+.style-places p { margin: 0; font-size: .8rem; }
+.style-place { all: unset; cursor: pointer; display: grid; gap: .1rem; padding: .25rem .45rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; }
+.style-place:hover, .style-place:focus-visible { border-color: var(--accent); }
+.style-place code { white-space: pre; overflow: hidden; text-overflow: ellipsis; font-size: .8rem; }
+.style-place mark { background: color-mix(in srgb, var(--warn, #d9a400) 45%, transparent); color: inherit; border-radius: 2px; padding: 0 1px; }
+.style-place small { color: var(--muted, inherit); opacity: .8; font-size: .72rem; }
 .drop { position: fixed; inset: 1rem; z-index: 40; display: grid; place-items: center; border: 3px dashed var(--accent); border-radius: 16px;
   background: color-mix(in srgb, var(--bg) 85%, transparent); color: var(--accent); font-size: 1.4rem; font-weight: 600; }
 
@@ -484,16 +495,41 @@ button.small { padding: .05rem .6rem; font-size: .78rem; border-radius: 999px; }
 .cm-hold { border-radius: 2px; background: color-mix(in srgb, var(--accent) 22%, transparent); animation: cm-hold 2.8s ease-in forwards; } @keyframes cm-hold { 0%, 55% { background: color-mix(in srgb, var(--accent) 22%, transparent); } to { background: transparent; } }
 .cm-refmark { background: color-mix(in srgb, var(--accent) 22%, transparent); border-radius: 2px; }
 .menu-wrap { position: relative; }
-.ctx { position: fixed; z-index: var(--z-menu); margin: 0; padding: .25rem; list-style: none; min-width: 12rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .88rem; animation: fade .12s var(--ease); }
-.menu-wrap .ctx { position: fixed; z-index: var(--z-menu); display: flex; flex-direction: column; }
-.ctx li, .ctx button { display: flex; justify-content: space-between; gap: 1.2rem; padding: .3rem .6rem; border-radius: 6px; cursor: pointer; background: none; border: 0; color: var(--fg); font: inherit; font-weight: 400; text-align: left; white-space: nowrap; }
-.ctx li:hover, .ctx button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 14%, transparent); transform: none; box-shadow: none; }
+/* One menu style: the editor's menus (.ctx: #play-ctx, the tabs', the tree's) and the pages' (.pa-menu, actions.ts) are
+ * separate menus that look the same: box, header, rows, hints and ▸ at the right, rules, light and dark alike */
+.ctx, .pa-menu { position: fixed; z-index: var(--z-menu); margin: 0; padding: 4px 0; list-style: none; min-width: 200px; display: flex; flex-direction: column; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: 13px; animation: fade .1s var(--ease); }
 .ctx[hidden], .menu-wrap .ctx[hidden] { display: none; }
-.ctx li:focus, .ctx li[aria-expanded=true] { outline: none; background: color-mix(in srgb, var(--accent) 14%, transparent); }
-.ctx-nested { animation: none; }
+.ctx > .ctx-head, .pa-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted); font-weight: 600; white-space: nowrap; cursor: default; }
+/* a menu's own rows start from nothing; the tabs' and tree's buttons keep their other rules, only the look is reset */
+.ctx li, .pa-menu button { all: unset; }
+.ctx button { background: none; border: 0; border-radius: 0; font: inherit; font-weight: 400; text-align: left; }
+.ctx li, .ctx button, .pa-menu button { display: flex; align-items: center; gap: 8px; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; white-space: nowrap; color: var(--fg); }
+.ctx li.pa-face > span:first-of-type { flex: 1; }
+.ctx li[aria-checked=true]::before { content: '✓'; position: absolute; left: 9px; }
+.ctx li > .muted, .ctx li small, .ctx li .pa-more, .pa-menu button small, .pa-menu .pa-more { margin-left: auto; padding-left: 16px; color: var(--muted); font-size: 11px; }
+.ctx li:hover, .ctx li:focus, .ctx li[aria-expanded=true], .ctx button:hover:not(:disabled), .ctx button:focus-visible,
+.pa-menu button:hover, .pa-menu button:focus, .pa-menu button[aria-expanded="true"] { outline: none; background: color-mix(in srgb, var(--accent) 16%, transparent); transform: none; box-shadow: none; }
+.ctx li.ctx-head:hover { background: none; }
+.ctx-nested, .pa-menu.pa-sub { animation: none; }
+.pa-menu button.pa-wait { color: var(--muted); cursor: default; background: none; }
+/* the selection's format bar, the first row of both menus: B / I / T toggles (pressed where that style is in force), size and family */
+.ctx > .ctx-bar, .ctx > .ctx-bar:hover, .ctx > .ctx-bar:focus { padding: 2px 6px 4px; cursor: default; background: none; }
+.pa-bar { display: flex; align-items: center; gap: 4px; padding: 2px 6px 4px; border-bottom: 1px solid var(--border); margin-bottom: 3px; }
+.ctx .pa-bar .pa-tog, .pa-menu .pa-bar .pa-tog { all: unset; box-sizing: border-box; width: 26px; height: 24px; display: grid; place-items: center; border-radius: 5px; border: 1px solid transparent; cursor: pointer; color: var(--fg); font-weight: 600; font-size: 13px; line-height: 1; }
+.pa-bar .pa-tog.pa-i, .pa-bar .pa-tog.pa-e { font-style: italic; font-family: Georgia, serif; } .pa-bar .pa-tog.pa-e { font-weight: 400; } .pa-bar .pa-tog.pa-t { font-family: ui-monospace, Menlo, monospace; }
+/* B I E T sit as one group of pills, the dropdowns apart */
+.pa-bar .pa-tog.pa-b, .pa-bar .pa-tog.pa-i, .pa-bar .pa-tog.pa-e, .pa-bar .pa-tog.pa-t { width: 22px; margin-right: -3px; }
+.pa-bar .pa-tog.pa-t { margin-right: 2px; }
+.pa-bar .pa-tog:hover, .pa-bar .pa-tog:focus-visible { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.pa-bar .pa-tog[aria-pressed=true] { background: color-mix(in srgb, var(--accent) 26%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pa-bar .pa-tog.pa-col .pa-sw { width: 14px; height: 14px; background: repeating-linear-gradient(45deg, var(--border) 0 3px, transparent 3px 6px); }
+.ctx .pa-bar .pa-dd, .pa-menu .pa-bar .pa-dd { all: unset; box-sizing: border-box; height: 24px; max-width: 12rem; padding: 0 18px 0 6px; font-size: 12px; color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px; cursor: pointer; line-height: 22px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; position: relative; }
+.pa-bar .pa-dd::after { content: '▾'; position: absolute; right: 5px; top: 50%; transform: translateY(-50%); font-size: 10px; opacity: .7; }
+.pa-bar .pa-dd:hover, .pa-bar .pa-dd:focus-visible { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pa-sample { flex: none; margin-left: auto; padding-left: 1em; font-size: 15px; line-height: 1; color: var(--fg); }
 /* a menu still looking its rows up, and a go-to list's peek at the focused target beside it */
 .ctx li.ctx-wait { justify-content: flex-start; align-items: center; gap: .5rem; cursor: progress; color: var(--muted); background: none; }
-.ctx-wait::before { content: ""; flex: none; width: .8rem; height: .8rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ctx-spin .8s linear infinite; } @keyframes ctx-spin { to { rotate: 1turn; } }
+.ctx-wait::before { content: ""; position: absolute; left: 7px; flex: none; width: .8rem; height: .8rem; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: ctx-spin .8s linear infinite; } @keyframes ctx-spin { to { rotate: 1turn; } }
 .ctx-peek { position: absolute; top: -1px; left: calc(100% + 6px); width: min(34rem, 60vw); padding: .5rem .6rem; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); font-size: .8rem; cursor: default; }
 .ctx-peek.ctx-peek-left { left: auto; right: calc(100% + 6px); }
 .ctx-peek .peek-head code { font-weight: 600; } .ctx-peek .peek-does { margin: .25rem 0 .4rem; color: var(--muted); white-space: normal; }
@@ -743,9 +779,13 @@ details.more[open] > summary { margin-bottom: .3rem; }
 .rootmark { flex: none; font-size: .64rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 0 .35rem; border-radius: 999px; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); }
 .tcount { flex: none; min-width: 1.1rem; padding: 0 .3rem; border-radius: 999px; text-align: center; font-size: .68rem; font-weight: 700; color: var(--sev); background: color-mix(in srgb, var(--sev) 14%, transparent); }
 .tcount::before { content: none; }
-.tacts { display: none; flex: none; gap: .05rem; }
-.tree .file:is(:hover, :focus-within) .tacts { display: inline-flex; }
-.tree .file:is(:hover, :focus-within) .tcount { display: none; }
+/* a file's actions keep their room at the row's end, shown while it is hovered: they move nothing (shown into the flow
+   they pushed the name and its root mark aside). The findings count stands in that room until then */
+.tree .file { position: relative; }
+.tacts { display: inline-flex; visibility: hidden; flex: none; gap: .05rem; }
+.tree .tcount { position: absolute; right: .4rem; top: 50%; transform: translateY(-50%); }
+.tree .file:is(:hover, :focus-within) .tacts { visibility: visible; }
+.tree .file:is(:hover, :focus-within) .tcount { visibility: hidden; }
 .tact { font: inherit; font-size: .8rem; font-weight: 400; line-height: 1; padding: .12rem .28rem; border: 0; border-radius: .25rem; background: none; color: var(--muted); }
 .tact:hover:not(:disabled) { color: var(--accent); background: color-mix(in srgb, var(--fg) 8%, transparent); transform: none; box-shadow: none; }
 .tact[data-act=delete]:hover:not(:disabled), .tact.sure { color: var(--error); }
@@ -997,6 +1037,11 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 .run-pop { --rp-kw: 6.2rem; width: min(26rem, calc(100vw - 2rem)); padding: .5rem .7rem; white-space: normal; font: .78rem/1.35 system-ui, sans-serif; }
 .rp-grid { display: grid; grid-template-columns: var(--rp-kw, 7.5rem) minmax(0, 1fr); gap: .12rem .8rem; align-items: baseline; }
 .rp-rows, .rp-limits { display: contents; }
+.rp-cards { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(5.2rem, 1fr)); gap: .4rem; margin-bottom: .35rem; }
+.rp-cards:empty { display: none; }
+.rp-card { display: flex; flex-direction: column; gap: .05rem; padding: .35rem .55rem; border: 1px solid var(--border); border-radius: 8px; background: var(--sunk); }
+.rp-card b { font-size: 1.15rem; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--fg); }
+.rp-card span { font-size: .7rem; color: var(--muted); }
 .rp-k { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-k small { display: block; font-size: .68rem; overflow: hidden; text-overflow: ellipsis; }
 .rp-v { min-width: 0; font: .74rem ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--fg); overflow-wrap: anywhere; }
@@ -1028,6 +1073,14 @@ code, .tname, .ts-file, .o-file, .tr-at, .place, .loc, .cache-name { text-transf
 @media (max-width: 36rem) { .lib-list li { flex-wrap: wrap; row-gap: 0; } .lib-list .lib-use { max-width: none; flex: 1 1 0; } .lib-list .lib-does { order: 9; flex: 1 1 100%; } }
 .lib-with { display: inline; } .lib-with summary { display: inline; cursor: pointer; font-size: .72rem; color: var(--muted); } .lib-with[open] { white-space: normal; }
 .lib-tag, .lib-pkg { font-size: .7rem; color: var(--muted); white-space: nowrap; } .lib-pkg { margin-left: auto; }
+.cache-dialog.newdoc-dialog { height: fit-content; max-height: min(86vh, 52rem); width: min(40rem, calc(100vw - 2rem)); }
+.newdoc-dialog .nd-pane { display: grid; gap: .6rem; padding: .2rem 1rem .6rem; } .newdoc-dialog .lib-bar { padding: 0 1rem; }
+.newdoc-dialog .nd-row { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; } .newdoc-dialog .nd-row > span:first-child { min-width: 7.5rem; color: var(--muted); }
+.newdoc-dialog .nd-row > select, .newdoc-dialog .nd-row > input { flex: 1; min-width: 12rem; }
+.newdoc-dialog .nd-opts { display: flex; flex-wrap: wrap; gap: .3rem .9rem; } .newdoc-dialog .nd-opt { display: inline-flex; gap: .3rem; align-items: center; }
+.newdoc-dialog .nd-header { margin: 0; padding: .5rem .7rem; border-radius: 8px; border: 1px solid var(--border); background: var(--sunk); white-space: pre-wrap; word-break: break-all; user-select: all; }
+.newdoc-dialog .nd-files { margin: 0; padding-left: 1.2rem; max-height: 30vh; overflow: auto; font-size: .85rem; } .newdoc-dialog .nd-main code { font-weight: 700; }
+.newdoc-dialog .try-bar { padding: .6rem 1rem 1rem; justify-content: space-between; }
 .cache-dialog.try-dialog { height: fit-content; max-height: min(86vh, 52rem); width: min(44rem, calc(100vw - 2rem)); }
 .try-box { display: flex; gap: .5rem; align-items: flex-start; margin: .5rem 1rem; } .try-box textarea { flex: 1; min-width: 0; font: .85rem/1.45 ui-monospace, Menlo, monospace; resize: vertical; }
 .try-bar { display: flex; align-items: center; gap: 1rem; margin: 0 1rem .4rem; font-size: .76rem; } .try-bar .ts-toggle { margin-left: 0; }
@@ -1099,6 +1152,8 @@ details[open] > .cfg-subhead::before { rotate: 45deg; }
 .sig-active { color: var(--accent); text-decoration: underline; }
 .cm-tooltip.cm-completionInfo .cm-item-card { max-width: 28rem; font-size: .85rem; }
 .hover-tools { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; padding-top: .5rem; border-top: 1px solid var(--border); }
+/* one short pill per action, many per line; the full title is its tooltip */
+.hover-tools button.small { font-size: .72rem; padding: .1rem .5rem; line-height: 1.3; max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cm-tooltip-autocomplete .cm-completionDetail .cm-hex { font: .8rem ui-monospace, monospace; }
 .ask-foot { display: flex; justify-content: flex-end; gap: .5rem; margin: .8rem 0 0; padding: .6rem 1rem; border-top: 1px solid var(--border); }
 /* a fixed size: the pad never moves under the pen while the results fill in */
@@ -1629,17 +1684,15 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf { display: flex; flex-direction: column; overflow-wrap: anywhere; } .pdf > * { flex: none; }
 .pdf > .pdf-pages { flex: 1 0 16rem; overflow: auto; display: flex; flex-direction: column; align-items: safe center; background: var(--sunk); padding: .4rem; border-radius: 6px; }
 .pdf .pdf-page { position: relative; flex: none; width: calc(var(--pdf-zoom, 1) * 100%); margin-bottom: .5rem; box-shadow: var(--shadow); }
+.pdf .pdf-page.pdf-current { box-shadow: var(--shadow), 0 0 0 2px var(--accent, #7aa2f7); }
 /* the last build's image of the page typed on, fading over the new one (playground.js pdfDrawNext) */
 .pdf .pdf-page img.pdf-fade { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; animation: pdf-fade .12s ease-out forwards; }
 @keyframes pdf-fade { to { opacity: 0; } }
 .pdf .pdf-page img { display: block; width: 100%; height: auto; cursor: crosshair; background: #fff; }
 /* overlays (tints, chips, layers, caret, echo) only over a drawn page image, never over a blank page */
 .pdf .pdf-page:not(:has(> img.pdf-drawn)) > :not(img) { visibility: hidden; }
-/* a page of an older build until redrawn: dimmed after a moment, so a quick redraw does not blink */
-.pdf .pdf-page.pdf-stale img { animation: pdf-stale 0s .25s forwards; }
-@keyframes pdf-stale { to { opacity: .45; } }
-/* typing: the last pages stay at full strength until the new ones are decoded and swapped in, no dim frame */
-:is(.type-sync, .pdf-hold) .pdf .pdf-page.pdf-stale img { animation: none; } :is(.type-sync, .pdf-hold) .ov-stale .pdf-ov { opacity: 1; }
+/* a page and its layers stay at full strength while a build or a run is under way: the last image shows until the
+   next one is decoded and swapped in (playground.js pdfShow), no dimmed or blank frame; the toolbar says what runs */
 /* "you are here": a faint tint behind the line's glyphs, no frame; blended so the ink stays on top; fades when the cursor rests */
 .pdf .pdf-mark { position: absolute; pointer-events: none; background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 3px; mix-blend-mode: multiply; transition: opacity .4s; }
 #play-pdf:is([data-pdf-mode=invert], [data-pdf-mode=dark]) .pdf-mark { mix-blend-mode: screen; background: color-mix(in srgb, var(--accent) 22%, transparent); }
@@ -1704,7 +1757,7 @@ p.ts.ts-foot::before { content: ""; position: absolute; top: 0; left: 0; width: 
 .pdf .pdf-col-grip:hover, .pdf .pdf-col-drag .pdf-col-grip { opacity: 1; }
 /* a gap's knob under the table: drags the column spacing; the value shows while it moves */
 .pdf .pdf-gap-grip { position: absolute; inset: 0; min-width: 10px; min-height: 10px; cursor: ew-resize; touch-action: none; pointer-events: auto; border-radius: 0 0 4px 4px; background: #0e749040; } .pdf .pdf-gap-grip:hover { background: #0e7490a0; }
-.pdf .pdf-col-gap[data-v]::after { content: attr(data-v); position: absolute; top: 100%; left: 50%; translate: -50% 2px; padding: 0 .3em; font: 11px ui-monospace, monospace; white-space: nowrap; color: #fff; background: #0e7490; border-radius: 3px; } .pdf .pdf-col-drag, .ov-stale .pdf-ov.pdf-col-drag { opacity: 1; background: #0e74901f; }
+.pdf .pdf-col-gap[data-v]::after { content: attr(data-v); position: absolute; top: 100%; left: 50%; translate: -50% 2px; padding: 0 .3em; font: 11px ui-monospace, monospace; white-space: nowrap; color: #fff; background: #0e7490; border-radius: 3px; } .pdf .pdf-col-drag { opacity: 1; background: #0e74901f; }
 .pdf-type-in { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; resize: none; border: 0; padding: 0; }
 .pdf-typing .pdf-page img { cursor: text; }
 /* Type mode at a glance: the button pressed, "Typing" and the pages framed while a caret is in them (Esc ends it) */
@@ -1717,19 +1770,27 @@ body.type-sync #play-pdf .pdf-pages { box-shadow: inset 0 0 0 2px color-mix(in s
 #typeset-body.ts-stale::before { content: ''; position: sticky; top: 0; z-index: 4; display: block; height: 2px; margin-bottom: -2px; background: linear-gradient(90deg, transparent, var(--accent), transparent) 0 0 / 40% 100% no-repeat; animation: ts-run 1.2s linear infinite; }
 @keyframes ts-run { from { background-position: -40% 0; } to { background-position: 140% 0; } }
 /* Type mode: where typing goes, a faint tint per origin (text written in place has none) */
-:root { --orig-macro: light-dark(#7c3aed30, #a78bfa40); --orig-arg: light-dark(#0891b230, #22d3ee38); --orig-moved: light-dark(#d9770630, #fbbf2438); --orig-macro-line: light-dark(#7c3aed, #a78bfa); --orig-arg-line: light-dark(#0891b2, #22d3ee); --orig-moved-line: light-dark(#d97706, #fbbf24); }
+:root { --orig-macro: light-dark(#9333ea30, #c084fc40); --orig-arg: light-dark(#0891b230, #22d3ee38); --orig-moved: light-dark(#d9770630, #fbbf2438); --orig-macro-line: light-dark(#9333ea, #c084fc); --orig-arg-line: light-dark(#0891b2, #22d3ee); --orig-moved-line: light-dark(#d97706, #fbbf24); }
 .ts-orig, .pdf .pdf-orig { position: absolute; pointer-events: none; border-radius: 2px; }
 .pdf .pdf-orig { pointer-events: auto; z-index: 1; }
 /* a tint and an underline in its color: seen on light text and on dark */
 .ts-orig-macro, .pdf .pdf-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); }
 .ts-orig-arg, .pdf .pdf-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); }
 .ts-orig-moved, .pdf .pdf-orig-moved { background: var(--orig-moved); }
-:root { --orig-gen: light-dark(#16a34a2e, #4ade8038); --orig-gen-line: light-dark(#16a34a, #4ade80); }
+/* where a macro's text comes from, one blue-to-purple scale: your macros purple, then class, package, library and kernel
+   macros toward blue, generated text (numbers, dates) the bluest; the others dashed (typing there changes no file of yours) */
+:root { --orig-class-line: light-dark(#7c3aed, #a78bfa); --orig-package-line: light-dark(#6366f1, #818cf8); --orig-made-line: light-dark(#4f46e5, #8b8ff5); --orig-kernel-line: light-dark(#3b5bdb, #7c9cf5); --orig-gen-line: light-dark(#2563eb, #60a5fa);
+  --orig-class: color-mix(in srgb, var(--orig-class-line) 19%, transparent); --orig-package: color-mix(in srgb, var(--orig-package-line) 19%, transparent); --orig-made: color-mix(in srgb, var(--orig-made-line) 19%, transparent); --orig-kernel: color-mix(in srgb, var(--orig-kernel-line) 19%, transparent); --orig-gen: color-mix(in srgb, var(--orig-gen-line) 19%, transparent); }
 #typeset-body .ts-math-band { background: color-mix(in srgb, var(--ly-math) 14%, transparent); box-shadow: inset 0 -1.5px var(--ly-math); }
 #typeset-body .ts-math-display { box-shadow: inset 2px 0 var(--ly-math); }
 .pdf .pdf-math-display { box-shadow: inset 2px 0 var(--ly-math); }
 .ts-orig-generated, .pdf .pdf-orig-generated { background: var(--orig-gen); box-shadow: inset 0 -2px var(--orig-gen-line); }
-.ts-orig-made, .pdf .pdf-orig-made { box-shadow: none; background: var(--orig-macro) linear-gradient(90deg, var(--orig-macro-line) 50%, transparent 0) 0 100% / 4px 2px repeat-x; }
+/* each kind its shade, dashed */
+.ts-orig-made, .pdf .pdf-orig-made, .sw-orig-made { --k: var(--orig-made); --kl: var(--orig-made-line); }
+:is(.ts-orig-class, .pdf .pdf-orig-class, .sw-orig-class) { --k: var(--orig-class); --kl: var(--orig-class-line); }
+:is(.ts-orig-package, .pdf .pdf-orig-package, .sw-orig-package) { --k: var(--orig-package); --kl: var(--orig-package-line); }
+:is(.ts-orig-kernel, .pdf .pdf-orig-kernel, .sw-orig-kernel) { --k: var(--orig-kernel); --kl: var(--orig-kernel-line); }
+:is(.ts-orig-made, .ts-orig-class, .ts-orig-package, .ts-orig-kernel, .pdf .pdf-orig-made, .pdf .pdf-orig-class, .pdf .pdf-orig-package, .pdf .pdf-orig-kernel) { box-shadow: none; background: var(--k) linear-gradient(90deg, var(--kl) 50%, transparent 0) 0 100% / 4px 2px repeat-x; }
 /* a band per origin run, one underline: no rounded ends between words */
 .ts-orig, .pdf .pdf-orig { border-radius: 1px; }
 canvas.pdf-echo { display: block; }
@@ -1739,14 +1800,6 @@ canvas.pdf-echo { display: block; }
 /* the math control: inline at once, display and align* from its menu; only while typing */
 .math-group { display: none; position: relative; align-items: stretch; margin-left: .3rem; }
 .ts-typing .math-group, .pdf-typing .math-group { display: inline-flex; }
-.math-group > button.ghost.small { border: 0; border-radius: 999px 0 0 999px; background: transparent; }
-.math-group .math-menu summary { list-style: none; cursor: pointer; height: 100%; display: flex; align-items: center; padding: 0 .45rem; border-left: 1px solid var(--border); border-radius: 0 999px 999px 0; font: inherit; letter-spacing: 0; text-transform: none; color: var(--muted); }
-.math-group .math-menu summary:hover, .math-menu[open] summary { color: var(--fg); background: var(--panel); }
-.math-menu summary::-webkit-details-marker, .math-group .math-menu summary::before { display: none; content: none; }
-.math-menu .pdf-menu-list { left: auto; right: 0; min-width: 10rem; gap: .1rem; padding: .3rem; }
-.math-menu .pdf-menu-list button.ghost.small { display: flex; gap: .8rem; border: 0; border-radius: 6px; padding: .25rem .5rem; }
-.math-menu .pdf-menu-list button:hover { background: var(--panel); transform: none; box-shadow: none; }
-.math-menu .pdf-menu-list code { margin-left: auto; font-size: .7rem; color: var(--muted); }
 .type-sync .cm-editor .cm-cursor { display: block; border-left: 2px solid var(--accent); opacity: .6; }
 .complete.type-complete { position: fixed; right: auto; width: min(22rem, calc(100vw - 32px)); z-index: 60; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.18); }
 
@@ -1761,6 +1814,8 @@ canvas.pdf-echo { display: block; }
 .pdf .pdf-echo { position: absolute; background: #fff; color: #000; pointer-events: none; white-space: pre; }
 .pdf canvas.pdf-echo { background: none; }
 .pdf .pdf-relay-hid { visibility: hidden; }
+/* the moved words' pixels (pdfEcho), under the typed text */
+.pdf .pdf-echo > canvas.pdf-echo-px { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .pdf .pdf-echo i { position: absolute; top: 0; bottom: 0; font-style: normal; display: flex; align-items: flex-end; padding-bottom: .02em; }
 .pdf .pdf-echo span { transform-origin: left; display: inline-block; }
 /* typing goes into a definition: said below the view, with a way back */
@@ -1782,7 +1837,7 @@ canvas.pdf-echo { display: block; }
 .layer-sub-list:has(> .pdf-grid-set) { max-height: none; overflow: visible; }
 .sw-near { background: radial-gradient(circle, var(--accent) 0 35%, transparent 70%); }
 .sw-grid { background: linear-gradient(to right, var(--c4) 1px, transparent 1px) 0 0 / 4px 100%, linear-gradient(to bottom, var(--c4) 1px, transparent 1px) 0 0 / 100% 4px; }
-.sw-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); } .sw-orig-generated { background: var(--orig-gen); box-shadow: inset 0 -2px var(--orig-gen-line); } :is(.sw-orig-class, .sw-orig-package, .sw-orig-kernel), .sw-orig-made { background: var(--orig-macro) linear-gradient(90deg, var(--orig-macro-line) 50%, transparent 0) 0 100% / 4px 2px repeat-x; } .sw-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); } .sw-orig-moved { background: var(--orig-moved); box-shadow: inset 0 -2px var(--orig-moved-line); }
+.sw-orig-macro { background: var(--orig-macro); box-shadow: inset 0 -2px var(--orig-macro-line); } .sw-orig-generated { background: var(--orig-gen); box-shadow: inset 0 -2px var(--orig-gen-line); } :is(.sw-orig-class, .sw-orig-package, .sw-orig-kernel), .sw-orig-made { background: var(--k) linear-gradient(90deg, var(--kl) 50%, transparent 0) 0 100% / 4px 2px repeat-x; } .sw-orig-arg { background: var(--orig-arg); box-shadow: inset 0 -2px var(--orig-arg-line); } .sw-orig-moved { background: var(--orig-moved); box-shadow: inset 0 -2px var(--orig-moved-line); }
 .sw-origins { background: linear-gradient(90deg, var(--orig-macro-line) 33%, var(--orig-arg-line) 33% 66%, var(--orig-moved-line) 66%); }
 .pdf .pdf-bad { z-index: 1; border-radius: 2px; }
 .pdf .pdf-bad.b-over { outline: 1px solid var(--ly-bad); background: color-mix(in srgb, var(--ly-bad) 8%, transparent); } .pdf .pdf-bad.b-under { outline: 1px dashed var(--ly-under); background: color-mix(in srgb, var(--ly-under) 8%, transparent); }
@@ -2108,9 +2163,17 @@ a.cmd-edit:hover, a.cmd-edit:focus-visible { background: color-mix(in srgb, var(
 @media (max-width: 36rem) { body.play .top { flex-wrap: wrap; } body.play .top nav { flex-wrap: wrap; overflow: visible; mask-image: none; } }
 
 /* the views as tabs where they fit, else one menu */
-#pdf-views-sel { display: none; box-sizing: border-box; height: var(--bar-h, 1.6rem); max-width: 100%; font-size: .72rem; font-weight: 500; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--pill-line); background: var(--bg); color: var(--fg); cursor: pointer; }
+#pdf-views-sel { display: none; field-sizing: content; box-sizing: border-box; height: var(--bar-h, 1.6rem); max-width: 100%; font-size: .72rem; font-weight: 500; padding: 0 .4rem; border-radius: 999px; border: 1px solid var(--pill-line); background: var(--bg); color: var(--fg); cursor: pointer; }
 #pdf-views-sel.pdf-err { color: var(--error); border-color: var(--error); }
-#pdf-views-sel:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+#pdf-views-sel:focus-visible, #pdf-page-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* the view menu and the page field as the bar's pills: the native arrow (large, in the error's red) a small chevron in
+   the text's colour, the field a pill of the same height, font and line with no spinner */
+#pdf-views-sel { appearance: none; padding: 0 1.2rem 0 .6rem; background-image: linear-gradient(45deg, transparent 50%, currentColor 50%), linear-gradient(135deg, currentColor 50%, transparent 50%); background-position: calc(100% - .82rem) 60%, calc(100% - .55rem) 60%; background-size: .28rem .28rem; background-repeat: no-repeat; }
+#pdf-views-sel:hover, #pdf-page-go:hover { border-color: var(--accent); }
+#pdf-page-go { appearance: textfield; -moz-appearance: textfield; box-sizing: border-box; width: 4.6rem; height: var(--bar-h, 1.6rem); min-height: var(--btn-h-sm); padding: 0 .6rem; font-family: inherit; font-size: .72rem; font-weight: 500; line-height: 1.2; font-variant-numeric: tabular-nums; text-align: center; border: 1px solid var(--pill-line); border-radius: 999px; background: var(--bg); color: var(--fg); }
+#pdf-page-go::-webkit-inner-spin-button, #pdf-page-go::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+#pdf-page-go::placeholder { color: var(--muted); opacity: 1; }
+#play-pdf.pdf-folded #pdf-page-go { display: none; }
 .pdf-bar.views-menu #pdf-views-sel { display: inline-block; }
 .pdf-bar.views-menu .pdf-views { display: none; }
 #play-pdf.pdf-folded #pdf-views-sel { display: none; }
@@ -2491,6 +2554,7 @@ header .hd-feedback:hover:not(:disabled) { background: var(--sunk); color: var(-
 /* changelog badges: the kind of change, then the entry; commit links stay quiet */
 .badge { display: inline-block; min-width: 2.6rem; margin-right: .35rem; padding: 0 .35rem; border-radius: 5px; font: 600 .72rem/1.45 var(--mono, monospace); text-align: center; vertical-align: .08em; color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .badge.b-fix { color: var(--error); background: color-mix(in srgb, var(--error) 12%, transparent); }
+.badge.b-tl { min-width: 0; color: var(--muted); background: color-mix(in srgb, currentColor 12%, transparent); }
 .badge.b-perf { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
 .badge.b-docs, .badge.b-build { color: var(--info); background: color-mix(in srgb, var(--info) 10%, transparent); }
 main li:has(> .badge) a[href*="/commit/"] code, main li:has(> .badge) a[href*="/compare/"] code { font-size: .72rem; opacity: .7; }
@@ -2540,6 +2604,8 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .claim .tw { opacity: 0; animation: tw-in 260ms linear forwards; }
 @keyframes tw-in { to { opacity: 1; } }
 .claim-rot > span.typing:has(.tw)::after { visibility: hidden; }
+/* while letters fade in, a caret rides their front (site.ts follow) */
+.tw-caret { position: absolute; left: 0; top: 0; width: 2px; height: 1.05em; margin-left: 2px; background: currentColor; pointer-events: none; }
 .cfg-group-about { margin-left: .9em; font-size: .85em; }
 /* `playground.widget_marks` and `playground.tips` off */
 .no-widget-marks .cm-gutter.cm-widgets, .no-tips .sx-tip { display: none !important; }
@@ -2563,16 +2629,16 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .pdf .pdf-tikz-gap.pdf-tikz-gy::after { left: auto; right: 0; }
 .pdf .pdf-tikz-gap.pdf-tikz-gx::before, .pdf .pdf-tikz-gap.pdf-tikz-gx::after { left: -4px; height: 1px; width: 7px; top: 0; }
 .pdf .pdf-tikz-gap.pdf-tikz-gx::after { top: auto; bottom: 0; }
-.pa-menu { position: fixed; z-index: 1000; min-width: 200px; max-height: calc(100vh - 16px); overflow-y: auto; padding: 4px 0; display: flex; flex-direction: column; background: var(--panel, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 8px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 13px; animation: fade .1s var(--ease); }
-.pa-menu.pa-sub { animation: none; z-index: 1001; }
-.pa-menu > b { padding: 3px 10px; font-size: 11px; color: var(--muted, #888); font-weight: 600; white-space: nowrap; }
-.pa-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border, #8884); }
-.pa-menu button { all: unset; display: flex; align-items: center; gap: 8px; padding: 3px 10px 3px 26px; cursor: pointer; position: relative; white-space: nowrap; }
+/* the pages' menu (shared look with .ctx above): above the pages' own layers, scrolled when taller than the window */
+.pa-menu { z-index: 1000; max-height: calc(100vh - 16px); overflow-y: auto; }
+.pa-menu.pa-sub { z-index: 1001; }
+.pa-menu hr { width: 100%; margin: 3px 0; border: 0; border-top: 1px solid var(--border); }
 .pa-menu button > span:first-of-type { flex: 1; }
-.pa-menu button small, .pa-menu .pa-more { color: var(--muted, #888); font-size: 11px; }
-.pa-menu button:hover, .pa-menu button:focus, .pa-menu button[aria-expanded="true"] { background: color-mix(in srgb, var(--accent, #0e7490) 16%, transparent); }
 .pa-menu button[aria-checked="true"]::before { content: '✓'; position: absolute; left: 9px; }
-.pa-img { flex: none; width: 28px; height: 14px; object-fit: contain; }
+.pa-img { flex: none; width: 32px; height: 18px; object-fit: contain; }
+/* TeX's previews are drawn in mid-grey ink (preview.rs INK): lifted on a dark menu */
+:root[data-theme=dark] .pa-img { filter: brightness(1.6); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme=light]) .pa-img { filter: brightness(1.6); } }
 .pa-sw { flex: none; width: 13px; height: 13px; border-radius: 3px; border: 1px solid color-mix(in srgb, var(--fg, #000) 30%, transparent); background-clip: padding-box; }
 .pa-mix { position: fixed; z-index: 1000; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 6px 8px; padding: 8px 10px; width: 280px; background: var(--panel, #fff); color: var(--fg, inherit); border: 1px solid var(--border, #8884); border-radius: 8px; box-shadow: var(--shadow, 0 4px 16px #0004); font-size: 12px; }
 .pa-mix label { display: contents; }
@@ -2587,6 +2653,13 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .tikz-input { position: fixed; z-index: 1000; width: 240px; padding: 6px; display: grid; gap: 3px; background: var(--bg, #fff); border: 1px solid #7c3aed; border-radius: 6px; box-shadow: var(--shadow, 0 4px 16px #0004); }
 .tikz-input input { font: inherit; padding: 3px 6px; }
 .tikz-input small { color: var(--muted, #888); font-size: 11px; }
+.tikz-input:has(.pa-suggest:not([hidden])) { width: 320px; }
+.pa-suggest { max-height: 260px; overflow-y: auto; display: grid; }
+.pa-suggest button { all: unset; display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.pa-suggest button > span { white-space: nowrap; }
+.pa-suggest button small { margin-left: auto; color: var(--muted, #888); font-size: 11px; }
+.pa-suggest button .pa-img { width: 64px; height: 18px; }
+.pa-suggest button:hover, .pa-suggest button.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .pdf .pdf-tikz-on { opacity: .35; }
 .pdf .pdf-tikz-grip { position: absolute; left: -9px; top: -9px; width: 14px; height: 14px; border-radius: 50%; pointer-events: auto; cursor: move; touch-action: none; background: #7c3aed; box-shadow: 0 0 0 2px var(--bg, #fff); }
 .pdf svg.pdf-tikz-path { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; overflow: visible; }
@@ -2605,11 +2678,12 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .pdf .pdf-size-ghost { border-style: solid; background: #0e74901a; }
 .pdf .pdf-size-ghost > b { position: absolute; right: 0; bottom: 100%; margin-bottom: 3px; white-space: nowrap; font: 600 11px/1.3 var(--mono, monospace); color: #fff; background: #0e7490; padding: 1px 5px; border-radius: 3px; }
 .pdf .pdf-size-grip { position: absolute; right: -4px; top: calc(50% - 9px); width: 6px; height: 18px; border-radius: 3px; background: #0e7490; pointer-events: auto; cursor: ew-resize; touch-action: none; box-shadow: 0 0 0 2px var(--bg, #fff); }
-.pdf .pdf-forest-add { position: absolute; display: flex; gap: 2px; z-index: 4; pointer-events: auto; }
+.pdf .pdf-forest-add { position: absolute; display: flex; gap: 2px; z-index: 4; pointer-events: auto; transform: translateY(-100%); padding: 2px; }
 .ts-forest-add { position: fixed; display: flex; gap: 2px; z-index: 900; }
 .pdf .pdf-forest-add button, .ts-forest-add button { all: unset; cursor: pointer; font: 600 10px/1 var(--mono, monospace); color: #fff; background: #15803d; border-radius: 3px; padding: 2px 3px; }
 .pdf .pdf-forest-add .pdf-forest-drag { cursor: grab; touch-action: none; background: #64748b; }
 .pdf .pdf-forest-add button:hover, .pdf .pdf-forest-add button:focus-visible, .ts-forest-add button:hover { background: #166534; }
+.pdf .pdf-forest-add .pdf-forest-del, .ts-forest-add .pdf-forest-del { background: #b91c1c; } .pdf .pdf-forest-add .pdf-forest-feat, .ts-forest-add .pdf-forest-feat { background: #1d4ed8; } .pdf .pdf-forest-add button:disabled, .ts-forest-add button:disabled { opacity: .4; cursor: default; }
 .pdf .pdf-tikz-bend { position: absolute; width: 10px; height: 10px; margin: -5px 0 0 -5px; border-radius: 2px; transform: rotate(45deg); background: var(--panel, #fff); border: 2px solid #7c3aed; box-sizing: border-box; pointer-events: auto; cursor: move; touch-action: none; z-index: 4; }
 .pdf .pdf-tikz-tag { position: absolute; transform: translate(8px, -130%); white-space: nowrap; pointer-events: none; z-index: 5; font: 600 11px/1.3 var(--mono, monospace); color: #fff; background: #7c3aed; padding: 1px 5px; border-radius: 3px; }
 .pdf .pdf-tikz-ghost { border-style: solid; background: #7c3aed1f; }
@@ -2621,11 +2695,10 @@ pre.out-block:hover .out-meta { opacity: .85; }
 .ov-near { opacity: .15 !important; pointer-events: none !important; }
 /* the bar's menus, Insert (math at the caret) and View (dark pages, follow, zoom): pills like the layers button */
 .math-group { border: 0; background: none; }
-.pdf-bar .view-menu { position: relative; }
 /* Type, Insert and View: one pill size */
-.type-group > button.small, .math-group .math-menu summary, .pdf-bar .view-menu summary { text-transform: none; letter-spacing: 0; height: auto; min-height: var(--btn-h-sm); box-sizing: border-box; display: inline-flex; align-items: center; gap: .25rem; padding: .02rem .55rem; border: 1px solid var(--pill-line); border-radius: 999px; background: var(--bg); color: var(--fg); font-size: .72rem; font-weight: 500; line-height: 1.2; white-space: nowrap; }
-.math-group .math-menu[open] summary, .pdf-bar .view-menu[open] summary { border-color: var(--accent); background: var(--sunk); }
-.pdf-bar .view-menu .view-list { left: auto; right: 0; display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; min-width: 0; width: max-content; max-width: 16rem; }
+.type-group > button.small, .math-group > button.small { text-transform: none; letter-spacing: 0; height: auto; min-height: var(--btn-h-sm); box-sizing: border-box; display: inline-flex; align-items: center; gap: .25rem; padding: .02rem .55rem; border: 1px solid var(--pill-line); border-radius: 999px; background: var(--bg); color: var(--fg); font-size: .72rem; font-weight: 500; line-height: 1.2; white-space: nowrap; }
+.math-group > button[aria-expanded="true"] { border-color: var(--accent); background: var(--sunk); }
+.layer-view .view-list { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; }
 /* every chip over the pages alike: one height, font, radius; the column chip's buttons are text in it, not buttons of their own */
 .pdf :is(.pdf-env, .pdf-fig, .pdf-col) > b { font: 600 .55rem/1.3 ui-monospace, Menlo, monospace; padding: 0 .25rem; border-radius: 3px 3px 0 0; }
 .pdf .pdf-col > b { padding-right: 0; }
@@ -2682,3 +2755,68 @@ pre.out-block:hover .out-meta { opacity: .85; }
 
 /* a widget's change whose build failed: said at the table it wrote, above it */
 .pdf-page > .pdf-wrote-fail { position: absolute; z-index: 5; transform: translateY(-100%); margin: 0; padding: .15rem .45rem; font-size: .78rem; background: var(--bg); border: 1px solid currentColor; border-radius: 4px; max-width: 90%; pointer-events: none; }
+/* the Draw dialog's formula bar (draw.ts): the formula drawn, its LaTeX, the templates */
+.draw-formula { display: grid; gap: var(--d-2, .5rem); margin: 0 1rem var(--d-2, .5rem); padding: var(--d-2, .5rem); border: 1px solid var(--border); border-radius: 8px; background: var(--sunk); min-width: 0; }
+.draw-formula[hidden] { display: none; }
+.draw-f-view { min-height: 3rem; display: flex; align-items: center; justify-content: center; overflow-x: auto; color: var(--fg); font-size: 2.2rem; }
+/* the formula's glyphs are text: no icon stroke on them */
+.draw-formula svg { fill: currentColor; stroke: none; }
+.draw-f-row { display: flex; gap: var(--d-2, .5rem); min-width: 0; }
+.draw-f-src { flex: 1 1 auto; min-width: 0; height: var(--ctl, 2rem); padding: 0 .75rem; border: 1px solid var(--border); border-radius: 999px; background: var(--bg); color: var(--fg); font: .85rem var(--mono, monospace); }
+.draw-f-src:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.draw-f-kinds { display: flex; flex-wrap: wrap; gap: .3rem; }
+.draw-f-kinds .pill { height: 2.2rem; min-width: 2.4rem; padding: 0 .5rem; justify-content: center; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: 1.05rem; }
+.draw-f-kinds .pill svg { height: 1.5em; width: auto; max-width: 3.5em; }
+.draw-f-kinds .pill:hover, #draw-formula[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+#draw-f-insert.done { border-color: var(--accent); }
+/* a TikZ picture typed in, as the run drew it, over the build's until a build of the text lands (pdfSketchDraw) */
+.pdf svg.pdf-sketch { position: absolute; background: none; color: #000; overflow: visible; }
+.pdf svg.pdf-sketch path { stroke-linecap: round; stroke-linejoin: round; }
+.pdf svg.pdf-sketch path.ts-shape { fill: color-mix(in srgb, currentColor 10%, transparent); }
+.pdf svg.pdf-sketch text { fill: currentColor; font-family: 'Latin Modern Roman', 'CMU Serif', Georgia, serif; }
+.pdf svg.pdf-sketch.approximate path { stroke-dasharray: 2 1.5; }
+/* the bar's fold button shows while the bar is hovered or holds the focus, and while folded (to unfold it) */
+@media (hover: hover) { .pdf-bar #pdf-fold { opacity: 0; transition: opacity .15s var(--ease); } .pdf-bar:hover #pdf-fold, .pdf-bar:focus-within #pdf-fold, #pdf-fold[aria-pressed="true"] { opacity: 1; } }
+/* the commands around the Type caret, a gray ghost above it */
+.pdf .pdf-caret-ghost { position: absolute; z-index: 3; transform: translateY(calc(-100% - 2px)); padding: 0 3px; border-radius: 3px; font: 500 10px/1.3 var(--mono, ui-monospace, monospace); color: var(--muted); background: color-mix(in srgb, var(--bg) 80%, transparent); white-space: nowrap; pointer-events: none; }
+.stat-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr)); align-items: stretch; gap: .6rem; max-width: var(--measure); margin: 0 0 .5rem; }
+@media (min-width: 700px) { .stat-strip { grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 1fr; } }
+.stat-strip .stat { display: flex; flex-direction: column; justify-content: flex-start; gap: .2rem; padding: .6rem .8rem; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+.stat-strip .stat span { font-size: .82rem; color: var(--muted); }
+.stat-strip .stat b { font-size: 1.6rem; font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; color: var(--fg); }
+.type-complete .complete-shape { color: var(--muted); }
+/* the PDF table's structure controls (playground.js pdfTabBars), each shown only while the pointer is at its place:
+   a column's × under it and a + on each line between columns, a row's grip and × left of it and a + on each line
+   between rows; the chip's name and the row's grip drag to reorder */
+.pdf .pdf-col-name[data-t] { cursor: grab; }
+.pdf .pdf-tabbar { z-index: 6; display: none; pointer-events: auto; }
+.pdf .pdf-tabbar.on, .pdf .pdf-tabbar:hover, .pdf .pdf-tabbar:focus-within, .pdf .pdf-tab-drag.pdf-tabbar { display: block; }
+.pdf .pdf-tab-ops { position: absolute; display: flex; gap: 3px; align-items: center; }
+.pdf :is(.pdf-colbar, .pdf-colgap, .pdf-rowgap) .pdf-tab-ops { left: 50%; top: 50%; translate: -50% -50%; }
+.pdf .pdf-rowbar .pdf-tab-ops { right: 0; top: 0; }
+/* calm until aimed at: small muted marks in an 18px hit area; a + turns teal and a × red only under the pointer */
+.pdf .pdf-tab-op { all: unset; box-sizing: border-box; min-width: 18px; height: 18px; padding: 2px; background-clip: content-box; font: 600 11px/14px ui-monospace, monospace; text-align: center; cursor: pointer; color: var(--muted, #64748b); background-color: color-mix(in srgb, currentColor 14%, transparent); border-radius: 9px; }
+.pdf .pdf-tab-op[data-act="delete"] { border-radius: 5px; }
+.pdf .pdf-tab-op:hover, .pdf .pdf-tab-op:focus-visible { color: #fff; background-color: #0e7490; }
+.pdf .pdf-tab-op[data-act="delete"]:hover, .pdf .pdf-tab-op[data-act="delete"]:focus-visible { background-color: #b91c1c; }
+.pdf .pdf-tab-op:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+/* a line's +: a hairline along the line it inserts at */
+.pdf .pdf-colgap::before { content: ""; position: absolute; left: 50%; bottom: 100%; height: 14px; border-left: 1px dashed color-mix(in srgb, #0e7490 60%, transparent); translate: -.5px 0; }
+.pdf .pdf-rowgap::before { content: ""; position: absolute; top: 50%; left: 100%; width: 14px; border-top: 1px dashed color-mix(in srgb, #0e7490 60%, transparent); translate: 0 -.5px; }
+.pdf .pdf-row-grip { display: inline-block; width: 14px; height: 18px; font: 11px/18px ui-monospace, monospace; text-align: center; color: var(--muted, #64748b); cursor: grab; border-radius: 4px; }
+.pdf .pdf-row-grip:hover { background: color-mix(in srgb, #0e7490 18%, transparent); }
+.pdf .pdf-tab-drag, .pdf .pdf-tab-drag * { cursor: grabbing !important; }
+.pdf .pdf-col.pdf-tab-target { background: color-mix(in srgb, #0e7490 22%, transparent); }
+.pdf .pdf-tabbar.pdf-tab-target { display: block; } .pdf .pdf-tabbar.pdf-tab-target .pdf-row-grip { color: #fff; background: #0e7490; }
+
+/* a landing window opens the playground on its example: the whole window is the link */
+.shot-live.shot-link, .shot-live.shot-link * { cursor: pointer; }
+
+/* the PDF bar's fold button: its chevron only (the tooltip names it). Hidden until the bar is hovered, it keeps its
+   room: shown it moves nothing (it took no width while hidden, so its showing shifted the buttons beside it) */
+.pdf-bar #pdf-fold .fold-label { display: none; }
+.pdf-bar #pdf-fold { padding: 0 .3rem; min-width: 0; gap: 0; }
+@media (hover: hover) {
+  .pdf-bar #pdf-fold { opacity: 0; transition: opacity var(--quick, .12s); }
+  .pdf-bar:hover #pdf-fold, .pdf-bar:focus-within #pdf-fold, #pdf-fold[aria-pressed="true"] { opacity: 1; }
+}

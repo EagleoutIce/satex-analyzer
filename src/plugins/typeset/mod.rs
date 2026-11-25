@@ -3,13 +3,16 @@
 //! only through [`Facts`], the state it ended in: parameters, codes, fonts and
 //! hyphenation tables. `plugins.typeset.<name>` in `satex.yaml` switches each.
 
+pub mod commands;
+pub mod fontat;
 pub mod hyphenate;
 pub mod linebreak;
 pub mod lines;
+pub mod mathwidths;
 
 use crate::analysis::machine::Analysis;
 use crate::engine::builtins::CodeTable;
-use crate::engine::hyph::Patterns;
+use crate::engine::hyph::HyphTables;
 use crate::engine::linebreak::Tables;
 use crate::engine::tfm::Metrics;
 use crate::engine::value::{Glue, Scaled, Value};
@@ -29,7 +32,7 @@ pub struct Plugin {
     pub answer: fn(&mut Facts, &str, &Json) -> Json,
 }
 
-pub const PLUGINS: [Plugin; 2] = [
+pub const PLUGINS: [Plugin; 5] = [
     Plugin {
         name: "hyphenate",
         request: "satex/hyphenate",
@@ -47,6 +50,27 @@ pub const PLUGINS: [Plugin; 2] = [
         enabled: |s| s.linebreak,
         answer: linebreak::answer,
     },
+    Plugin {
+        name: "mathwidths",
+        request: "satex/mathwidths",
+        about: "math symbols as the run's math fonts set them: their math codes, family fonts and metrics",
+        enabled: |s| s.mathwidths,
+        answer: |facts, _, params| mathwidths::answer(facts, params),
+    },
+    Plugin {
+        name: "commands",
+        request: "satex/commandText",
+        about: "what a control word typesets alone: its characters, kerns and raised or lowered boxes",
+        enabled: |s| s.commands,
+        answer: |facts, _, params| commands::answer(facts, params),
+    },
+    Plugin {
+        name: "fonts",
+        request: "satex/fontAt",
+        about: "the font the run set text in at a place: its family, series and shape among the defaults",
+        enabled: |s| s.fonts,
+        answer: fontat::answer,
+    },
 ];
 
 /// `method`'s answer from a finished run of the document at `path`: `null`
@@ -60,7 +84,7 @@ pub fn answer(analysis: &Analysis, method: &str, path: &str, params: &Json) -> J
 pub struct Facts<'a> {
     pub analysis: &'a Analysis,
     fonts: Fonts<'a>,
-    tables: Option<Option<(Rc<Patterns>, Patterns)>>,
+    tables: Option<Option<HyphTables>>,
 }
 
 impl<'a> Facts<'a> {
@@ -75,6 +99,10 @@ impl<'a> Facts<'a> {
     }
 
     /// An engine slot ([`crate::engine::commands::ENGINE`]).
+    pub(crate) fn engine_value(&self, key: &str) -> Option<Value> {
+        self.engine(key)
+    }
+
     fn engine(&self, key: &str) -> Option<Value> {
         self.value(&format!("{}{key}", crate::engine::commands::ENGINE))
     }
@@ -133,7 +161,7 @@ impl Tables for Facts<'_> {
     }
 
     /// The language in force at the run's end: its `\patterns` and `\hyphenation`.
-    fn patterns(&mut self) -> Option<(Rc<Patterns>, Patterns)> {
+    fn patterns(&mut self) -> Option<HyphTables> {
         if self.tables.is_none() {
             let language = match self.value("language") {
                 Some(Value::Unknown) => None,
@@ -146,7 +174,8 @@ impl Tables for Facts<'_> {
                 None => Some(Rc::from(Vec::new())),
             };
             let tables = language.and_then(|l| {
-                let p = crate::engine::hyph::parse_patterns(&text(&format!("patterns.{l}"))?);
+                // One request hyphenates a paragraph once: no words to keep.
+                let p = crate::engine::hyph::parse_patterns(&text(&format!("patterns.{l}"))?, 0);
                 Some((Rc::new(p), crate::engine::hyph::parse_exceptions(&text(&format!("hyphenation.{l}"))?)))
             });
             self.tables = Some(tables);

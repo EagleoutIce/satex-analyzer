@@ -38,12 +38,14 @@ let sources: string[] = [], timeout = 0;
  * cost a round trip per source and build again. `missed`: the ones this build found. */
 let absent = new Set<string>(), missed = new Set<string>();
 const ABSENT = `${ANSWERED}absent/`, ABSENT_MS = 7 * 24 * 3600e3;
-/** Lookups for the document's own files stay here: nothing to find, and their names are the document's. */
-const askable = (name: string) => !OWN.test(name) && !stems.has(name.replace(/\.[^.]*$/, ''));
+/** What TeX Live lacks, as the site's build saw the examples' builds look it up (`tex.absent`: a font's `.vf`, `lstlocal.cfg`). */
+let lacking = new Set<string>();
+/** Lookups for the document's own files stay here: nothing to find, and their names are the document's. Nor are TeX Live's gaps asked for. */
+const askable = (name: string) => !OWN.test(name) && !stems.has(name.replace(/\.[^.]*$/, '')) && !lacking.has(name);
 const hostOf = (pattern: string) => new URL(pattern.split('{')[0]).host;
 /** One file from the sources, in order: a 404 goes on to the next, a host that fails is left out for the rest of the build. */
 function ask(format: string, name: string): [number, ArrayBuffer | null] {
-  if (!askable(name)) return [404, null];
+  if (!askable(name) || lacking.has(`${name}.${EXT[format]}`)) return [404, null];
   const key = `${format}/${encodeURIComponent(name)}`;
   if (absent.has(key)) return [404, null];
   let clean = true;
@@ -53,7 +55,9 @@ function ask(format: string, name: string): [number, ArrayBuffer | null] {
     post({ fetching: `${name} from ${host}` });
     try {
       const x = new Native();
-      x.open('GET', pattern.replace('{format}', format).replace('{name}', encodeURIComponent(name)), false);
+      // a source without `{format}` (the site's files) holds a file by its whole name: a font asked bare gets its extension
+      const file = pattern.includes('{format}') || name.includes('.') || !EXT[format] ? name : `${name}.${EXT[format]}`;
+      x.open('GET', pattern.replace('{format}', format).replace('{name}', encodeURIComponent(file)), false);
       x.timeout = timeout;
       x.responseType = 'arraybuffer';
       x.send();
@@ -74,6 +78,8 @@ function ask(format: string, name: string): [number, ArrayBuffer | null] {
 /** kpathsea's format numbers (kpse_file_format_type) by extension: the engine asks `{format}/{name}`. */
 const FORMATS: Record<string, number> = { tfm: 3, bib: 6, bst: 7, map: 11, pfb: 32, vf: 33, ist: 35, enc: 44 };
 const formatOf = (name: string) => FORMATS[name.split('.').pop()!] ?? 26;
+/** The extension of a format: pdfTeX asks for a virtual font without its `.vf`. */
+const EXT: Record<string, string> = Object.fromEntries(Object.entries(FORMATS).map(([e, n]) => [n, e]));
 /** The engine's keys of the files it holds: fetched, or kept by the browser. */
 const held = new Set<string>();
 function hold(m: Mod, format: number, name: string, bytes: Uint8Array, host?: string) {
@@ -87,7 +93,7 @@ const MAP = 'texmf-var/fonts/map/pdftex/updmap/pdftex.map';
 let map: Map<string, string[]> | undefined;
 /** The files `names` (what the analysis saw the document read) fetched side by side before the first run asks for
  * them one at a time: each from the sources in order, as ask() would. All 404: absent. A host that fails is left
- * to ask(). `\input xkvutils` asks the bare name: a `.tex` is held under its stem too. */
+ * to ask(). `\input xkvutils` asks the bare name: a `.tex` or a font file is held under its stem too. */
 async function prefetch({ m, core }: Instance, names: string[]) {
   // a font's metrics come with its probe for a virtual font and, by the font map, its Type 1 file and encoding
   const fonts = names.filter((n) => n.endsWith('.tfm')).map((n) => n.slice(0, -4));
@@ -112,7 +118,9 @@ async function prefetch({ m, core }: Instance, names: string[]) {
           const data = await bytesOf(r);
           if (!data.length) return;
           hold(m, format, name, data, host);
-          if (format === 26 && name.endsWith('.tex')) hold(m, format, name.slice(0, -4), data, host);
+          // a bare name finds it too: `\input xkvutils`, a font's metrics asked as `mathkerncmssi10`
+          const ext = format === 26 ? 'tex' : EXT[format];
+          if (name.endsWith(`.${ext}`)) hold(m, format, name.slice(0, -ext!.length - 1), data, host);
           bytes += data.length;
           return;
         }
@@ -320,6 +328,7 @@ self.onmessage = async ({ data: { tex, files, main, from, want = [], boot } }) =
   try {
     sources = from;
     timeout = tex.timeoutMs;
+    lacking = new Set(tex.absent ?? []);
     const instance = await (booting ??= start(tex));
     const answer = await build(instance, files, main, want);
     post(answer, answer.outputs.map((o) => o.bytes.buffer));

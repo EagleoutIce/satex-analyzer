@@ -3,7 +3,7 @@ import { execFile, spawn } from 'child_process';
 import { existsSync } from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import { CloseAction, ErrorHandler, LanguageClient, ResponseError, State, StreamInfo } from 'vscode-languageclient/node';
+import { CloseAction, ErrorHandler, ExecuteCommandRequest, LanguageClient, ResponseError, State, StreamInfo } from 'vscode-languageclient/node';
 import { openDialog } from './dialogs';
 import { Revive } from './revive';
 import { capMiB } from './memory';
@@ -305,10 +305,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     binaryPath = binary;
     const bar = (status ??= new Status());
     // What the Problems view shows while a run goes (`satex.findings.whileAnalyzing`).
+    const stale = (d: vscode.Diagnostic) => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
+        { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE });
     const findings = new Findings<vscode.Diagnostic>(
         () => vscode.workspace.getConfiguration('satex').get<Mode>('findings.whileAnalyzing', 'hide'),
-        d => Object.assign(new vscode.Diagnostic(d.range, d.message, d.severity),
-            { code: d.code, tags: d.tags, relatedInformation: d.relatedInformation, data: (d as { data?: unknown }).data, source: STALE }),
+        stale,
         (uri, diagnostics) => client?.diagnostics?.set(vscode.Uri.parse(uri), diagnostics));
     client = new LanguageClient(
         'satex', 'satex', () => startServer(binary),
@@ -335,6 +336,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 },
             },
         });
+    // The server's commands (`satex/query`, `satex/style`) are registered once per window and run on
+    // the client of the moment. The client's own registration is redone at each start, and a
+    // restart whose earlier client was not cleared failed with "command 'satex/query' already exists".
+    const held = new Set<string>();
+    const execute = client.getFeature(ExecuteCommandRequest.method);
+    execute.register = (data) => {
+        for (const id of data.registerOptions.commands ?? []) {
+            if (held.has(id)) { continue; }
+            held.add(id);
+            context.subscriptions.push(command(id, (...args: never[]) =>
+                client?.sendRequest(ExecuteCommandRequest.type, { command: id, arguments: args })));
+        }
+    };
     const revive = new Revive(() => {
         log('satex: the server stopped; starting it again');
         void client?.restart().catch(error => log(`satex: ${String(error)}`));
@@ -378,8 +392,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         command('satex.openWidget', () => widgets(client)),
         command('satex.openSettings', () => vscode.commands.executeCommand('workbench.action.openSettings', `@ext:${context.extension.id}`)),
         client.onNotification('satex/status', working),
+        // a build run's findings (`run` said) before the build's last run: those a later run may change marked stale
         client.onNotification('satex/settled', async (p: { uri: string; diagnostics: never[] }) =>
-            findings.settled(p.uri, await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])),
+            findings.settled(p.uri, (await client?.protocol2CodeConverter.asDiagnostics(p.diagnostics) ?? [])
+                .map(d => (d as { data?: { provisional?: boolean } }).data?.provisional ? stale(d) : d))),
         // the client gives up on a server that closed five times in three minutes: try again after a minute
         client.onDidChangeState(e => {
             const stopped = e.newState === State.Stopped;

@@ -352,6 +352,49 @@ const TYPESET_CASES: &[(&str, &str)] = &[
     ),
     // tex.web § 1080: `\lastbox` is void when the tail is no box.
     ("lastbox-after-glue", r"\setbox0=\hbox{a\hskip3pt\setbox1=\lastbox\xdef\r{\the\wd1,\the\lastskip}}"),
+    // tex.web §§ 1105, 1110: `\unvbox` gives the whole list back, so `\unskip`, `\unkern` and
+    // `\unpenalty` uncover the items under its last one, through `\box` and `\copy` too.
+    (
+        "unskip-after-unvbox",
+        concat!(
+            r"\setbox0=\vbox{\hbox{a}\penalty7\kern2pt\vskip1pt\vskip3pt}\setbox2=\box0 \setbox0=\copy2 ",
+            r"\setbox2=\vbox{\unvbox0 \unskip\xdef\a{\the\lastskip}\unskip\xdef\b{\the\lastkern}\unkern",
+            r"\xdef\r{\a,\b,\the\lastpenalty}}"
+        ),
+    ),
+    // tex.web § 679: interline glue lies between two boxes of a vertical list, so under a box
+    // `\lastbox` took it is the tail, not the glue before it.
+    (
+        "lastbox-uncovers-interline-glue",
+        r"\baselineskip=12pt \setbox0=\vbox{\hbox{a}\vskip3pt\vbox{}\setbox1=\lastbox\xdef\r{\the\lastskip}}",
+    ),
+    // tex.web §§ 668, 1080, 1105: a list is as high as before, once the items an `\unvbox` put
+    // on it are taken off again (LaTeX's output routine does so with `\box255` at every float).
+    (
+        "lastbox-and-unskip-restore-the-size",
+        concat!(
+            r"\baselineskip=12pt \setbox0=\vbox{\hbox{a}\vskip3pt\vbox{}}",
+            r"\setbox2=\vbox{\hrule height5pt \unvbox0 \setbox4=\lastbox\xdef\a{\the\lastskip}\unskip}",
+            r"\xdef\r{\a,\the\ht2,\the\dp2}"
+        ),
+    ),
+    (
+        "lastbox-leaves-the-glue-under-it",
+        concat!(
+            r"\baselineskip=12pt \setbox0=\vbox{\hbox{g}\kern3pt\penalty5\hbox{y}}",
+            r"\setbox2=\vbox{\hrule height5pt depth1pt \unvbox0 \setbox4=\lastbox\unpenalty\unkern}",
+            r"\xdef\r{\the\ht2,\the\dp2}"
+        ),
+    ),
+    // tex.web § 668: glue over glue adds its width alone, the depth before it being zero.
+    (
+        "unskip-glue-over-glue",
+        concat!(
+            r"\setbox0=\vbox{\hbox{g}\vskip3pt\vskip4pt}",
+            r"\setbox2=\vbox{\hrule height5pt depth1pt \unvbox0 \unskip\vskip0pt\unskip\unskip}",
+            r"\xdef\r{\the\ht2,\the\dp2}"
+        ),
+    ),
     // tex.web § 1078: a leader box goes on no list of its own.
     ("hbox-leaders", r"\setbox0=\hbox{a\leaders\hbox{.}\hskip5pt}\xdef\r{\the\wd0}"),
     // tex.web § 420: a void register reads as zero in all three.
@@ -569,10 +612,9 @@ fn a_filled_page_is_marked_where_it_breaks() {
     assert_eq!(pages, ["page 1 → 2 by here", "page 2"]);
 }
 
-/// The sample paper with `\\drafttrue` and `booktabs`, as pdflatex sets it (pdftotext): `\\repeat`
-/// is `\\fi`, so the skipped branch ends early and sets `[1]11` in the preamble, on a page of its
-/// own; `\\maketitle` breaks it. The figure's rule stays in the figure, and the table fills page
-/// 2, so the conclusion opens page 3.
+/// The sample paper with `\\drafttrue` and `booktabs`, as pdflatex sets it (pdftotext): the
+/// title, the figure (its rule stays in it) and the table fill page 1, so the conclusion's heading
+/// opens page 2.
 #[test]
 fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("typeset-sample-pages");
@@ -609,8 +651,6 @@ fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
         })
         .collect();
     let expected = [
-        "[1]11",
-        "page 1 → 2",
         "A",
         "satex",
         "November",
@@ -625,10 +665,10 @@ fn the_sample_paper_breaks_its_pages_where_pdflatex_does() {
         "Equation",
         "Table",
         "Method",
-        "page 2 → 3 by here",
+        "page 1 → 2 by here",
         "4",
         "satex",
-        "page 3",
+        "page 2",
     ];
     assert_eq!(seq, expected, "{rows:?}");
 }
@@ -976,6 +1016,10 @@ fn names_one_call_defines_are_defined_together() {
     let together = |name: &str| field(name, "together");
     assert!(together("\\c@steps").iter().any(|n| n == "\\thesteps"), "{rows:?}");
     assert!(together("\\note").iter().any(|n| n == "\\endnote"), "{rows:?}");
+    // TeX Live 2019's kernel has no `\NewDocumentCommand`, so no `\pick`
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     // the code's own partners (`\pick code`) are folded apart, never shown as names to write
     assert!(together("\\pick").is_empty(), "{rows:?}");
     assert!(!field("\\pick", "together_internal").is_empty(), "{rows:?}");
@@ -1359,6 +1403,68 @@ fn a_paragraph_records_the_source_site_of_its_characters() {
     assert_eq!(site(find("and")), (body, and), "{row}");
 }
 
+/// A macro's argument read on the line it is set on: each letter at its own column, not where
+/// reading stood after the argument. Pins the whole-line finding mark of
+/// `\textcolor{brown}{\textbf{word}}`: the letters' sites missed the finding's range.
+#[test]
+fn an_argument_s_letters_stand_at_their_own_columns() {
+    let line = "Das ist \\textbf{toooll} und \\x{Quokka} hier.";
+    let rows = typeset_rows("arg-sites", "\\def\\x#1{\\textit{#1}}", line);
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("Das"))).expect("paragraph");
+    let body = row["line"].as_u64().unwrap();
+    let text: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let sites = row["sites"].as_array().expect("sites");
+    let site = |at: usize| {
+        let s = sites.iter().rev().find(|s| s["at"].as_u64().unwrap() as usize <= at).expect("an entry");
+        let step = if s["same"] == true { 0 } else { at - s["at"].as_u64().unwrap() as usize };
+        (s["line"].as_u64().unwrap(), s["col"].as_u64().unwrap() + step as u64)
+    };
+    let plain: String = text.iter().collect();
+    for word in ["toooll", "Quokka", "hier"] {
+        let at = text_offset(&text, plain.find(word).unwrap());
+        let col = line.find(word).unwrap() as u64 + 1;
+        let got: Vec<_> = (0..word.len()).map(|k| site(at + k)).collect();
+        let want: Vec<_> = (0..word.len() as u64).map(|k| (body, col + k)).collect();
+        assert_eq!(got, want, "{word}: {row}");
+    }
+}
+
+/// The characters a macro's use sets all stand at its call: the site is said once for all of them
+/// (`same`), not once per character. Pins the rows of a document of generated text (blindtext, 737
+/// pages): 99.7 % of its `sites` entries repeated the one before, half of 110 MB of rows, which the
+/// playground's worker ran out of memory on.
+#[test]
+fn the_characters_a_macro_sets_share_one_site_mark() {
+    let name = "Lorem ipsum dolor sit amet consectetuer";
+    let rows = typeset_rows("site-runs", &format!("\\def\\name{{{name}}}"), "Hello \\name{} and \\name{} you");
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("Hello"))).expect("paragraph");
+    let body = row["line"].as_u64().unwrap();
+    let text: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let sites = row["sites"].as_array().expect("sites");
+    let place = |s: &serde_json::Value| (s["line"].as_u64().unwrap(), s["col"].as_u64().unwrap());
+    let site = |at: usize| {
+        let s = sites.iter().rev().find(|s| s["at"].as_u64().unwrap() as usize <= at).expect("an entry");
+        let step = if s["same"] == true { 0 } else { at - s["at"].as_u64().unwrap() as usize };
+        (place(s).0, place(s).1 + step as u64)
+    };
+    let calls = ["Hello \\name".len() as u64, "Hello \\name{} and \\name".len() as u64];
+    // every character of both uses at its own call, hyphen marks and blanks aside
+    let plain: String = text.iter().collect();
+    let mut from = 0;
+    for call in calls {
+        let lorem = from + plain[from..].find("Lorem").expect("the macro's text");
+        let at = text_offset(&text, lorem);
+        assert!((at..at + 20).filter(|&k| text[k].is_alphabetic()).all(|k| site(k) == (body, call)), "{row}");
+        from = lorem + 5;
+    }
+    // at most two marks per use: where it begins, and that the rest stays there
+    for call in calls {
+        let marks = sites.iter().filter(|s| place(s) == (body, call)).count();
+        assert!((1..=2).contains(&marks), "{marks} marks for a use at column {call}: {row}");
+    }
+    assert_eq!(site(text_offset(&text, plain.rfind("you").unwrap())).0, body, "{row}");
+}
+
 /// A picture is drawn from what the run wrote for it: its two node frames,
 /// the line between them and the arrow tip pgf drew as a curve, with each
 /// node's text in its frame and with `yshift` where TikZ put the node.
@@ -1415,6 +1521,41 @@ fn a_forest_tree_is_drawn_with_its_nodes_and_edges() {
     for e in edges {
         let v: Vec<f64> = e["d"].as_str().unwrap().split(' ').filter_map(|w| w.parse().ok()).collect();
         assert!(v[1] > ay - 1.0 && v[3] < by, "{tree}");
+    }
+    assert_eq!(tree["approximate"], false);
+}
+
+/// Intuition: forest draws each node into a box first and places the boxes later, so a
+/// node's frame goes where its box goes, around its text.
+/// Pins the bug where `for tree={draw}` drew every frame where the boxes were made, stacked
+/// on the root, and no node elsewhere had one.
+#[test]
+fn a_forest_node_frame_moves_with_its_box() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{forest}\nfor tree={draw}\n[A [B][C]]\n\\end{forest}";
+    let rows = typeset_rows("forest-frames", "\\usepackage{forest}", body);
+    let tree = rows.iter().map(|r| &r["sketch"]).find(|p| p.is_object());
+    let tree = tree.unwrap_or_else(|| panic!("a drawn tree: {rows:?}"));
+    let numbers = |p: &serde_json::Value| -> Vec<f64> {
+        p["d"].as_str().unwrap().split(' ').filter_map(|w| w.parse().ok()).collect()
+    };
+    let paths = tree["paths"].as_array().unwrap();
+    // a frame is a closed path, an edge an open line
+    let frames: Vec<Vec<f64>> = paths.iter().filter(|p| p["d"].as_str().unwrap().ends_with('Z')).map(numbers).collect();
+    let texts = tree["texts"].as_array().unwrap();
+    assert_eq!(frames.len(), texts.len(), "one frame per node: {tree}");
+    // each node's text starts inside exactly one frame (SVG's y grows down, a text's from its baseline up)
+    for t in texts {
+        let (x, y) = (t["x"].as_f64().unwrap() + 1.0, t["y"].as_f64().unwrap() - 1.0);
+        let around = |f: &&Vec<f64>| {
+            let (xs, ys) = (f.iter().step_by(2), f.iter().skip(1).step_by(2));
+            let (lo, hi) = (xs.clone().copied().fold(f64::MAX, f64::min), xs.copied().fold(f64::MIN, f64::max));
+            let (top, bottom) = (ys.clone().copied().fold(f64::MAX, f64::min), ys.copied().fold(f64::MIN, f64::max));
+            lo < x && x < hi && top < y && y < bottom
+        };
+        assert_eq!(frames.iter().filter(around).count(), 1, "{} in one frame: {tree}", t["text"]);
     }
     assert_eq!(tree["approximate"], false);
 }
@@ -1634,7 +1775,9 @@ fn a_key_opening_a_paragraph_is_its_own() {
 }
 
 /// A character read in the user's file elsewhere than where it is set (`\\title`'s argument, set by
-/// `\\maketitle`) names where it was read; text read where it is set names nothing.
+/// `\\maketitle`) names where it was read; text read where it is set names nothing. Every row
+/// names its own sites: the date, set by the same call as the author, had none, so the playground
+/// placed none of its characters ("not typed here").
 #[test]
 fn title_text_knows_where_it_was_read() {
     if !crate::support::installed() {
@@ -1644,6 +1787,7 @@ fn title_text_knows_where_it_was_read() {
     let rows = typeset_doc("origins", source, &[]);
     for (text, line, col) in [("Alpha", 2, 8), ("Carol", 3, 9), ("Today", 4, 7)] {
         let row = paragraph(&rows, text);
+        assert_eq!(row["sites"][0]["at"], 0, "{text}: a site from the row's first character: {row}");
         let at = row["detail"].as_str().and_then(|d| d.find(text)).expect("in detail") as u64;
         let o =
             row["origins"].as_array().into_iter().flatten().rfind(|o| o["at"].as_u64() <= Some(at)).expect("an origin");

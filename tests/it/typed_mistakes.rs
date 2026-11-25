@@ -95,7 +95,9 @@ fn text_before_the_first_item_is_an_error_at_the_item() {
         return;
     }
     let doc = "\\documentclass{article}\n\\begin{document}\n\\begin{itemize}\nitem First.\n\\item Second.\n\\end{itemize}\n\\end{document}\n";
-    assert_eq!(error_lines(doc), [5]);
+    // TeX Live 2026's pdflatex: line 5; older kernels also err at `\end{itemize}`.
+    let want = crate::support::pdflatex_error_lines(doc).unwrap_or_else(|| vec![5]);
+    assert_eq!(error_lines(doc), want);
 }
 
 /// `\sec` is `\mathop{…}` in latex.ltx: in text, TeX inserts `$` before the

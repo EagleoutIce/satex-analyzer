@@ -210,6 +210,7 @@ void luaV_finishset (lua_State *L, const TValue *t, TValue *key,
       lua_assert(ttisnil(slot));  /* old value must be nil */
       tm = fasttm(L, h->metatable, TM_NEWINDEX);  /* get metamethod */
       if (tm == NULL) {  /* no metamethod? */
+        satex_guard(L, h);
         if (slot == luaO_nilobject)  /* no previous entry? */
           slot = luaH_newkey(L, h, key);  /* create one */
         /* no metamethod and (now) there is an entry with given key */
@@ -363,6 +364,8 @@ static int LEnum (const TValue *l, const TValue *r) {
 */
 int luaV_lessthan (lua_State *L, const TValue *l, const TValue *r) {
   int res;
+  if (satex_isunknown(l) || satex_isunknown(r))
+    return satex_choose(L);
   if (ttisnumber(l) && ttisnumber(r))  /* both operands are numbers? */
     return LTnum(l, r);
   else if (ttisstring(l) && ttisstring(r))  /* both are strings? */
@@ -383,6 +386,8 @@ int luaV_lessthan (lua_State *L, const TValue *l, const TValue *r) {
 */
 int luaV_lessequal (lua_State *L, const TValue *l, const TValue *r) {
   int res;
+  if (satex_isunknown(l) || satex_isunknown(r))
+    return satex_choose(L);
   if (ttisnumber(l) && ttisnumber(r))  /* both operands are numbers? */
     return LEnum(l, r);
   else if (ttisstring(l) && ttisstring(r))  /* both are strings? */
@@ -407,7 +412,7 @@ int luaV_lessequal (lua_State *L, const TValue *l, const TValue *r) {
 int luaV_equalobj (lua_State *L, const TValue *t1, const TValue *t2) {
   const TValue *tm;
   if (L != NULL && (satex_isunknown(t1) || satex_isunknown(t2)))
-    satex_unknown(L);
+    return satex_choose(L);
   if (ttype(t1) != ttype(t2)) {  /* not the same variant? */
     if (ttnov(t1) != ttnov(t2) || ttnov(t1) != LUA_TNUMBER)
       return 0;  /* only numbers can be equal with different variants */
@@ -856,6 +861,8 @@ void luaV_execute (lua_State *L) {
       }
       vmcase(OP_SETUPVAL) {
         UpVal *uv = cl->upvals[GETARG_B(i)];
+        satex_guard(L, uv);
+        satex_write(L, uv);
         setobj(L, uv->v, ra);
         luaC_upvalbarrier(L, uv);
         vmbreak;

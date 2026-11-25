@@ -93,7 +93,7 @@ impl Plan {
         };
         let uses = copies.iter().map(|&(a, b)| snapshot::replaced(doc, a, b, &[call("usebox", &[&name])]));
         let nodes: Vec<Node> = [call("newsavebox", &[&name]), saved].into_iter().chain(uses).collect();
-        snapshot::edits(cx.analysis, doc, &nodes)
+        snapshot::edits(cx.analysis, doc, cx.file(), &nodes)
     }
 }
 

@@ -237,3 +237,147 @@ export async function typeundo(p, sc) {
   if (t4 === t0) res.fails.push('the key after the undo did not type');
   return res;
 }
+
+/** `catcomplete`: the editor's completion and command colors follow the catcodes at the caret (user 2026-11-21 13:16).
+ * In a document's body `\(\sum_` names nothing (`_` a subscript): no list opens, and `\sum` lists no name a body cannot
+ * type (`\c__socket_…/…`); under `\ExplSyntaxOn` `\c__` lists expl3 names. The colors: `\l_tmpa_tl` in the body is
+ * `\l` alone, under `\ExplSyntaxOn` one name. */
+export async function catcomplete(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const fail = (m) => res.fails.push(m);
+  if (!await started(p) || !await example(p, 'hello.tex')) { fail('the playground did not start'); return res; }
+  const T = '\\documentclass{article}\n\\begin{document}\nBody \\l_tmpa_tl here.\n\n\\ExplSyntaxOn\n\\tl_set:Nn \\l_tmpa_tl {x}\n\\ExplSyntaxOff\nEnd.\n\\end{document}\n';
+  await p.eval(`(() => { const v = document.querySelector('.cm-content'); v.focus(); })()`);
+  // the whole text replaced as a person would: select all, type it
+  await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 2 });
+  await p.s('Input.insertText', { text: T });
+  // the run of this text, its letter table with it
+  await p.until(`satexHealth().shown === satexHealth().version && !satexHealth().busy`, 120000);
+  await sleep(1500);
+  const list = () => p.eval(`[...document.querySelectorAll('.cm-tooltip-autocomplete li')].map((l) => l.querySelector('.cm-completionLabel')?.textContent ?? l.textContent)`);
+  const typeAt = async (needle, text) => {
+    // the caret right after `needle`, then the keys
+    const at = await p.eval(`(() => { const t = satexHealth().text; return t.indexOf(${J(needle)}) + ${J(needle)}.length; })()`);
+    await p.eval(`satexEditorSelect(${at})`);
+    for (const ch of text) { await p.s('Input.insertText', { text: ch }); await sleep(120); }
+    await sleep(900);
+  };
+  // body: a new line before `End.`, `\(\sum` then `_`
+  await typeAt('ExplSyntaxOff\n', '\\(\\sum');
+  const sum = await list();
+  res.info.sum = sum.slice(0, 8);
+  if (!sum.length) fail('`\\sum` opens no list in the body');
+  const odd = sum.filter((l) => l.length > 1 && /[_:@/]/.test(l));
+  if (odd.length) fail(`names a body cannot type: ${J(odd.slice(0, 5))}`);
+  await p.shot(`${sc.name}-sum.png`);
+  await p.s('Input.insertText', { text: '_' });
+  await sleep(900);
+  const sub = await list();
+  res.info.sub = sub.slice(0, 5);
+  if (sub.length) fail(`after \`\\sum_\` a list opened: ${J(sub.slice(0, 5))}`);
+  await p.shot(`${sc.name}-sub.png`);
+  await p.key('Escape');
+  // expl3: a new line after `\ExplSyntaxOn`, `\c__`
+  await typeAt('\\ExplSyntaxOn\n', '\\c__');
+  const expl = await list();
+  res.info.expl = expl.slice(0, 5);
+  if (!expl.some((l) => /^c__/.test(l))) fail(`\`\\c__\` under \\ExplSyntaxOn lists no expl3 name: ${J(expl.slice(0, 5))}`);
+  if (expl.some((l) => l.includes('/'))) fail('a name with `/` listed under \\ExplSyntaxOn');
+  await p.shot(`${sc.name}-expl.png`);
+  await p.key('Escape');
+  // the colors: the command tokens of each line
+  res.info.letters = await p.eval(`satexLetters()`);
+  // the colors: each line's text with the command-colored characters upper-cased in a mask (a finding's underline
+  // splits a token's DOM spans, so characters, not spans, are compared)
+  res.info.masks = await p.eval(`[...document.querySelectorAll('.cm-line')].map((l) => { let m = ''; const w = document.createTreeWalker(l, NodeFilter.SHOW_TEXT); for (let t = w.nextNode(); t; t = w.nextNode()) m += t.parentElement.closest('.tok-cmd') ? t.data.replace(/./g, 'C') : t.data.replace(/./g, '.'); return [l.textContent, m]; })`);
+  const colored = (needle, nth) => { const rows = res.info.masks.filter(([t]) => t.includes(needle)), r = rows[nth]; if (!r) return null; const i = r[0].indexOf(needle); return r[1].slice(i, i + needle.length); };
+  if (colored('\\l_tmpa_tl', 0) !== 'CC........') fail(`body \\l_tmpa_tl colored ${colored('\\l_tmpa_tl', 0)} (want only \\l)`);
+  if (colored('\\l_tmpa_tl', 1) !== 'CCCCCCCCCC') fail(`expl3 \\l_tmpa_tl colored ${colored('\\l_tmpa_tl', 1)} (want whole)`);
+  return res;
+}
+
+/** `hoversteady`: the pointer rests on a finding's word of `line` (from 1, `word`) while a run goes on (a comment line
+ * added at the end starts it): the card shows from the last run and is asked again when the run ends. It never hides
+ * and is written again only when its text changes. It offers Ignore here and Ignore rule. */
+export async function hoversteady(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const fail = (m) => res.fails.push(m);
+  const quiet = () => p.until(`(() => { const h = satexHealth(); if (h.busy || h.due || h.running || h.queued || h.pending) { self.__q = null; return false; } self.__q ??= performance.now(); return performance.now() - self.__q > 1500; })()`, 240000);
+  if (!await started(p) || !await example(p, sc.example ?? 'hello.tex')) { fail('the playground did not start'); return res; }
+  await quiet();
+  const word = `(() => { const l = document.querySelectorAll('.cm-line')[${sc.line - 1}]; const w = l && document.createTreeWalker(l, NodeFilter.SHOW_TEXT); let n; while (w && (n = w.nextNode())) { const i = n.textContent.indexOf(${J(sc.word)}); if (i >= 0) { const r = document.createRange(); r.setStart(n, i + 1); r.setEnd(n, i + 2); const b = r.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; } } return null; })()`;
+  const card = `[...document.querySelectorAll('.tip-card')].find((t) => !t.hidden && t.querySelector('.tip-lint'))`;
+  // every write of the card once it shows: the same text written again (a redraw) or the card hidden is a flicker
+  await p.eval(`(() => { self.__hs = { writes: 0, same: 0, hidden: 0, shown: 0, text: '' };
+    const watch = (el) => new MutationObserver((ms) => { const s = self.__hs; if (!s.on) return; if (ms.some((m) => m.type === 'attributes') && el.hidden) s.hidden++;
+      if (ms.some((m) => m.type === 'childList')) { s.writes++; if (el.textContent === s.text) s.same++; s.text = el.textContent; } })
+      .observe(el, { childList: true, subtree: true, attributes: true, attributeFilter: ['hidden'] });
+    const el = document.querySelector('.tip-card'); if (el) watch(el); else self.__hsWatch = watch; })()`);
+  // each round: a comment line added at the end of the file (a run starts), the pointer onto the word at once, resting
+  // there while the run ends (the card answered from the last run, then asked again)
+  for (let i = 0; i < (sc.runs ?? 3); i++) {
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
+    await sleep(300);
+    await p.drv.act({ insert: { at: '\\end{document}', k: 14, text: '\n%' } });
+    const at = await p.eval(word);
+    if (!at) { fail(`setup: no ${sc.word} on line ${sc.line}`); return res; }
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0] - 1, y: at[1] });
+    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+    if (!await p.until(`!!${card}`, 8000)) { fail(`round ${i}: hovering the finding shows no card`); return res; }
+    await p.eval(`(() => { const el = document.querySelector('.tip-card'); if (self.__hsWatch) { self.__hsWatch(el); self.__hsWatch = null; } Object.assign(self.__hs, { on: true, text: el.textContent }); self.__hs.shown++; })()`);
+    await sleep(200);
+    await quiet();
+    await sleep(1500);
+    await p.eval(`self.__hs.on = false`);
+  }
+  res.info.steady = await p.eval(`(({ writes, same, hidden, shown }) => ({ writes, same, hidden, shown }))(self.__hs)`);
+  const { writes, same, hidden } = res.info.steady;
+  if (same || hidden) fail(`the resting card flickered: ${same} rewrites of the same text, ${hidden} hides (of ${writes} writes)`);
+  const buttons = await p.eval(`[...(${card})?.querySelectorAll('button[data-fix]') ?? []].map((b) => b.textContent)`);
+  res.info.buttons = buttons;
+  if (!buttons.some((b) => /^Ignore \S+ here$/.test(b)) || !buttons.some((b) => /^Ignore rule /.test(b))) fail(`the card offers ${J(buttons)}, want Ignore here and Ignore rule`);
+  await p.shot(`${sc.name}-card.png`);
+  return res;
+}
+
+/** `mathwrap`: `\sum` typed in a paragraph and taken from the list is set in math, `\(\sum\)` with the caret inside, from
+ * the server's item (`data.wrap`); `_i` lands in the formula and the PDF builds without `Missing $ inserted`. Typed in a
+ * formula it stays `\sum`. */
+export async function mathwrap(p, sc) {
+  const res = { name: sc.name, fails: [], perf: [], info: {} };
+  const fail = (m) => res.fails.push(m);
+  const { setText } = await import('../engine.mjs');
+  const quiet = () => p.until(`(() => { const h = satexHealth(); if (h.busy || h.due || h.running || h.queued || h.pending) { self.__q = null; return false; } self.__q ??= performance.now(); return performance.now() - self.__q > 1500; })()`, 240000);
+  if (!await started(p) || !await example(p, 'hello.tex')) { fail('the playground did not start'); return res; }
+  await setText(p, sc.text);
+  await quiet();
+  const take = async (needle, keys) => {
+    const at = await p.eval(`(() => { const t = satexHealth().text; return t.indexOf(${J(needle)}) + ${J(needle)}.length; })()`);
+    await p.eval(`(document.querySelector('.cm-content').focus(), satexEditorSelect(${at}))`);
+    for (const ch of '\\sum') { await p.s('Input.insertText', { text: ch }); await sleep(120); }
+    // the server's answer for this place, once its run has ended
+    await quiet();
+    await p.until(`[...document.querySelectorAll('.cm-tooltip-autocomplete li')].some((l) => /^sum/.test(l.textContent))`, 10000);
+    await p.shot(`${sc.name}-${keys}-list.png`);
+    await p.key('Tab');
+    for (const ch of keys) { await p.s('Input.insertText', { text: ch }); await sleep(60); }
+    await sleep(300);
+  };
+  await take('example ', '_i');
+  const text = await p.eval(`satexHealth().text`);
+  res.info.text = J(text.slice(text.indexOf('example'), text.indexOf('example') + 30));
+  if (!text.includes(sc.want)) fail(`text ${res.info.text}, want ${J(sc.want)}`);
+  await take('\\(x + ', '_k');
+  const math = await p.eval(`satexHealth().text`);
+  if (!math.includes('\\(x + \\sum_k\\)')) fail(`in a formula: ${J(math.slice(math.indexOf('\\(x'), math.indexOf('\\(x') + 30))}`);
+  await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  const now = await p.eval(`satexHealth().text`);
+  if (!await p.until(`[...document.querySelectorAll('#play-pdf .pdf-page img')].some((i) => i.__build?.text === ${J(now)}) && !document.querySelector('#play-pdf.pdf-running')`, 90000)) fail('no build of the text landed');
+  const bar = await p.eval(`document.getElementById('pdf-status').textContent`), banner = await p.eval(`document.querySelector('#play-pdf .pdf-fail')?.textContent ?? ''`);
+  res.info.bar = bar;
+  if (banner || /error/.test(bar)) fail(`the build failed: ${J(banner || bar)}`);
+  await p.shot(`${sc.name}-pdf.png`);
+  return res;
+}

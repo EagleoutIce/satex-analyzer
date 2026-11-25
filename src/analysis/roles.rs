@@ -673,7 +673,11 @@ type Typed = Vec<(String, usize, Ty, bool)>;
 fn typed(analysis: &Analysis) -> (Typed, Vec<(String, Ty)>) {
     // Each file's text and where its lines start.
     let mut texts: crate::fixed::HashMap<crate::engine::tex::FileId, Option<(String, Vec<usize>)>> = Default::default();
-    let defs = analysis.facts.defs.iter().filter(|d| analysis.project_file(d.span.file));
+    // Whether each file is the project's, asked once per file (a path walk and a file test each), not per definition.
+    let own: Vec<bool> =
+        (0..analysis.files.len()).map(|f| analysis.project_file(f as crate::engine::tex::FileId)).collect();
+    let own = |f: crate::engine::tex::FileId| own.get(usize::from(f)).copied().unwrap_or(false);
+    let defs = analysis.facts.defs.iter().filter(|d| own(d.span.file));
     let bodies: Vec<crate::engine::tex::Span> =
         defs.filter_map(|d| d.mac.as_ref()?.replacement_text.first().map(|t| t.span)).collect();
     for at in bodies.iter().chain(analysis.facts.types.keys()) {
@@ -694,7 +698,7 @@ fn typed(analysis: &Analysis) -> (Typed, Vec<(String, Ty)>) {
     let mut out = Vec::new();
     // A body that stands in another command's argument makes that argument
     // a body (`\newcommand{\x}{…}`); `\def\x{…}` names no other command.
-    for d in analysis.facts.defs.iter().filter(|d| analysis.project_file(d.span.file)) {
+    for d in analysis.facts.defs.iter().filter(|d| own(d.span.file)) {
         let Some(at) = d.mac.as_ref().and_then(|m| m.replacement_text.first()).map(|t| t.span) else { continue };
         let Some((text, byte)) = source(at) else { continue };
         let Some((cmd, arg, _, optional)) = enclosing_call(text, byte) else { continue };
@@ -837,8 +841,15 @@ fn roles_at(analysis: &Analysis, typed: &Typed, cmd: &str, depth: usize) -> Vec<
         out.extend(flow(analysis, typed, body, depth));
     }
     // A command the project defines anew is what its body says; the
-    // conventions stand in only where the run saw nothing of it.
-    if body.is_none() && !out.iter().any(|r| matches!(r.kind, RoleKind::Occ(_) | RoleKind::Load(_))) {
+    // conventions stand in only where the run saw nothing of it. Names the
+    // call builds from the argument (TeX Live 2019's `\ver@x.sty` for a
+    // missing `x`) say nothing of what it is.
+    let decides = |r: &Role| match r.kind {
+        RoleKind::Occ(k) => !matches!(k, OccKind::Key | OccKind::KeyUse),
+        RoleKind::Load(_) => true,
+        RoleKind::Type(_) => false,
+    };
+    if body.is_none() && !out.iter().any(decides) {
         out.extend(seed(cmd));
     }
     out

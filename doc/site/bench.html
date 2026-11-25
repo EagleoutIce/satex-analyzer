@@ -3,7 +3,7 @@
     <h1>SaTeX benchmark history</h1>
     <a id="b-badge" class="bench-badge" href="{{repository}}/commits/main"></a>
   </header>
-  <p class="sub">What <code>satex lint</code> costs on the benchmark documents, per release and kernel: time per phase, memory, work done and how precise the result is. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>. Each number is a warm run after one cold run built the caches.</p>
+  <p class="sub">What <code>satex lint</code> costs on the benchmark documents, per release and kernel: time per phase, memory, work done and how precise the result is. The documents are listed in <a href="{{repository}}/blob/main/benches/docs.txt"><code>benches/docs.txt</code></a>. Each number is a warm run after one cold run built the caches. Build times against latexmk are <a href="#compile">further down</a>.</p>
   <div class="bench-bar-ctl" role="group" aria-label="what to show">
     <label>Kernel <select id="b-kernel"></select></label>
     <label>Release <select id="b-version"></select></label>
@@ -378,5 +378,219 @@
   for (const b of document.querySelectorAll(".bench-toggle button")) b.addEventListener("click", () => { view = b.dataset.view; for (const o of document.querySelectorAll(".bench-toggle button")) o.setAttribute("aria-pressed", String(o === b)); draw(); });
   for (const id of ["b-kernel", "b-version"]) $(id).addEventListener("change", draw);
   draw();
+})();
+</script>
+<section class="band" id="compile">
+  <h2>Compiling: SaTeX against latexmk</h2>
+  <p class="sub">What <code>satex compile</code> costs against latexmk and plain engine reruns, on the same documents and the same machine. Each cell is the median of repeated runs. The thin line on a bar spans the fastest to the slowest run.</p>
+  <p id="c-note" class="muted small"></p>
+  <div id="c-body" hidden>
+    <div class="bench-bar-ctl" role="group" aria-label="what to compare">
+      <label>Toolchain <select id="c-tool"></select></label>
+      <label>Document <select id="c-doc"></select></label>
+      <span class="bench-dl"><a href="{{root}}bench/compile.json" download>Data JSON</a></span>
+    </div>
+    <div class="bench-tiles">
+      <details class="bench-tile wide" open><summary>Summary</summary><div id="c-cards" class="bench-cards"></div></details>
+      <details class="bench-tile wide" open><summary>Speedup over latexmk, per document</summary><div id="c-speed" class="c-multi"></div><p id="c-speed-note" class="muted small"></p></details>
+      <details class="bench-tile wide" open><summary id="c-wall-title">Wall time per toolchain</summary><div id="c-wall" class="c-multi"></div><p class="muted small">SaTeX's toolchains in blue, latexmk and the plain engine reruns in gray. Hover a bar for CPU time, memory and engine runs.</p></details>
+      <details class="bench-tile wide" open><summary>Every document</summary><div id="c-tables"></div></details>
+      <details class="bench-tile wide"><summary>Machine and method</summary><div id="c-method" class="c-method"></div></details>
+    </div>
+  </div>
+  <div id="c-tip" class="c-tip" role="tooltip" hidden></div>
+</section>
+<style>
+#compile { --c-other: light-dark(#a9b0bc, #5c6472); }
+#compile .bench-bar-ctl label { display: inline-flex; align-items: center; gap: .4rem; max-width: 100%; min-width: 0; }
+#compile .bench-bar-ctl select { min-width: 0; max-width: 100%; text-overflow: ellipsis; }
+.c-multi { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 19rem), 1fr)); gap: .6rem 1.4rem; }
+.c-panel h3 { font-size: .9rem; margin: .2rem 0 .1rem; }
+.c-panel .c-sub { font-size: .78rem; color: var(--muted); margin: 0 0 .4rem; }
+.c-rows { display: grid; grid-template-columns: minmax(5.5rem, 9.5rem) minmax(0, 1fr); gap: .3rem .6rem; align-items: center; }
+.c-lab { font-size: .8rem; overflow-wrap: anywhere; line-height: 1.2; }
+.c-lab small { display: block; color: var(--muted); font-size: .72rem; }
+.c-track { position: relative; height: 1.25rem; outline: none; }
+.c-track:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+.c-bar { position: absolute; top: .2rem; height: .85rem; background: var(--c-other); }
+.c-bar.us { background: var(--c4); }
+.c-bar.lin { left: 0; border-radius: 0 4px 4px 0; }
+.c-bar.right { border-radius: 0 4px 4px 0; }
+.c-bar.left { border-radius: 4px 0 0 4px; }
+.c-base { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--fg); opacity: .55; }
+.c-spread { position: absolute; top: .58rem; height: 2px; background: var(--fg); opacity: .6; }
+.c-val { position: absolute; top: .05rem; font-size: .75rem; color: var(--fg); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.c-val.miss { color: var(--muted); }
+.c-axis { position: relative; height: 1rem; font-size: .7rem; color: var(--muted); grid-column: 2; }
+.c-axis span { position: absolute; top: 0; white-space: nowrap; }
+.c-tip { position: fixed; z-index: 50; max-width: min(20rem, calc(100vw - 2rem)); padding: .4rem .6rem; font-size: .8rem; line-height: 1.35; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); pointer-events: none; }
+.c-tip b { display: block; }
+#c-tables details { margin: .2rem 0 .6rem; }
+#c-tables summary { cursor: pointer; font-size: .9rem; }
+#c-tables .bench-table :is(td, th):nth-child(-n+2) { text-align: left; }
+.bench-table td.same { color: var(--fg); } .bench-table td.diff { color: var(--error); }
+.bench-table td.note { text-align: left; white-space: normal; min-width: 8rem; color: var(--muted); }
+.c-method dl { display: grid; grid-template-columns: minmax(6rem, max-content) minmax(0, 1fr); gap: .25rem 1rem; font-size: .85rem; margin: .2rem 0 .8rem; }
+.c-method dt { font-weight: 600; } .c-method dd { margin: 0; overflow-wrap: anywhere; }
+.c-method h3 { font-size: .9rem; margin: .6rem 0 .2rem; }
+@media (max-width: 600px) { .c-rows { grid-template-columns: minmax(4.5rem, 7rem) minmax(0, 1fr); } }
+</style>
+<script>
+(async () => {
+  const $ = id => document.getElementById(id);
+  const html = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+  let all;
+  try { all = await (await fetch("{{root}}bench/compile.json")).json(); } catch { all = []; }
+  if (!all.length) { $("c-note").textContent = "Not measured yet. Run python3 scripts/bench_compile.py in the repository and rebuild the site."; return; }
+  const e = all.at(-1), runs = e.runs;
+  $("c-body").hidden = false;
+  const SCEN = [["cold", "Cold build"], ["warm", "Rebuild, nothing changed"], ["edit", "Rebuild after one edit"]];
+  const TOOL = { latexmk: "latexmk", engine: "engine reruns", satex: "satex compile", "satex-build": "satex compile, PDF only", "satex-warm": "satex compile, warm engine" };
+  const ENGINE = { pdftex: "pdfTeX", luatex: "LuaTeX", xetex: "XeTeX" };
+  const ours = t => t.startsWith("satex");
+  const toolName = t => TOOL[t] ?? t;
+  const tools = [...new Set(runs.map(r => r.tool))].sort((a, b) => (ours(a) - ours(b)) || Object.keys(TOOL).indexOf(a) - Object.keys(TOOL).indexOf(b));
+  const docName = d => d.startsWith("gen:") ? d.slice(4) + " (generated)" : d.split("/").pop();
+  const keyOf = r => `${r.doc}\u0000${r.engine}`;
+  const cases = [...new Map(runs.map(r => [keyOf(r), r])).values()].sort((a, b) => (a.group === "big") - (b.group === "big") || (a.pages ?? 0) - (b.pages ?? 0));
+  const caseLabel = r => `${docName(r.doc)} · ${ENGINE[r.engine] ?? r.engine}${r.pages ? ` · ${r.pages} pages` : ""}`;
+  const cell = (c, s, t) => runs.find(r => keyOf(r) === keyOf(c) && r.scenario === s && r.tool === t);
+  const seconds = v => v == null ? "-" : v < 1 ? Math.round(v * 1e3) + " ms" : v < 100 ? v.toFixed(2) + " s" : v.toFixed(0) + " s";
+  const times = x => x >= 10 ? x.toFixed(0) + "×" : x.toFixed(x >= 1.995 ? 1 : 2) + "×";
+  const speed = x => x >= 1 ? `${times(x)} faster` : `${times(1 / x)} slower`;
+  const same = r => r.same_pages == null && r.same_text == null ? null : !!(r.same_pages && r.same_text);
+  const sameText = r => { const s = same(r); return r.tool === "latexmk" ? "reference" : s == null ? "-" : s ? "✓ same" : r.same_pages ? "✗ text differs" : "✗ pages differ"; };
+
+  const tip = $("c-tip");
+  const tipOn = (node, lines) => {
+    node.tabIndex = 0;
+    node.setAttribute("aria-label", lines.join(". "));
+    const show = (x, y) => { tip.replaceChildren(html("b", "", lines[0]), ...lines.slice(1).map(l => html("div", "", l))); tip.hidden = false;
+      const w = tip.offsetWidth, h = tip.offsetHeight; tip.style.left = Math.max(8, Math.min(x + 12, innerWidth - w - 8)) + "px"; tip.style.top = (y + h + 20 > innerHeight ? y - h - 12 : y + 16) + "px"; };
+    node.addEventListener("pointermove", ev => show(ev.clientX, ev.clientY));
+    node.addEventListener("pointerleave", () => { tip.hidden = true; });
+    node.addEventListener("focus", () => { const b = node.getBoundingClientRect(); show(b.left, b.bottom - 10); });
+    node.addEventListener("blur", () => { tip.hidden = true; });
+  };
+  const detail = r => [`wall ${seconds(r.wall.median)} (${seconds(r.wall.min)} to ${seconds(r.wall.max)}, ${r.n} runs)`, `CPU ${seconds(r.cpu)}, peak ${r.peak_mib ?? "-"} MiB`,
+    `${r.engine_runs ?? "-"} engine runs, ${r.tool_runs ?? "-"} bibtex/biber/makeindex runs`, ...(r.analysis != null ? [r.analysis ? "the analysis ran" : "no analysis"] : []),
+    ...(r.tool === "latexmk" ? [] : [`output: ${sameText(r)}`]), ...(r.ok ? [] : ["failed: no PDF or an error"]), ...(r.note ? [`note: ${r.note}`] : [])];
+
+  const fillSel = (id, items, value) => { $(id).replaceChildren(...items.map(([v, t]) => Object.assign(html("option"), { value: v, textContent: t }))); $(id).value = value; };
+  const compared = tools.filter(t => t !== "latexmk");
+  fillSel("c-tool", compared.map(t => [t, toolName(t)]), compared.includes("satex-build") ? "satex-build" : compared.find(ours) ?? compared[0]);
+  const biggest = cases.filter(c => c.group === "big").at(-1) ?? cases.at(-1);
+  fillSel("c-doc", cases.map(c => [keyOf(c), caseLabel(c)]), keyOf(biggest));
+
+  function cards() {
+    const s = e.summary ?? {}, list = [];
+    const card = (label, value, note) => { const b = html("div", "bench-card"); b.append(html("small", "", label), html("b", "", value), html("span", "delta", note)); list.push(b); };
+    for (const [k, name] of SCEN) if (s.speedup?.[k]) card(`${name}, against latexmk`, speed(s.speedup[k]), `${toolName(s.tool ?? "satex-build")}, geometric mean`);
+    if (s.big_edit?.satex) { const pages = s.big_edit.pages ?? cases.find(c => c.doc === s.big_edit.doc)?.pages; card(`One edit, ${pages ? pages + "-page document" : docName(s.big_edit.doc)}`, seconds(s.big_edit.satex), `latexmk ${seconds(s.big_edit.latexmk)}`); }
+    if (s.identical) { const [a, b] = s.identical.split("/"); card("Same output as latexmk", `${a} of ${b}`, "builds with the same pages and text"); }
+    $("c-cards").replaceChildren(...list);
+  }
+
+  // Log scale centered on latexmk (1×): faster to the right, slower to the left.
+  function speedChart(tool) {
+    const ratio = (c, s) => { const a = cell(c, s, "latexmk"), b = cell(c, s, tool); return a?.ok && b?.ok && b.wall.median > 0 ? a.wall.median / b.wall.median : null; };
+    const vals = cases.flatMap(c => SCEN.map(([s]) => ratio(c, s))).filter(v => v);
+    // the domain holds 1× and every ratio, so latexmk's line sits at the left edge when every bar is faster
+    const lo = Math.min(1, ...vals) / (Math.min(1, ...vals) < 1 ? 1.15 : 1), hi = Math.max(1.5, ...vals) * 1.3;
+    const pos = x => Math.log(x / lo) / Math.log(hi / lo) * 100, one = pos(1);
+    $("c-speed").replaceChildren(...SCEN.map(([s, name]) => {
+      const p = html("div", "c-panel"), rows = html("div", "c-rows");
+      p.append(html("h3", "", name), html("p", "c-sub", e.scenarios?.[s] ?? ""));
+      for (const c of cases) {
+        const lab = html("div", "c-lab", docName(c.doc)); lab.append(html("small", "", `${ENGINE[c.engine] ?? c.engine}${c.pages ? `, ${c.pages} pages` : ""}`));
+        const tr = html("div", "c-track"), x = ratio(c, s), b = cell(c, s, tool), a = cell(c, s, "latexmk");
+        tr.append(Object.assign(html("i", "c-base"), { style: `left:${one}%` }));
+        if (x) {
+          const at = pos(x), bar = html("i", `c-bar ${x >= 1 ? "us right" : "left"}`);
+          bar.style.cssText = x >= 1 ? `left:${one}%;width:${at - one}%` : `left:${at}%;width:${one - at}%`;
+          const v = html("span", "c-val", times(x));
+          v.style.cssText = x >= 1 ? `left:calc(${at}% + 4px)` : `right:calc(${100 - at}% + 4px)`;
+          tr.append(bar, v);
+          tipOn(tr, [`${caseLabel(c)}: ${speed(x)}`, `${toolName(tool)} ${seconds(b.wall.median)}, latexmk ${seconds(a.wall.median)}`, `output: ${sameText(b)}`, ...(b.note ? [`note: ${b.note}`] : [])]);
+        } else {
+          const v = html("span", "c-val miss", !a || !b ? "not measured" : "failed"); v.style.left = `calc(${Math.min(one, 60)}% + 4px)`; tr.append(v);
+        }
+        rows.append(lab, tr);
+      }
+      const axis = html("div", "c-axis");
+      // the slower end gets its own tick only where it cannot run into latexmk's
+      for (const [v, t] of [...(one > 28 ? [[lo, `${times(1 / lo)} slower`]] : []), [1, "latexmk"], [hi, `${times(hi)} faster`]]) {
+        const tick = html("span", "", t); tick.style.left = `${pos(v)}%`; tick.style.transform = v === lo || pos(v) < 8 ? "none" : v === hi ? "translateX(-100%)" : "translateX(-50%)"; axis.append(tick);
+      }
+      rows.append(html("div"), axis);
+      p.append(rows);
+      return p;
+    }));
+    $("c-speed-note").textContent = `${toolName(tool)} against latexmk: latexmk's median wall time divided by ${toolName(tool)}'s, on a log scale. Blue bars are faster than latexmk, gray ones slower.`;
+  }
+
+  function wallChart(c) {
+    $("c-wall-title").textContent = `Wall time per toolchain, ${caseLabel(c)}`;
+    $("c-wall").replaceChildren(...SCEN.map(([s, name]) => {
+      const p = html("div", "c-panel"), rows = html("div", "c-rows");
+      p.append(html("h3", "", name));
+      const here = tools.map(t => cell(c, s, t)).filter(Boolean);
+      const max = Math.max(1e-9, ...here.map(r => r.wall.max)) * 1.25;
+      for (const t of tools) {
+        const r = cell(c, s, t), tr = html("div", "c-track");
+        rows.append(html("div", "c-lab", toolName(t)), tr);
+        if (!r) { const v = html("span", "c-val miss", "not measured"); v.style.left = "0"; tr.append(v); continue; }
+        const w = r.wall.median / max * 100;
+        const bar = html("i", `c-bar lin${ours(t) ? " us" : ""}`); bar.style.width = `max(2px, ${w}%)`;
+        const spread = html("i", "c-spread"); spread.style.cssText = `left:${r.wall.min / max * 100}%;width:${(r.wall.max - r.wall.min) / max * 100}%`;
+        const v = html("span", `c-val${r.ok ? "" : " miss"}`, r.ok ? seconds(r.wall.median) : "failed"); v.style.left = `calc(${r.wall.max / max * 100}% + 4px)`;
+        tr.append(bar, spread, v);
+        tipOn(tr, [`${toolName(t)}, ${name.toLowerCase()}`, ...detail(r)]);
+      }
+      p.append(rows);
+      return p;
+    }));
+  }
+
+  function tables(open) {
+    const COLS = ["Scenario", "Toolchain", "Wall (median)", "Fastest", "Slowest", "CPU", "Peak memory", "Engine runs", "Tool runs", "Analysis", "Output", "Note"];
+    $("c-tables").replaceChildren(...cases.map(c => {
+      const d = html("details"); d.open = keyOf(c) === open; d.id = "c-t-" + cases.indexOf(c);
+      d.append(html("summary", "", caseLabel(c)));
+      const t = html("table", "long bench-table"), head = html("tr");
+      for (const h of COLS) head.append(Object.assign(html("th", "", h), { scope: "col" }));
+      const thead = html("thead"), tbody = html("tbody"); thead.append(head);
+      for (const [s, name] of SCEN) for (const tool of ["latexmk", ...tools.filter(x => x !== "latexmk")]) {
+        const r = cell(c, s, tool); if (!r) continue;
+        const tr = html("tr"), sm = same(r);
+        const vals = [name, toolName(tool), r.ok ? seconds(r.wall.median) : "failed", seconds(r.wall.min), seconds(r.wall.max), seconds(r.cpu), r.peak_mib == null ? "-" : r.peak_mib + " MiB",
+          r.engine_runs ?? "-", r.tool_runs ?? "-", r.analysis == null ? "-" : r.analysis ? "ran" : "no"];
+        vals.forEach((v, i) => tr.append(html("td", i === 2 && !r.ok ? "bad" : "", String(v))));
+        tr.append(html("td", tool === "latexmk" ? "no" : sm == null ? "no" : sm ? "same" : "diff", sameText(r)), html("td", "note", r.note ?? ""));
+        tbody.append(tr);
+      }
+      t.append(thead, tbody);
+      const wrap = html("div", "table-scroll"); wrap.append(t); d.append(wrap);
+      return d;
+    }));
+  }
+
+  function method() {
+    const m = e.machine ?? {}, box = $("c-method");
+    const dl = (pairs) => { const l = html("dl"); for (const [k, v] of pairs) if (v != null && v !== "") l.append(html("dt", "", k), html("dd", "", String(v))); return l; };
+    box.replaceChildren(
+      html("h3", "", "Machine"),
+      dl([["CPU", m.cpu && `${m.cpu}${m.cores ? `, ${m.cores} cores` : ""}`], ["Memory", m.ram_gib && `${m.ram_gib} GiB`], ["System", m.os], ["TeX", m.texlive], ["latexmk", m.latexmk],
+        ["Load", m.load && `1-minute load average ${m.load[0]} to ${m.load[1]} at the run starts. Other jobs shared the machine.`],
+        ["Clock", e.clock && `${e.clock}, the same for every tool`], ["Runs", `${e.repeats} per cell unless the table says less`], ["SaTeX", `${e.version} (${e.commit}, ${e.date})`]]),
+      html("h3", "", "Scenarios and their caches"), dl(SCEN.map(([s, name]) => [name, e.scenarios?.[s]])),
+      html("h3", "", "Toolchains"), dl(tools.map(t => [toolName(t), e.tools?.[t]])),
+      Object.assign(html("p", "muted small"), { textContent: "Output is the same when the PDF has latexmk's page count and pdftotext gives latexmk's text. Fonts, images and metadata are not compared." }));
+  }
+
+  const draw = () => { speedChart($("c-tool").value); const c = cases.find(c => keyOf(c) === $("c-doc").value); wallChart(c); tables(keyOf(c)); };
+  $("c-note").textContent = `SaTeX ${e.version}, measured ${e.date}. ${cases.length} documents, ${tools.length} toolchains.`;
+  cards(); method(); draw();
+  $("c-tool").addEventListener("change", draw); $("c-doc").addEventListener("change", draw);
 })();
 </script>

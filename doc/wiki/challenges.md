@@ -1,7 +1,7 @@
 # Why TeX is hard to analyze
 
 satex analyzes TeX, and LaTeX on top of it, by running it with unknown or partly known values.
-This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that. The problems come first, [what TeX does](Semantics) is the next chapter.
+This page lists what makes that harder than for other languages. Under each problem: what SaTeX does about it, and the research behind that. The problems come first, [what TeX does](../../SEMANTICS.md) is the next chapter.
 Every example is a complete document. Below each one, a table puts the text one pdflatex run ships (read from the boxes `\tracingoutput` logs, random seed 7) next to the text satex computes (`satex query typeset`), paragraph by paragraph. If a row is not equal, a short list says why: which conditional stayed undecided. Two collapsed blocks show the commands that ran, with the computed text and with a trace of what each call inserted, what each primitive set and how each conditional went.
 
 How to read a table. In the satex column the notation is **bold**, so a literal `{`, `|` or `…` in the text stays plain:
@@ -355,13 +355,13 @@ l.6 \ifdim\dimen2=0pt ⇒ undecided
 </details>
 
 **Where the model stands.**
-The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
+The line breaker is [tex.web](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web)'s ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17438)) for a paragraph whose items, metrics and parameters are known.
 Anything else keeps an interval of lines.
-A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
+A forced break mid-paragraph keeps one active node per fitness class ([§ 836](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L16474)), so with `\adjdemerits` the lines after it may choose the lines before it.
 satex breaks such a segment only when one class ends it, as after `\\`, and keeps the interval otherwise.
 The page builder runs `\output` at forced breaks (`analysis.assume_forced_page_breaks`, an assumption, on by default, reported as `forced-page-breaks` where a page may fill).
 With the assumption off, a page that may have filled parts the run: one path runs `\output`, the other reads on.
-TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
+TeX's choice of the best break ([§§ 1005](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L19552)–[1010](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L19654)) is not modelled yet, so floats that TeX places on the next pages wait for `\clearpage` under the assumption.
 The float loops of LaTeX's output routine then run at the end, where unknown box sizes make them converge only by widening.
 
 **A rounded node around a paragraph that breaks.**

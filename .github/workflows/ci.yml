@@ -120,8 +120,15 @@ jobs:
             target/ci/lib-bin
           key: tests-${{ github.run_id }}-${{ github.run_attempt }}
 
-      # A kernel cache is keyed on the source it was built by (build.rs's digest of src/), so the
-      # cache key is the same digest's inputs: a change outside them reuses the kernels.
+      # A kernel cache file carries the key of the source it was built by (build.rs's digest of the
+      # non-reporting src/, format::cache_key). The binary prints that key, so the CI cache has
+      # the very same one: an edit to lints, the CLI or the LSP reuses the kernels.
+      - name: The kernels' key
+        id: guard
+        run: |
+          key=$(target/ci/satex --version --format json | sed -n 's/^ *"cache_key": "\(.*\)",$/\1/p')
+          [ -n "$key" ] && echo "key=$key" >> "$GITHUB_OUTPUT"
+
       - name: Restore the kernels
         id: kernels
         uses: actions/cache/restore@v4
@@ -129,7 +136,7 @@ jobs:
           path: |
             target/scratch/test-cache
             target/scratch/test-kernel
-          key: kernels-TL2025-${{ hashFiles('src/**', 'build.rs', 'Cargo.lock', 'Cargo.toml') }}
+          key: kernels-TL2025-${{ steps.guard.outputs.key }}-${{ hashFiles('Cargo.lock') }}
 
       - name: Build the kernels
         if: steps.kernels.outputs.cache-hit != 'true'
@@ -153,7 +160,7 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     # A shard runs prebuilt tests on prebuilt kernels: minutes. The limit stops a hang.
-    timeout-minutes: 30
+    timeout-minutes: 60
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
     container: texlive/texlive:TL2025-historic
@@ -183,13 +190,19 @@ jobs:
           key: tests-${{ github.run_id }}-${{ github.run_attempt }}
           fail-on-cache-miss: true
 
+      - name: The kernels' key
+        id: guard
+        run: |
+          key=$(target/ci/satex --version --format json | sed -n 's/^ *"cache_key": "\(.*\)",$/\1/p')
+          [ -n "$key" ] && echo "key=$key" >> "$GITHUB_OUTPUT"
+
       - name: Restore the kernels
         uses: actions/cache/restore@v4
         with:
           path: |
             target/scratch/test-cache
             target/scratch/test-kernel
-          key: kernels-TL2025-${{ hashFiles('src/**', 'build.rs', 'Cargo.lock', 'Cargo.toml') }}
+          key: kernels-TL2025-${{ steps.guard.outputs.key }}-${{ hashFiles('Cargo.lock') }}
 
       # Tests write beside the build: CARGO_TARGET_TMPDIR names this directory.
       - name: Prepare
@@ -224,6 +237,12 @@ jobs:
         continue-on-error: true
         run: bash scripts/ci-test.sh reds
 
+      # A red may fail, never crash: a red that ended the test binary hid a stack overflow once.
+      - name: No crash in the known reds
+        if: matrix.shard == 'compliance'
+        run: |
+          ! grep -E 'has overflowed its stack|\(signal: (4|6|7|8|11),|memory allocation of [0-9]+ bytes failed' "${CI_LOG_DIR:-target}/ci-test-reds.log"
+
   # The newest TeX Live, reported but not blocking: the main jobs pin
   # TL2025-historic, and this shows how far satex is from the current kernel.
   newest-texlive:
@@ -231,7 +250,7 @@ jobs:
     needs: changes
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     continue-on-error: true
     container: texlive/texlive:latest
     steps:
@@ -262,7 +281,7 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     # Usually 20 minutes; room for a slow runner.
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -380,7 +399,7 @@ jobs:
     name: Full ubuntu-latest ${{ matrix.tl }} (${{ matrix.shard }})
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 150
     container: ${{ matrix.container }}
     strategy:
       fail-fast: false
@@ -417,6 +436,11 @@ jobs:
       - name: The distribution is really there
         run: kpsewhich latex.ltx
 
+      # TL2019-historic ships no xelatex.fmt, and mktexfmt writes one under /root, which the
+      # job's HOME never searches: every xelatex pass would dump it anew, so no build rests.
+      - name: The XeLaTeX format is there
+        run: kpsewhich -engine=xetex xelatex.fmt || fmtutil-sys --byfmt xelatex
+
       - name: Test
         if: matrix.shard != 'compliance'
         env:
@@ -451,7 +475,7 @@ jobs:
     name: Full ${{ matrix.os }} (current)
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:

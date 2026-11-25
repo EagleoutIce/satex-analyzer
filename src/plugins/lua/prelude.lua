@@ -16,12 +16,17 @@ local function unknown_function() unknown() end
 
 -- What LuaTeX has (luatex_fields.txt): `globals[name]` and
 -- `fields[library][name]` are the type of the value.
-local globals, fields = {}, {}
+-- `engine_numbers[f]` is the table function `f` returns, number to name.
+local globals, fields, engine_numbers = {}, {}, {}
 for line in satex.fields:gmatch("[^\r\n]+") do
-  local kind, a, b, c = line:match("^([GF]) (%S+) (%S+) ?(%S*)$")
+  local kind, a, b, c = line:match("^([GFT]) (%S+) (%S+) ?(%S*)$")
   if kind == "G" then globals[a] = b
-  elseif kind == "F" then fields[a] = fields[a] or {} fields[a][b] = c end
+  elseif kind == "F" then fields[a] = fields[a] or {} fields[a][b] = c
+  elseif kind == "T" then engine_numbers[a] = engine_numbers[a] or {} engine_numbers[a][tonumber(b)] = c end
 end
+-- A fresh copy of `engine_numbers[f]`, and its inverse.
+local function listed(f) local t = {} for k, v in pairs(engine_numbers[f]) do t[k] = v end return t end
+local function inverse(f) local t = {} for k, v in pairs(engine_numbers[f]) do t[v] = k end return t end
 
 -- The value LuaTeX has and satex does not: a function that fails the run
 -- when called, anything else the unknown value.
@@ -145,6 +150,7 @@ t.getcount = function(k) return satex.register_get("count", k) end
 t.getdimen = function(k) return satex.register_get("dimen", k) end
 t.setcount, t.setdimen = setter("count"), setter("dimen")
 t.hashtokens = function() return partly() end
+t.getmodevalues = function() return listed("tex.getmodevalues") end
 t.runtoks = function(f)
   if type(f) ~= "function" then unknown() end
   satex.capture(true)
@@ -274,20 +280,17 @@ for n = 1, 4 do
 end
 
 -- LuaTeX manual, "The node library": node types and whatsit subtypes are
--- numbers; nodes themselves are unknown.
-local node_types = {}
-for i, n in ipairs {
-  "hlist", "vlist", "rule", "ins", "mark", "adjust", "boundary", "disc", "whatsit", "local_par", "dir",
-  "math", "glue", "kern", "penalty", "unset", "style", "choice", "noad", "radical", "fraction", "accent",
-  "fence", "math_char", "sub_box", "sub_mlist", "math_text_char", "delim", "margin_kern", "glyph",
-  "align_record", "pseudo_file", "pseudo_line", "page_insert", "split_insert", "expr_stack",
-  "nested_list", "span", "attribute", "glue_spec", "attribute_list", "temp", "align_stack",
-  "movement_stack", "if_stack", "unhyphenated", "hyphenated", "delta", "passive", "shape",
-} do node_types[n] = i - 1 end
-local whatsits = { open = 0, write = 1, close = 2, special = 3, save_pos = 6, late_lua = 7, user_defined = 8 }
+-- the engine's numbers (luatex-fields.txt); nodes themselves are unknown.
+local node_types, whatsits = inverse("node.types"), inverse("node.whatsits")
+-- The one properties table, keyed by nodes: satex makes none, so no key
+-- it holds is known, and walking it is unknown.
+local properties = setmetatable({}, { __pairs = function() unknown() end })
 node = partly({
   id = function(name) return node_types[name] or unknown() end,
   subtype = function(name) return whatsits[name] or unknown() end,
+  types = function() return listed("node.types") end,
+  whatsits = function() return listed("node.whatsits") end,
+  get_properties_table = function() return properties end,
   direct = partly(),
 }, "node")
 

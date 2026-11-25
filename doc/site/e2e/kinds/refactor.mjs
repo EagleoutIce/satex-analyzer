@@ -7,7 +7,7 @@ import { open, file, build, word, mid, act0, undo, text, written } from './tikz.
 
 const J = JSON.stringify;
 const view = `document.querySelector('#play-editor .cm-editor').satexView`;
-const toastNow = (p) => p.eval(`document.getElementById('play-toast')?.textContent ?? ''`);
+const toastNow = (p) => p.drv.run({ toast: true });
 const excerpt = (t) => t.slice(t.indexOf('Pictures'), t.indexOf('Cost}'));
 /** The whole text replaced by `t` (one edit), built. */
 async function setText(p, t) {

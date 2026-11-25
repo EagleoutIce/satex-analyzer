@@ -14,6 +14,11 @@ export default [
   { kind: 'close', name: 'close-edited-esc', example: 'hello.tex', widget: 'page', at: '\\documentclass', k: 1, edit: ['top', '3cm'], how: 'escape',
     steps: 'hello.tex; Page layout, top margin 3cm, Esc: the question; Esc again: closed, nothing written' },
   // user 2026-11-19: auto-compile on by default once Compile was pressed in the PDF tab; paused while the PDF is hidden
+  // completion and command colors by the catcodes at the caret (user 2026-11-21: `\(\sum_` listed `\c__socket_…`)
+  // user 2026-11-24: "Let's look at an example \\sum" in a paragraph gave pdfTeX's `Missing $ inserted`
+  { kind: 'mathwrap', name: 'complete-math-in-text', text: "\\documentclass{article}\n\\begin{document}\nLet's look at an example \n\n\\(x + \\)\n\\end{document}\n", want: "example \\(\\sum_i\\)",
+    steps: 'a paragraph; type `\\sum` after "example ", Tab, `_i`: `\\(\\sum_i\\)`; in `\\(x + \\)` `\\sum` Tab `_k` stays `\\sum_k`; the PDF builds' },
+  { kind: 'catcomplete', name: 'catcode-complete', steps: 'a body line and an \\ExplSyntaxOn block; type `\\(\\sum` then `_` in the body, `\\c__` in expl3: no list after `_`, only typeable names' },
   { kind: 'auto', name: 'auto-after-compile', steps: 'hello.tex, PDF tab; Compile once; type a line in the editor: its build lands without a second press' },
   { kind: 'auto', name: 'auto-paused-hidden', hidden: true, steps: 'hello.tex; Compile once; Typeset tab; type a line: no build for 4 s; PDF tab: the build lands' },
   // user 2026-11-19: "Environment align undefined (hello.tex:16)" stayed on the PDF while line 16 was a tabular and Findings said 0
@@ -30,6 +35,9 @@ export default [
   // sweep 2026-11-19: `%` typed before \newcommand{\section}, then erased: the finding stayed gone until the next edit
   { kind: 'heldback', name: 'finding-after-pause', line: 3, key: '%',
     steps: 'hello.tex; type % at the start of line 3 (its finding goes), Backspace; once typing pauses the finding is back' },
+  // user 2026-11-24: the finding card under a resting pointer flickered as runs came and went (each rewrote it)
+  { kind: 'hoversteady', name: 'hover-finding-steady', line: 3, word: 'section',
+    steps: 'hello.tex; rest the pointer on \\section of line 3 (already-defined) while three runs come and go: the card never hides or redraws its text; it offers Ignore here and Ignore rule' },
   // user 2026-11-19: "\toprule: not reached by the analysis" stayed on the card while booktabs was loaded and the status said Ready
   { kind: 'hoverlate', name: 'hover-after-load', text: '\\documentclass{article}\n\\begin{document}\nIn the\n\n\\begin{tabular}{llr}\n  \n  a & b & c \\\\\n\\end{tabular}\n\\end{document}\n',
     line: 6, keys: ['\\', 't', 'o', 'p', 'r', 'u', 'l'], word: '\\toprule', want: /booktabs\.sty:\d+/,

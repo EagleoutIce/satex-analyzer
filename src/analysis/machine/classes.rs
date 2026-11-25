@@ -172,19 +172,13 @@ pub(crate) fn decide(xs: &[Operand], ys: &[Operand], by_code: bool) -> Option<bo
 }
 
 impl Machine<'_> {
-    /// The classes of `t`: of its first token when `first`, else of every
-    /// token it may hold.
-    pub(crate) fn token_class(&self, t: Token, first: bool) -> TokenClass {
-        self.class_at(t, first, 0)
-    }
-
     /// Whether two token lists can never be equal: not both may be empty,
     /// and the first tokens they may hold differ in class.
     pub(crate) fn texts_differ(&self, x: &[Token], y: &[Token]) -> bool {
         let first = |text: &[Token]| {
             let mut class = TokenClass { empty: true, ..TokenClass::default() };
             for t in text {
-                let c = self.class_at(*t, true, 0);
+                let c = self.token_class(*t, true);
                 let more = c.empty;
                 class.join(TokenClass { empty: false, ..c });
                 if !more {
@@ -198,14 +192,19 @@ impl Machine<'_> {
         !(a.empty && b.empty) && a.disjoint(&b)
     }
 
-    fn class_at(&self, t: Token, first: bool, depth: usize) -> TokenClass {
+    /// The classes of `t`: of its first token when `first`, else of every
+    /// token it may hold.
+    pub(crate) fn token_class(&self, t: Token, first: bool) -> TokenClass {
         let Tok::Cs(sym) = t.tok else { return TokenClass::one(t.tok) };
-        if let Some(texts) = self.one_of_members(t) {
-            if depth > 4 {
-                return TokenClass::any();
-            }
+        let texts = match self.one_of_nested(t) {
+            super::explore::Nested::Open(inner) => Some(inner),
+            // One the walk is inside of, or past the walk's budget: any class.
+            super::explore::Nested::Again | super::explore::Nested::Deep => return TokenClass::any(),
+            super::explore::Nested::No => None,
+        };
+        if let Some(texts) = texts {
             let mut class = TokenClass::default();
-            for text in &texts {
+            for text in &texts.texts {
                 class.several |= text.len() > 1;
                 if text.is_empty() {
                     class.empty = true;
@@ -214,7 +213,7 @@ impl Machine<'_> {
                 // classify the other tokens.
                 let mut may_be_empty = true;
                 for x in text.iter().filter(|x| x.tok != t.tok) {
-                    let c = self.class_at(*x, first, depth + 1);
+                    let c = self.token_class(*x, first);
                     let more = c.empty;
                     class.join(TokenClass { empty: false, ..c });
                     if !more {

@@ -341,7 +341,8 @@ fn a_position_parses_with_and_without_a_file() {
         Ok(At { file: Some("part-a.tex".into()), line: 45, col: 1, end: Some((48, u32::MAX)) })
     );
     assert_eq!(satex::cli::parse_place("4:2-5:3").map(|at| at.end), Ok(Some((5, 3))));
-    assert!(satex::cli::parse_place("3").is_err());
+    // a bare line is its first column (`slice --at 40`)
+    assert_eq!(satex::cli::parse_place("3"), Ok(At::here(3, 1)));
     assert!(satex::cli::parse_place("part.tex:x:7").is_err());
 }
 

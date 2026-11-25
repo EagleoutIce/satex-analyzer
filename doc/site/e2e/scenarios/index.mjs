@@ -23,18 +23,27 @@ import sync from './sync.mjs';
 import scratch from './scratch.mjs';
 import cold from './cold-start.mjs';
 import insert from './insert.mjs';
+import robust from './robust.mjs';
+import draw from './draw.mjs';
+import landing from './landing.mjs';
+import user from './user.mjs';
+import big from './big.mjs';
+import generated from './generated.mjs';
+import swap from './swap.mjs';
+import menus from './menus.mjs';
+import tsClicks from './typeset-clicks.mjs';
 
 const AREAS = { 'typing-pdf': typingPdf, 'titles-footnotes': titles, math, clicks, select, 'tints-typeset': tints, widgets,
   completion, 'double-click': dbl, 'footer-blank': foot, 'echo-paragraphs': newpara, 'follow-highlight': follow,
-  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch, 'cold-start': cold, insert };
+  'dark-mode': dark, 'tikz-actions': tikz, refactor, 'crash-recovery': crash, editor, fuzz, sync, scratch, 'cold-start': cold, insert, robust, draw, landing, user, big, swap, menus, 'typeset-clicks': tsClicks, generated };
 
 export const SCENARIOS = Object.entries(AREAS).flatMap(([area, list]) => list.map((sc) => ({ area, ...sc })));
 
 export const TIERS = {
   quick: ['title-human', 'prose-burst', 'caption', 'pagebreak', 'fz-thanks-mark', 'click-footnote', 'click-macro-start',
     'math-display-preview', 'select-backspace', 'tint-bang', 'col-align', 'forest-child', 'tc-src-ref', 'dbl-pdf-tikz',
-    'plain-before-number', 'newpara-pdf', 'newpara-ts', 'after-macro-pdf', 'gutter-marker', 'close-untouched-page', 'close-edited-x'],
-  perf: ['prose-burst', 'title-human', 'caption', 'burst-3rows', 'math-burst', 'bold', 'cold-first-findings'],
+    'plain-before-number', 'click-date-thesis', 'newpara-pdf', 'newpara-ts', 'after-macro-pdf', 'gutter-marker', 'close-untouched-page', 'close-edited-x'],
+  perf: ['prose-burst', 'title-human', 'caption', 'burst-3rows', 'math-burst', 'bold', 'cold-first-findings', 'book-300-pages'],
 };
 
 const seen = new Set();

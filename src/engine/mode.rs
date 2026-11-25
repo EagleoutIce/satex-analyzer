@@ -148,6 +148,8 @@ pub struct Nest {
     pub from: u32,
     /// How many ranges boxes used before carried when it opened: the rest are its own.
     pub carried: u32,
+    /// How many literals the run had written when it opened: the rest are in it.
+    pub literals: u32,
     /// An `\halign`'s rows, or a `\noalign` in one.
     pub align: Option<Align>,
     /// How many conditionals were open when the group opened.
@@ -210,6 +212,7 @@ impl Nest {
             placed: self.placed && other.placed,
             from: self.from.min(other.from),
             carried: self.carried.min(other.carried),
+            literals: self.literals.min(other.literals),
             conds: self.conds.min(other.conds),
             graf: self.graf.zip(other.graf).map(|(a, b)| a.join(&b)),
             align: match (self.align, other.align) {
@@ -507,12 +510,13 @@ pub struct Natural {
     /// A `\noboundary` came: the word it ends, or the one it starts, meets
     /// no boundary character (tex.web §§ 1030, 1038).
     pub no_boundary: bool,
-    /// A vertical list whose last item is glue or a kern: that item, and
-    /// the height, depth and first height the list had before it (tex.web
-    /// § 668 adds the depth before glue or a kern into the height), so
-    /// that `\unskip` or `\unkern` taking it away restores them; with the
-    /// three after it, which tell that nothing else changed them since.
-    pub undo: Option<(Last, [Undo; 2])>,
+    /// For the items of `tail` on a vertical list: the item, and the height, depth and
+    /// first height the list had before it (tex.web § 668 adds the depth before an item
+    /// into the height), so that `\unskip`, `\unkern` or `\lastbox` taking it away
+    /// restores them; with the three after it, which tell that nothing else changed them
+    /// since. Glue and kerns appended here and the items of an `\unvbox`ed recorded list
+    /// have them.
+    pub undo: [Option<(Last, [Undo; 2])>; TAIL],
     /// How many boxes and rules came onto the list through
     /// [`State::append_item`]: with the tail, whether it holds nothing else.
     pub solid: u8,
@@ -739,7 +743,8 @@ impl Natural {
 
     /// An item went onto the list.
     fn pushed(&mut self, item: Last) {
-        self.undo = None;
+        self.undo.copy_within(..TAIL - 1, 1);
+        self.undo[0] = None;
         self.below = match (self.tail[TAIL - 1], self.below) {
             (Last::Empty, below) => below,
             (out, Some(k)) if out.kind() == Some(k % 2 == 1) => Some(k.saturating_add(1)),
@@ -761,7 +766,8 @@ impl Natural {
     /// An item came off the list. What it uncovers past the window comes
     /// from [`Natural::below`], else is not followed.
     fn popped(&mut self) {
-        self.undo = None;
+        self.undo.copy_within(1.., 0);
+        self.undo[TAIL - 1] = None;
         let next = match (self.tail[TAIL - 1], self.below) {
             (Last::Empty, _) => Last::Empty,
             (Last::Unknown(_), _) | (_, None) => Last::UNKNOWN,
@@ -775,6 +781,53 @@ impl Natural {
         self.tail[TAIL - 1] = next;
         self.ligature = None;
         self.held = self.held.saturating_sub(1);
+    }
+
+    /// What the list was before its last item came, where that is followed.
+    fn undone(&self) -> Option<Undo> {
+        let (item, [before, after]) = self.undo[0]?;
+        (item == self.tail[0] && !matches!(item, Last::Unknown(_)) && after == (self.along, self.depth, self.first))
+            .then_some(before)
+    }
+
+    /// tex.web § 1110: the recorded list `items` came onto this vertical list, which was
+    /// `base` before. Its last items are the tail, over the tail the list had; each has
+    /// the list's size before and after it (§ 668) where they add up to the size now.
+    fn unpacked(&mut self, base: &Natural, items: &[crate::engine::linebreak::Kp]) {
+        use crate::engine::linebreak::Kp;
+        let mut states = vec![(base.along, base.depth, base.first)];
+        for k in items {
+            let (along, depth, first) = states[states.len() - 1];
+            let on = |size: Scaled| along.extended_by(depth).extended_by(Dim::exact(size));
+            states.push(match *k {
+                Kp::Box { h, d, .. } => (on(h), Dim::exact(d), first.or(self.first)),
+                Kp::Glue { w, .. } | Kp::Kern { w, .. } => (on(w), Dim::exact(0), first),
+                _ => (along, depth, first),
+            });
+        }
+        let sums = states[items.len()] == (self.along, self.depth, self.first);
+        let own = self.tail;
+        for (k, &mine) in own.iter().enumerate() {
+            // Past the list's first item: what was there before.
+            let Some(at) = items.len().checked_sub(k + 1) else {
+                self.tail[k..].copy_from_slice(&base.tail[..TAIL - k]);
+                self.undo[k..].copy_from_slice(&base.undo[..TAIL - k]);
+                break;
+            };
+            self.tail[k] = match items[at] {
+                // The register's own record of the item stands.
+                _ if !matches!(mine, Last::Unknown(_)) => mine,
+                Kp::Glue { w, st, sto, sh, sho } => {
+                    use crate::engine::value::{Glue, Stretch};
+                    let (stretch, shrink) = (Stretch { amount: st, order: sto }, Stretch { amount: sh, order: sho });
+                    Last::Glue(Dim::exact(w), Some(GlueHull::exact(&Glue { width: w, stretch, shrink })), false)
+                }
+                Kp::Kern { w, .. } => Last::Kern(w),
+                Kp::Penalty(p) => Last::Penalty(p),
+                _ => Last::Other,
+            };
+            self.undo[k] = sums.then_some((self.tail[k], [states[at], states[at + 1]]));
+        }
     }
 
     /// The list is empty again.
@@ -975,7 +1028,7 @@ impl Natural {
             forced: std::array::from_fn(|i| self.forced[i].or(other.forced[i])),
             para: self.para.join(other.para),
             prev_depth: join_prev(self.prev_depth, other.prev_depth),
-            undo: if self.undo == other.undo { self.undo } else { None },
+            undo: if self.undo == other.undo { self.undo } else { [None; TAIL] },
         };
         // A character not yet counted differs between the paths: its own
         // size is not known, so the lengths it would add widen.
@@ -1103,6 +1156,31 @@ impl Last {
         }
     }
 
+    /// A glue, kern or penalty (what `\unskip` and its like take off, tex.web § 1105) as a
+    /// box register's slot keeps it.
+    fn discardable(self) -> Option<Value> {
+        match self {
+            Last::Glue(_, Some(g), mu) => Some(g.value(mu)).filter(|v| *v != Value::Unknown),
+            Last::Kern(k) => Some(Value::Dimen(k)),
+            Last::Penalty(p) => Some(Value::Int(p)),
+            _ => None,
+        }
+    }
+
+    /// The item [`Last::discardable`] stored.
+    fn stored(value: Value) -> Option<Last> {
+        use crate::engine::value::Quantity;
+        match value {
+            Value::Glue(g) => Some(Last::Glue(Dim::exact(g.width), Some(GlueHull::exact(&g)), false)),
+            Value::GlueNum { quantity: Quantity::Glue, hull } => {
+                Some(Last::Glue(Dim::range(hull.width.lo, hull.width.hi), Some(*hull), false))
+            }
+            Value::Dimen(k) => Some(Last::Kern(k)),
+            Value::Int(p) => Some(Last::Penalty(p)),
+            _ => None,
+        }
+    }
+
     /// What `\lastskip`, `\lastkern` and `\lastpenalty` read off it: zero
     /// unless it is of that kind (tex.web § 424).
     pub(crate) fn reads(self) -> Reads {
@@ -1165,9 +1243,9 @@ pub(crate) const BOXED: u8 = 2;
 pub(crate) const BREAKS: u8 = 4;
 
 /// What a box register records beside its state, each reset when it changes.
-const BOX_SLOTS: [&str; 21] = [
+const BOX_SLOTS: [&str; 24] = [
     "wd", "ht", "dp", "first", "solid", "last", "one", "lw", "lh", "ld", "lmk", "ln", "lead", "calm", "held", "nh",
-    "nd", "node", "vl", "row", "item",
+    "nd", "node", "vl", "row", "item", "u1", "u2", "u3",
 ];
 
 /// Which item `\unskip`, `\unkern` or `\unpenalty` takes away.
@@ -1452,7 +1530,7 @@ impl Machine<'_> {
         // width, height and depth are those of the one line it may make.
         let indent = if indented { self.dimen_parameter("parindent") } else { Dim::exact(0) };
         self.natural = Some(Natural {
-            undo: None,
+            undo: [None; TAIL],
             along: indent,
             height: Dim::exact(0),
             depth: Dim::exact(0),
@@ -1651,7 +1729,7 @@ impl Machine<'_> {
     /// known and alike.
     fn uniform_par_shape(&mut self) -> Option<(Scaled, Scaled)> {
         let lines = self.engine_slot_int("parshape", "parshape")?;
-        if !(1..=64).contains(&lines) {
+        if !(1..=i64::from(self.limits.parshape_lines)).contains(&lines) {
             return None;
         }
         let mut shape = None;
@@ -1895,7 +1973,11 @@ impl Machine<'_> {
         } else {
             n.para.fit = crate::engine::linebreak::UNFIT;
             let zero = Dim::exact(0);
-            n.stack_lines((1, n.para.breakpoints.saturating_add(1)), zero.join(h), zero.join(d), skips);
+            // The bound is rounded up to a power of two: a word typed into the line then
+            // leaves it, and the page's length with it, as it was, so the run after the
+            // edit meets the last one past the paragraph, not past the page.
+            let most = n.para.breakpoints.saturating_add(1).checked_next_power_of_two().unwrap_or(u32::MAX);
+            n.stack_lines((1, most), zero.join(h), zero.join(d), skips);
             n.para.rough = true;
         }
     }
@@ -2395,6 +2477,7 @@ impl Machine<'_> {
             placed: false,
             from: self.out.facts.text.at.len() as u32,
             carried: self.carried_chars.len() as u32,
+            literals: self.out.facts.literals.len() as u32,
             align: None,
             conds: self.conds.len() as u32,
             graf: None,
@@ -2557,7 +2640,12 @@ impl Machine<'_> {
         // tex.web § 1100: what the output routine left on its list goes
         // back onto the page, ahead of what waits.
         if nest.code == Some(group::OUTPUT) {
-            self.page_touched |= material & BOXED != 0;
+            use crate::engine::linebreak::Kp;
+            // what it left with a forced break in it, or behind one that waits, goes item by item
+            let list = natural.and_then(|o| o.para.items).map(|id| self.vlist_of(id));
+            let waits = self.list_slot("output.back").filter(|w| !w.0.is_empty());
+            let list = list.filter(|l| waits.is_some() || l.0.iter().any(|k| matches!(k, Kp::Penalty(..=-10000))));
+            self.page_touched |= list.is_none() && material & BOXED != 0;
             // the boxes it put on its list (a here-float's `\box\@currbox`) reach the page with it:
             // no box encloses an output routine
             self.place_chars(Vec::new(), false);
@@ -2571,15 +2659,23 @@ impl Machine<'_> {
             self.set_list_slot("disc.page", Some(Default::default()));
             let main = self.natural.and_then(|n| n.para.items);
             self.save_discard(main.map(|_| crate::engine::linebreak::Kp::Penalty(10000)));
-            // the page holds it again: its length counts toward the next break
-            if material != 0 {
-                let along = natural.map_or(Dim::ANY, |o| o.along);
-                self.set_page_length(self.page_length().extended_by(along));
-            }
             // § 1026: the page builder resumes where the routine was
             // fired, whichever way its code went: paths parted inside it
             // meet there.
             self.at_join = Some(crate::analysis::machine::JoinAt::Output);
+            // the page holds it again: its length counts toward the next break
+            match list {
+                Some(list) => self.page_resumes(crate::engine::linebreak::vlist_cat(list, waits), span),
+                None => {
+                    if material != 0 {
+                        let along = natural.map_or(Dim::ANY, |o| o.along);
+                        self.set_page_length(self.page_length().extended_by(along));
+                    }
+                    if let Some(waits) = waits {
+                        self.page_resumes(waits, span);
+                    }
+                }
+            }
             return;
         }
         let kind = match nest.code {
@@ -2605,7 +2701,7 @@ impl Machine<'_> {
                 } else {
                     (n.along.extended_by(n.depth).reduced_by(limit).join(n.along), n.depth.join(limit))
                 };
-                let n = Natural { along, depth, undo: None, ..n };
+                let n = Natural { along, depth, undo: [None; TAIL], ..n };
                 let height = nest.to.size(n.along);
                 // tex.web § 1087: a `\vtop` takes its height from its first
                 // box, and the rest of the packed box is its depth.
@@ -2652,8 +2748,12 @@ impl Machine<'_> {
         }
         let now = self.out.facts.text.at.len() as u32;
         let inside = nest.list.within(Modes::INTERNAL_VERTICAL.union(Modes::RESTRICTED_HORIZONTAL));
+        if self.command_text.is_some() {
+            self.command_box(&nest, now, kind == BoxState::VBox, dims, nest.placed && nest.target.is_none());
+        }
         if let Some((register, global, within)) = nest.target {
             let ranges = self.gather_chars(&nest, now);
+            crate::analysis::observe::boxed(self, nest.literals, &ranges);
             self.set_aside(nest.from, now);
             self.set_box_chars(register, ranges, global);
             self.set_box(register, kind, global, within);
@@ -2711,6 +2811,7 @@ impl Machine<'_> {
             // `\unvbox`, sees (§§ 1105, 1110).
             if matches!(kind, BoxState::HBox | BoxState::VBox) {
                 self.set_box_last(register, n.tail[0]);
+                self.set_box_under(register, n.tail);
                 // A row it still is: `\unhbox` gives back its cells.
                 if let (BoxState::HBox, Some(cols)) = (kind, n.row_cols()) {
                     self.set_box_slot(register, "row", Value::Int(cols.into()));
@@ -3244,16 +3345,19 @@ impl Machine<'_> {
                 let n = self.scan_box_number();
                 let mut dims = self.box_dims(n);
                 let first = self.box_dim_slot(n, "first");
-                // A vbox gives back its list at its natural size (§ 1110).
-                if let Some(h) = self.box_dim_slot(n, "nh") {
-                    dims = [dims[0], h, self.box_dim_slot(n, "nd").unwrap_or(Dim::ANY)];
+                // A vbox gives back its list at its natural size (§ 1110), whatever it was
+                // packed to: unknown where the list's size was not followed.
+                let natural = ["nh", "nd"].map(|which| self.box_dim_slot(n, which));
+                if natural[0].is_some() || first.is_some() && n.is_some_and(|k| self.box_state(k) == BoxState::VBox) {
+                    dims = [dims[0], natural[0].unwrap_or(Dim::ANY), natural[1].unwrap_or(Dim::ANY)];
                 }
                 let solid = n.map(|n| self.intern(&format!("\u{4}box.solid.{n}")));
                 let solid = match solid.map(|k| self.env.value(k)) {
                     Some(Value::Int(k)) => u8::try_from(k).ok(),
                     _ => None,
                 };
-                let last = self.box_last(n);
+                let tail = self.box_window(n);
+                let last = tail[0];
                 let ligature = n.map(|n| self.intern(&format!("\u{4}box.lig.{n}")));
                 let ligature = ligature.and_then(|key| self.env.value(key).as_int());
                 let line = self.box_line(n);
@@ -3315,7 +3419,8 @@ impl Machine<'_> {
                 } else if state != BoxState::Void {
                     // A list with no forced break brings none, whatever else it holds.
                     let breaks = self.material & BREAKS;
-                    self.unpackage(state, dims, first, solid, list);
+                    let base = self.natural;
+                    self.unpackage(state, dims, first, solid, list.clone());
                     if calm {
                         self.material = self.material & !BREAKS | breaks;
                     }
@@ -3333,12 +3438,21 @@ impl Machine<'_> {
                         && solid != Some(0)
                         && let Some(n) = &mut self.natural
                     {
-                        n.tail[0] = last;
+                        // A list of boxes and rules alone keeps the tail it pushed.
+                        match first.zip(solid) {
+                            Some(_) if state == BoxState::HBox => n.tail[0] = last,
+                            _ => (n.tail, n.below, n.undo) = (tail, None, [None; TAIL]),
+                        }
                         n.ligature = ligature.and_then(|l| u32::try_from(l).ok());
                     }
                     // § 1110: the box's items, not the one item it stood for.
                     if let (Some(n), Some(held)) = (&mut self.natural, held) {
                         n.held = held;
+                    }
+                    if let (BoxState::VBox, false, Some(base), Some((items, _)), Some(n)) =
+                        (state, horizontal, base, &list, &mut self.natural)
+                    {
+                        n.unpacked(&base, items);
                     }
                     // An alignment row onto an empty list: its items are the list.
                     if let (Some(cols), BoxState::HBox, true, Some(n)) = (row, state, horizontal, &mut self.natural) {
@@ -3603,7 +3717,7 @@ impl Machine<'_> {
         // A `&&` before the `\cr` makes nothing periodic.
         local(self, "period", Value::Int(period.filter(|p| *p < columns.len()).map_or(-1, |p| p as i64)));
         local(self, "m", Value::Int(columns.len() as i64));
-        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans", "moved"] {
+        for what in ["col", "incell", "omit", "vdone", "cdepth", "spans", "moved", "udepth"] {
             local(self, what, Value::Int(0));
         }
         local(self, "start", Value::Unknown);
@@ -3673,6 +3787,7 @@ impl Machine<'_> {
                 return false;
             };
             self.unread(token);
+            self.unread(Token::new(Tok::Cs(self.end_template), token.span));
             self.push_tokens(v);
             return true;
         }
@@ -3710,6 +3825,22 @@ impl Machine<'_> {
         false
     }
 
+    /// What reading `toks` adds to `align_state` (§§ 347, 357): its explicit
+    /// `{` less its `}`, but a brace after `` ` `` is a code (§ 442).
+    fn brace_balance(toks: &[Token]) -> i64 {
+        let mut code = false;
+        toks.iter().fold(0, |sum, t| {
+            let by = match t.tok {
+                _ if code => 0,
+                Tok::Chr(_, Catcode::Begin) => 1,
+                Tok::Chr(_, Catcode::End) => -1,
+                _ => 0,
+            };
+            code = t.tok == Tok::Chr('`', Catcode::Other);
+            sum + by
+        })
+    }
+
     /// The template of column `j`: past the last, the periodic part's
     /// again (tex.web § 793).
     fn template_of(&mut self, j: i64) -> i64 {
@@ -3723,6 +3854,15 @@ impl Machine<'_> {
         self.tpl_set("ok", Value::Int(0));
     }
 
+    /// tex.web § 324: the cell's `u` list just ended (its frame at `depth` popped): the cell's
+    /// text counts its braces from here.
+    pub(crate) fn u_part_ended(&mut self, depth: usize) {
+        if self.cell_base.is_some() && self.tpl_int("udepth") == depth as i64 {
+            self.cell_base = Some(self.align_state);
+            self.tpl_set("udepth", Value::Int(0));
+        }
+    }
+
     /// tex.web § 342: an `&` or `\cr` (`\crcr`) that `get_next` reads with
     /// `align_state` zero ends the cell where it is read, whoever reads it:
     /// a `\futurelet` looking ahead meets the cell's `v` part instead
@@ -3732,7 +3872,32 @@ impl Machine<'_> {
         if self.cell_base != Some(self.align_state) {
             return false;
         }
-        let ends = match token.tok {
+        if !self.cell_ender(token) || !self.templated() || self.between_rows() {
+            return false;
+        }
+        if self.tpl_int("incell") != 1 || self.tpl_int("vdone") != 0 || self.tpl_int("omit") != 0 {
+            return false;
+        }
+        let spans = self.align_primitive(token) == Some("span");
+        self.template_cell_end(token, spans)
+    }
+
+    /// tex.web § 780: the `v` part [`Self::template_end_read`] put back ends
+    /// in `\endtemplate`, a command past `outer_call` (§ 336): whether
+    /// `token` is that one, read while its cell still waits for its end.
+    pub(crate) fn end_template_read(&mut self, token: Token) -> bool {
+        token.tok == Tok::Cs(self.end_template)
+            && self.cell_base.is_none()
+            && self.templated()
+            && !self.between_rows()
+            && self.tpl_int("incell") == 1
+            && self.tpl_int("vdone") == 1
+            && self.tpl_int("omit") == 0
+    }
+
+    /// An `&`, `\cr`, `\crcr` or `\span`: what ends a cell at `align_state` zero.
+    fn cell_ender(&self, token: Token) -> bool {
+        match token.tok {
             Tok::Chr(_, Catcode::Tab) => true,
             // Engine bookkeeping, as § 336's `\outer` check: not a read of
             // the meaning.
@@ -3744,15 +3909,7 @@ impl Machine<'_> {
                 _ => false,
             },
             _ => false,
-        };
-        if !ends || !self.templated() || self.between_rows() {
-            return false;
         }
-        if self.tpl_int("incell") != 1 || self.tpl_int("vdone") != 0 || self.tpl_int("omit") != 0 {
-            return false;
-        }
-        let spans = self.align_primitive(token) == Some("span");
-        self.template_cell_end(token, spans)
     }
 
     /// A cell boundary satex does not follow (`\span`, an `&` it does not
@@ -3825,12 +3982,26 @@ impl Machine<'_> {
     /// `\omit` drops the template, else its `u` part goes first (§ 791).
     fn template_cell_start(&mut self, j: i64, t: Token, fresh: bool) {
         let omit = self.align_primitive(t) == Some("omit");
+        // § 324: `align_state` is zero where the `u` part ends, whatever
+        // braces it opened (LaTeX's `{\hfil…#` cells): the cell's text starts
+        // at the count past reading the `u` part.
+        let mut base = self.align_state;
         if !omit {
             self.unread(t);
             let u = self.template_of(j);
             let u = self.tpl(&format!("u.{u}"));
             match self.env.value(u) {
-                Value::Toks(u) => self.push_tokens(u),
+                Value::Toks(u) => {
+                    base += Self::brace_balance(&u);
+                    let below = self.input_depth();
+                    self.push_tokens(u);
+                    // § 324: where the `u` list ends, `align_state` counts from there, whatever its
+                    // expansion read past it or put back (siunitx's cells peek and skip `{`): the
+                    // frame's depth, so that its end sets the base ([`Machine::u_part_ended`]); an
+                    // empty `u` pushes no frame and the static count stands
+                    let depth = if self.input_depth() > below { self.input_depth() as i64 } else { 0 };
+                    self.tpl_set("udepth", Value::Int(depth));
+                }
                 _ => {
                     self.tpl_fail();
                     return;
@@ -3838,9 +4009,11 @@ impl Machine<'_> {
             }
         }
         self.tpl_set("omit", Value::Int(i64::from(omit)));
-        // § 324: past the `u` part `align_state` is zero; the `u` part is
-        // balanced, so the cell's text begins at what it is now.
-        self.cell_base = (!omit).then_some(self.align_state);
+        // § 791: while the `u` list is read `align_state` is 1000000, so no `&` or `\cr`
+        // its expansion reads ends the cell (siunitx 3.2 defines `\cr` there); the base
+        // is set where the list ends ([`Self::u_part_ended`]).
+        let reading_u = !omit && self.tpl_int("udepth") != 0;
+        self.cell_base = (!omit).then_some(if reading_u { i64::MIN } else { base });
         self.tpl_set("cdepth", Value::Int(self.env.depth() as i64));
         self.tpl_set("incell", Value::Int(1));
         self.tpl_set("vdone", Value::Int(0));
@@ -4161,7 +4334,18 @@ impl Machine<'_> {
                             // At most one item went (§ 1080). A recorded list loses
                             // its last box, so a later `\vsplit` still reads it.
                             (Some(false), Some(n)) => {
-                                *n = Natural { held: n.held.saturating_sub(1), ..Natural::any() };
+                                // The list as it was before the box, where that is followed:
+                                // § 1080 takes the one node off and leaves `\prevdepth` alone.
+                                match n.undone().filter(|_| taken.is_some()) {
+                                    Some(before) => {
+                                        (n.along, n.depth, n.first) = before;
+                                        (n.wide, n.line) = (n.wide.join(Dim::exact(0)), None);
+                                        (n.held, n.solid) = (n.held.saturating_sub(1), n.solid.saturating_sub(1));
+                                        n.undo.copy_within(1.., 0);
+                                        n.undo[TAIL - 1] = None;
+                                    }
+                                    None => *n = Natural { held: n.held.saturating_sub(1), ..Natural::any() },
+                                }
                                 n.para.items = kept;
                             }
                             _ => self.natural = None,
@@ -4245,11 +4429,17 @@ impl Machine<'_> {
                     let [w, x, d] = crate::engine::linebreak::vpack(&head, m);
                     self.set_badness(Some(self.pack_badness(&head, x, h)));
                     self.box_end(context, BoxState::VBox, [w, h, d].map(Dim::exact));
-                    self.carry_last(context, (Last::UNKNOWN, true, 0));
+                    self.carry_last(context, ([Last::UNKNOWN; TAIL], true, 0));
                     if let BoxContext::Set { register, .. } = context {
                         let [_, x, d] = crate::engine::linebreak::vpack(&head, crate::engine::value::MAX_DIMEN);
                         self.set_box_natural(register, first(&head), [x, d].map(Dim::exact));
                         self.set_box_slot(register, "vl", crate::engine::linebreak::list_value(value(&head)));
+                        // § 970: a part of whatsits and marks alone holds no box.
+                        if head.iter().all(|k| {
+                            matches!(k, crate::engine::linebreak::Kp::Whatsit | crate::engine::linebreak::Kp::Mark(..))
+                        }) {
+                            self.set_box_line(register, None);
+                        }
                     }
                     return;
                 }
@@ -4330,7 +4520,7 @@ impl Machine<'_> {
                 let state = if real == Some(BoxState::VBox) { BoxState::VBox } else { state };
                 self.box_end(context, state, [Dim::ANY, ht, dp]);
                 // § 973: `vert_break` stops at the first forced break.
-                return self.carry_last(context, (Last::UNKNOWN, true, 0));
+                return self.carry_last(context, ([Last::UNKNOWN; TAIL], true, 0));
             }
             BoxCmd::HBox => {
                 // A box appended to a vertical list may take `\vadjust`
@@ -4628,7 +4818,7 @@ impl Machine<'_> {
     /// unknown here), `\outputpenalty` the penalty, and `\output` runs in
     /// a group of its own in internal vertical mode. Without an output
     /// routine the page is shipped out (§ 1023).
-    pub(crate) fn fire_up(&mut self, penalty: i64, before: Last, span: Span) {
+    pub(crate) fn fire_up(&mut self, penalty: i64, before: [Last; TAIL], span: Span) {
         if !self.page_touched || self.output_active() {
             return;
         }
@@ -4647,7 +4837,7 @@ impl Machine<'_> {
             _ => None,
         };
         let hist = match (self.list_slot("marks.hist"), self.list_slot("marks.page")) {
-            (Some((h, ht)), Some((p, pt))) if h.len() < crate::engine::linebreak::MAX_ITEMS as usize => {
+            (Some((h, ht)), Some((p, pt))) if h.len() < self.cfg.limits.paragraph_items => {
                 use crate::engine::linebreak::Kp;
                 let marks = p.iter().filter_map(|k| match *k {
                     Kp::Mark(c, t) => Some(Kp::Mark(c, t + ht.len() as u32)),
@@ -4659,6 +4849,7 @@ impl Machine<'_> {
         };
         self.set_list_slot("marks.hist", hist);
         let page = page.filter(|_| penalty <= -10000).map(|id| self.vlist_of(id));
+        let page_list = page.clone();
         self.set_list_slot("marks.page", page);
         // § 1017: `\box255` is as wide as the widest item up to the break:
         // all of the page at a forced break, else at most that.
@@ -4709,12 +4900,19 @@ impl Machine<'_> {
         self.set_box_dims(Some(255), [width.at_least_zero(), height, depth]);
         if penalty <= -10000 {
             self.set_box_natural(Some(255), Dim::range(0, natural.hi.max(0)), [natural, self.main_depth]);
+            let list = page_list.and_then(|list| self.page_box_list(list, penalty, [natural, self.main_depth]));
+            self.set_box_slot(Some(255), "vl", crate::engine::linebreak::list_value(list));
         }
         // § 1005: the page ends at its first forced break.
         self.set_box_calm(Some(255));
         // § 1017: the page runs up to the break, which stays behind: its
         // last item is what preceded the penalty.
-        self.set_box_last(Some(255), before);
+        self.set_box_last(Some(255), before[0]);
+        // What lies under an earlier forced break went with that break's page (§ 1005).
+        let mut tail = before;
+        let cut = tail.iter().position(|l| matches!(l, Last::Penalty(p) if *p <= -10000)).unwrap_or(TAIL);
+        tail[cut..].fill(Last::UNKNOWN);
+        self.set_box_under(Some(255), tail);
         let lead = self.engine_sym("page.lead");
         let lead = self.env.value(lead);
         self.set_box_slot(Some(255), "lead", lead);
@@ -4751,6 +4949,62 @@ impl Machine<'_> {
         }
     }
 
+    /// tex.web § 1026: the list an output routine leaves goes before the contributions, and
+    /// the page builder goes on over it (§§ 1000, 1005): glue, kerns and penalties on an
+    /// empty page are dropped, and a forced penalty on a page that holds a box fires the
+    /// routine again. What follows that penalty waits in `output.back` for the routine's end.
+    fn page_resumes(&mut self, (items, texts): crate::engine::linebreak::VList, span: Span) {
+        use crate::engine::linebreak::{Kp, vpack};
+        let holds = |m: &mut Self, part: &mut Vec<Kp>| {
+            let [_, x, d] = vpack(part, crate::engine::value::MAX_DIMEN);
+            // the depth of its last box counts once something follows
+            m.set_page_length(m.page_length().extended_by(Dim::range(x.min(x + d), x.max(x + d))));
+            part.clear();
+        };
+        let mut part = Vec::new();
+        for (i, k) in items.iter().enumerate() {
+            match *k {
+                Kp::Glue { .. } | Kp::Kern { .. } | Kp::Penalty(_) if !self.page_touched => {}
+                Kp::Penalty(p @ ..=-10000) => {
+                    holds(self, &mut part);
+                    self.fire_up(p, [Last::UNKNOWN; TAIL], span);
+                    if self.output_active() {
+                        return self.set_list_slot("output.back", Some((items[i + 1..].into(), texts)));
+                    }
+                }
+                k => {
+                    self.page_touched |= matches!(k, Kp::Box { .. });
+                    part.push(k);
+                }
+            }
+        }
+        holds(self, &mut part);
+        self.set_list_slot("output.back", Some(Default::default()));
+    }
+
+    /// The list of `\box255` at a forced break (tex.web § 1017), from the page's record: without
+    /// the break's penalty, which stays behind, and with the `\topskip` glue § 1001 puts
+    /// before the first box or rule. `None` where it does not add up to the page's `size`.
+    fn page_box_list(
+        &mut self,
+        (items, texts): crate::engine::linebreak::VList,
+        penalty: i64,
+        size: [Dim; 2],
+    ) -> Option<crate::engine::linebreak::VList> {
+        use crate::engine::linebreak::{Kp, vpack};
+        let (&Kp::Penalty(p), items) = items.split_last()? else { return None };
+        let top = self.glue_parameter("topskip")?;
+        let mut list = items.to_vec();
+        if let Some((at, h)) = items.iter().enumerate().find_map(|(i, k)| match k {
+            Kp::Box { h, .. } => Some((i, *h)),
+            _ => None,
+        }) {
+            list.insert(at, Kp::glue(crate::engine::value::Glue { width: (top.width - h).max(0), ..top }));
+        }
+        let [_, x, d] = vpack(&list, crate::engine::value::MAX_DIMEN);
+        (p == penalty && size.map(|v| v.known()) == [Some(x), Some(d)]).then(|| (list.into(), texts))
+    }
+
     /// tex.web § 994 `build_page` where the page may have filled: material
     /// reached it since the last look, and its height against `\vsize` is
     /// not known. One path fires the output routine (§ 1005, a break at
@@ -4782,7 +5036,11 @@ impl Machine<'_> {
             if arm == 0 {
                 // The break is at glue before it, somewhere: the page's
                 // last item is not known.
-                m.fire_up(10000, Last::UNKNOWN, span);
+                // What lies under the list's last item may go with the page.
+                if let Some(n) = &mut m.natural {
+                    n.tail[1..].fill(Last::UNKNOWN);
+                }
+                m.fire_up(10000, [Last::UNKNOWN; TAIL], span);
             }
             true
         });
@@ -5118,7 +5376,7 @@ impl Machine<'_> {
                 n.advance(horizontal, k.map_or(Dim::ANY, Dim::exact));
                 n.pushed(k.map_or(Last::UNKNOWN, Last::Kern));
                 if !horizontal {
-                    n.undo = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
+                    n.undo[0] = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
                 }
             }
             Item::Glue(w, spec) => {
@@ -5140,7 +5398,7 @@ impl Machine<'_> {
                 n.advance(horizontal, w);
                 n.pushed(Last::Glue(w, spec, false));
                 if !horizontal {
-                    n.undo = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
+                    n.undo[0] = Some((n.tail[0], [before, (n.along, n.depth, n.first)]));
                 }
             }
             Item::Rule { width, height, depth } => {
@@ -5156,6 +5414,14 @@ impl Machine<'_> {
                 n.pushed(Last::Node(RULE));
             }
             Item::Box(dims) => {
+                // tex.web § 679: interline glue comes before a box on a vertical list,
+                // unless `\prevdepth` is `ignore_depth` or less.
+                if let (false, Some(d)) = (horizontal, n.prev_depth) {
+                    let spec = self.interline_spec(d, dims[1]);
+                    let width = spec.map_or_else(|| n.interline_glue(dims[1], skips), |g| Dim::exact(g.width));
+                    let glue = Last::Glue(width, spec.map(|g| GlueHull::exact(&g)), false);
+                    if d.lo > crate::engine::builtins::IGNORE_DEPTH { n.pushed(glue) } else { n.perhaps(glue) }
+                }
                 n.boxed(horizontal, dims.map(Some), skips);
                 n.pushed(Last::Other);
                 n.solid = n.solid.saturating_add(1);
@@ -7100,7 +7366,7 @@ impl Machine<'_> {
     /// Commands that put nothing on the current list, so its tail stays: `\setbox` (an
     /// assignment, tex.web § 1241), font and code assignments, messages (§ 1293), the
     /// document-level PDF objects (pdfTeX manual) and an `\immediate` file operation (§ 1375).
-    fn appends_nothing(&self, p: crate::engine::builtins::Primitive) -> bool {
+    pub(crate) fn appends_nothing(&self, p: crate::engine::builtins::Primitive) -> bool {
         use crate::engine::builtins::{Primitive as P, Syntax as S};
         match p {
             P::Write | P::Command(S::OpenOut | S::CloseOut) => self.prefixes.immediate,
@@ -7246,13 +7512,14 @@ impl Machine<'_> {
             // A penalty has no size on a vertical list (tex.web § 668).
             Some(false) if removed == Removed::Penalty => {}
             // The glue or kern appended last: the list as it was before.
+            Some(false) if let Some(before) = n.undone() => (n.along, n.depth, n.first) = before,
+            // § 668: over glue or a kern (penalties between have no size) the depth
+            // was zero, so the item added its width alone.
             Some(false)
-                if n.undo.is_some_and(|(item, [_, after])| {
-                    item == n.tail[0] && !matches!(item, Last::Unknown(_)) && after == (n.along, n.depth, n.first)
-                }) =>
+                if (n.tail[1..].iter().find(|l| !matches!(l, Last::Penalty(_))))
+                    .is_some_and(|l| matches!(l, Last::Glue(..) | Last::Kern(_))) =>
             {
-                let (_, [before, _]) = n.undo.expect("checked");
-                (n.along, n.depth, n.first) = before;
+                n.along = n.along.reduced_by(taken)
             }
             _ => {
                 n.along = Dim::ANY;
@@ -7649,17 +7916,14 @@ impl Machine<'_> {
     /// neither (empty toks); joins of different ones read as unknown.
     fn set_box_last(&mut self, register: Option<i64>, last: Last) {
         let Some(n) = register else { return };
-        let value = match last {
-            Last::Glue(_, Some(g), mu) => g.value(mu),
-            Last::Kern(k) => Value::Dimen(k),
-            Last::Penalty(p) => Value::Int(p),
+        let value = last.discardable().unwrap_or(match last {
             Last::Other | Last::Char(_) | Last::Box | Last::HBox(_) | Last::VBox | Last::Node(_) => {
                 Value::Toks(Rc::from([]))
             }
             // Not known: what an earlier box in the register ended with
             // no longer holds.
-            Last::Glue(_, None, _) | Last::Empty | Last::Unknown(_) => Value::Unknown,
-        };
+            _ => Value::Unknown,
+        });
         let key = self.intern(&format!("\u{4}box.last.{n}"));
         self.env.set_value_in_place(key, value);
         // The type of a node only `\lastnodetype` tells apart.
@@ -7699,13 +7963,39 @@ impl Machine<'_> {
 
     /// What a box set from register `n`'s keeps of its list: its last
     /// item, whether it holds no forced break, and how many items.
-    fn box_kept(&mut self, n: Option<i64>) -> (Last, bool, u8) {
-        (self.box_last(n), self.box_calm(n), self.box_held(n))
+    fn box_kept(&mut self, n: Option<i64>) -> ([Last; TAIL], bool, u8) {
+        (self.box_window(n), self.box_calm(n), self.box_held(n))
     }
 
-    fn carry_last(&mut self, context: BoxContext, (last, calm, held): (Last, bool, u8)) {
+    /// The glue, kerns and penalties right under the list's last item, which `\unskip` and
+    /// its like uncover one by one after `\unvbox` or `\unhbox` (tex.web §§ 1105, 1110).
+    /// The slots are unknown from the first other item on (`set_box` reset them).
+    fn set_box_under(&mut self, register: Option<i64>, tail: [Last; TAIL]) {
+        for (k, value) in tail.iter().enumerate().skip(1).map_while(|(k, l)| Some((k, l.discardable()?))) {
+            self.set_box_slot(register, &format!("u{k}"), value);
+        }
+    }
+
+    /// The tail `\unvbox` or `\unhbox` of register `n` leaves: its list's last item over
+    /// what [`Self::set_box_under`] kept, unknown past that.
+    fn box_window(&mut self, n: Option<i64>) -> [Last; TAIL] {
+        let mut tail = [Last::UNKNOWN; TAIL];
+        tail[0] = self.box_last(n);
+        for (k, slot) in tail.iter_mut().enumerate().skip(1) {
+            let key = n.map(|n| self.intern(&format!("\u{4}box.u{k}.{n}")));
+            match key.and_then(|key| Last::stored(self.env.value(key))) {
+                Some(last) => *slot = last,
+                None => break,
+            }
+        }
+        tail
+    }
+
+    fn carry_last(&mut self, context: BoxContext, (tail, calm, held): ([Last; TAIL], bool, u8)) {
+        let last = tail[0];
         if let BoxContext::Set { register, .. } = context {
             self.set_box_last(register, last);
+            self.set_box_under(register, tail);
             if calm {
                 self.set_box_calm(register);
             }
@@ -7719,9 +8009,6 @@ impl Machine<'_> {
         let Some(n) = n else { return Last::UNKNOWN };
         let key = self.intern(&format!("\u{4}box.last.{n}"));
         match self.env.value(key) {
-            Value::Glue(g) => Last::Glue(Dim::exact(g.width), Some(GlueHull::exact(&g)), false),
-            Value::Dimen(k) => Last::Kern(k),
-            Value::Int(p) => Last::Penalty(p),
             Value::Toks(t) if t.is_empty() => {
                 let key = self.intern(&format!("\u{4}box.node.{n}"));
                 let item = self.intern(&format!("\u{4}box.item.{n}"));
@@ -7736,7 +8023,7 @@ impl Machine<'_> {
                     _ => Last::UNKNOWN,
                 }
             }
-            _ => Last::UNKNOWN,
+            value => Last::stored(value).unwrap_or(Last::UNKNOWN),
         }
     }
 

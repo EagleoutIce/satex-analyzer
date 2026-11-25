@@ -39,7 +39,14 @@ pub(super) struct Taker<'a> {
     resume: Option<Box<Drive>>,
     /// A paragraph preview's end: the file, its last line, and whether the run has read the file yet.
     stop: Option<(crate::engine::tex::FileId, u32, bool)>,
+    /// What gets the preview once the run reaches `stop`, which then goes on: a copy is concluded
+    /// there ([`Machine::hand_preview`]). Without it the run halts at `stop`.
+    preview: Option<Box<Pending>>,
 }
+
+/// A paragraph preview the run hands on at its end: the hook, the main file and its text, the
+/// paragraph's file name and its first and last line.
+struct Pending(Preview, crate::engine::tex::FileId, Rc<str>, String, u32, u32);
 
 /// What a paragraph preview hands on: the run up to the edited paragraph's end, the
 /// paragraph's file and its first and last line.
@@ -112,6 +119,10 @@ pub(super) struct Taking<'a> {
     converged: Option<(String, u32, u64)>,
     /// The last run's end with this run's facts before the meeting line: this run's end.
     spliced: Option<Box<Machine<'a>>>,
+    /// With `spliced`: how its run differs from the last one ([`super::Since`], its run not yet named).
+    edited: Option<super::Since>,
+    /// The expansions, occurrences and definitions recorded when this run resumed.
+    rows: [usize; 3],
     /// What the last run read after the meeting line.
     tail: Vec<crate::project::overlay::Read>,
     /// After a splice: when this run and the last run's rest last read or wrote each slot.
@@ -225,7 +236,9 @@ impl Machine<'_> {
         // A lookahead in the preamble (`\@ifnextchar[`) may hold the next line's first token.
         let settled = match lookahead {
             true => opens || body,
-            false => mouth.line_mark().is_some_and(|m| !m.ended),
+            // Or where the rest of the line adds no token (a line ending in a control word):
+            // a resume there holds the whole line ([`Mouth::retext`]) and reads the next alike.
+            false => mouth.quiet_line_mark(&self.catcodes).is_some_and(|m| !m.ended),
         };
         // Not inside `\include`: TeX continues reading after the included file.
         !self.input.iter().any(|f| matches!(f, Frame::Boundary))
@@ -248,6 +261,39 @@ impl Machine<'_> {
         (seen && !open) || past
     }
 
+    /// Whether the run hands a paragraph preview on here, at its end ([`Taker::preview`]).
+    pub(super) fn preview_due(&mut self) -> bool {
+        self.checkpoints.preview.is_some() && self.preview_done()
+    }
+
+    /// Concludes a copy of the run at the paragraph preview's end and hands it on; the run goes
+    /// on. The copy halts where a separate run from the same checkpoint would have, with the
+    /// same state: the run itself is that run up to here.
+    pub(super) fn hand_preview(&mut self, drive: Drive) {
+        let (Some(pending), stop) = (self.checkpoints.preview.take(), self.checkpoints.stop.take()) else { return };
+        let Pending(then, id, source, path, lo, hi) = *pending;
+        let clock = std::time::Instant::now();
+        let mut p = self.clone();
+        p.checkpoints.resume = Some(Box::new(drive));
+        p.checkpoints.stop = stop;
+        let cloned = clock.elapsed();
+        p.run_guarded();
+        if p.out.exhausted {
+            return;
+        }
+        let analysis = p.conclude(id, &source);
+        let concluded = clock.elapsed();
+        then(analysis, &path, lo, hi);
+        if self.cfg.verbose >= 2 {
+            crate::util::progress::note!(
+                "satex: paragraph {lo}-{hi} first: clone {:.3}s, conclude {:.3}s, rows {:.3}s",
+                cloned.as_secs_f64(),
+                (concluded - cloned).as_secs_f64(),
+                (clock.elapsed() - concluded).as_secs_f64()
+            );
+        }
+    }
+
     /// Saves the run's state and `drive` as a checkpoint.
     pub(super) fn take_checkpoint(&mut self, drive: Drive) {
         // No step since the last one (the run just resumed from it): that one stands for this state.
@@ -257,6 +303,23 @@ impl Machine<'_> {
             .as_ref()
             .and_then(|t| t.list.last())
             .is_some_and(|c| c.machine.out.steps == self.out.steps);
+        if std::env::var_os("SATEX_MEMPROBE").is_some() && !again {
+            let o = &self.out;
+            let fa = &o.facts;
+            let mut v = crate::probe_sz!("o.interner" => o.interner, "o.graph" => o.graph, "o.calls" => o.calls, "o.observed" => o.observed, "o.files" => o.files, "o.facts" => o.facts, "o.trace" => o.trace, "o.env" => o.env, "o.kernel_sites" => o.kernel_sites, "o.font_states" => o.font_states, "out" => self.out,
+                "f.defs" => fa.defs, "f.types" => fa.types, "f.length_fonts" => fa.length_fonts, "f.vars" => fa.vars, "f.letters" => fa.letters, "f.expansions" => fa.expansions, "f.loads" => fa.loads, "f.occurrences" => fa.occurrences, "f.literals" => fa.literals, "f.diagnostics" => fa.diagnostics, "f.csnames" => fa.csnames, "f.groups" => fa.groups, "f.raised" => fa.raised, "f.spaces" => fa.spaces, "f.kept_spaces" => fa.kept_spaces, "f.conditionals" => fa.conditionals, "f.text" => fa.text, "f.lines" => fa.lines, "f.shapes" => fa.shapes,
+                "env" => self.env, "kp" => self.kp, "input" => self.input, "catcodes" => self.catcodes, "lua" => self.lua, "carried" => self.carried, "scratch" => self.scratch, "outputs" => self.outputs, "streams" => self.streams, "unknown_chars" => self.unknown_chars, "box_chars" => self.box_chars, "diag_seen" => self.diag_seen, "quantity" => self.quantity, "undo" => self.undo, "choices" => self.choices, "pending" => self.pending, "definition_sites" => self.definition_sites, "expansion_sites" => self.expansion_sites, "site_writes" => self.site_writes, "cond_sites" => self.cond_sites, "call_runs" => self.call_runs, "memos" => self.memos, "memo_codes" => self.memo_codes, "memo_seen" => self.memo_seen, "name_reads" => self.name_reads, "lines_seen" => self.lines_seen, "settings_scopes" => self.settings_scopes, "cfg" => self.cfg, "pinned" => self.pinned, "read_whole" => self.read_whole, "box_saves" => self.box_saves, "diag_raised" => self.diag_raised, "scans" => self.scans, "resolver" => self.resolver, "cds" => self.cds, "whole" => *self);
+            v.extend(self.out.graph.probe());
+            v.extend(self.env.probe());
+            v.sort_by_key(|p| std::cmp::Reverse(p.1));
+            eprintln!("PROBE step {} {:?}", self.out.steps, &v[..v.len().min(30)]);
+        }
+        if !again {
+            // The copy shares the site tables whole.
+            self.expansion_sites.settle();
+            self.call_runs.settle();
+            self.out.graph.settle();
+        }
         let (before, clock) = (crate::analysis::budget::in_use(), std::time::Instant::now());
         let machine = (!again).then(|| self.clone());
         let (bytes, copied) = (crate::analysis::budget::in_use().saturating_sub(before), clock.elapsed());
@@ -331,26 +394,7 @@ impl Machine<'_> {
             }
             (None, None) => None,
         });
-        // Each copy holds what grows along the document (graph, facts, sites)
-        // anew, so their bytes are bounded too, not only their number.
-        let over = |list: &[Checkpoint]| budget > 0 && held(list) > budget;
-        let kept = |c: &Checkpoint| c.pinned || c.anchor;
-        while taking.list.len() > self.cfg.limits.checkpoints.max(1)
-            || (over(&taking.list) && taking.list.iter().filter(|c| !kept(c)).count() > 1)
-        {
-            // Drop every other one. The last, the pinned and the anchors stay.
-            // Counted among the ones that may go, so the kept ones never shield their neighbours.
-            let len = taking.list.len();
-            let mut n = taking.list.iter().filter(|c| !kept(c)).count();
-            taking.list.retain(|c| {
-                n -= usize::from(!kept(c));
-                kept(c) || n % 2 == 0
-            });
-            taking.every *= 2;
-            if taking.list.len() == len {
-                break;
-            }
-        }
+        thin(&mut taking.list, &mut taking.every, self.cfg.limits.checkpoints, budget);
         (taking.next, taking.last, taking.document) = (steps + taking.every, steps, document);
     }
 
@@ -363,7 +407,7 @@ impl Machine<'_> {
             return;
         }
         let Some((mouth, false)) = reading_file(&self.input) else { return };
-        if !mouth.line_mark().is_some_and(|m| !m.ended) {
+        if !mouth.quiet_line_mark(&self.catcodes).is_some_and(|m| !m.ended) {
             return;
         }
         let here = files_at(&self.input);
@@ -374,14 +418,22 @@ impl Machine<'_> {
         let total = taking.prior.steps;
         let Some(old) = old.pop() else { return };
         let (reads, old) = (old.reads, old.machine);
-        let differs = self.differs_from(&old, false).or_else(|| self.splice(&old, reads).err());
+        let clock = std::time::Instant::now();
+        let all = self.differences(&old, false);
+        let differs = all.first().copied();
+        let compared = clock.elapsed();
+        let differs = differs.or_else(|| self.splice(&old, reads).err());
         if matches!(differs, Some("page so far" | "mode or pages" | "path state")) {
             self.lax_splice(&old, reads);
         }
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
-                "satex: state at {path}:{line} vs the last run's: {}",
-                differs.unwrap_or("alike")
+                "satex: state at {path}:{line} vs the last run's: {}{} at its step {} of {total} ({:.3}s, of it comparing {:.3}s)",
+                differs.unwrap_or("alike"),
+                all.get(1..).unwrap_or_default().iter().map(|d| format!(", {d}")).collect::<String>(),
+                old.out.steps,
+                clock.elapsed().as_secs_f64(),
+                compared.as_secs_f64()
             );
         }
         if let Some(taking) = self.checkpoints.on.as_mut() {
@@ -397,6 +449,7 @@ impl Machine<'_> {
     /// Sound when the states are equal here and the edited lines left no token
     /// behind: the rest then runs alike, and records alike, in both runs.
     fn splice(&mut self, old: &Machine, reads: usize) -> Result<(), &'static str> {
+        let mut laps = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "splice");
         let prior = self.checkpoints.on.as_mut().map(|t| &mut t.prior).ok_or("no checkpoints")?;
         let (Some(edit), true) = (prior.edit.clone(), prior.end.is_some()) else {
             return Err("no end of the last run");
@@ -405,6 +458,7 @@ impl Machine<'_> {
         if !prior.rest_holds(reads) {
             return Err("the rest reads a changed file");
         }
+        laps.lap("files the rest reads");
         let window = edited_lines(&self.input, &old.input, &self.out.files, &edit, window).ok_or("edit elsewhere")?;
         // Between paragraphs: one going on would be broken into lines with the edited text.
         if self.mode != crate::engine::mode::Modes::VERTICAL {
@@ -428,6 +482,7 @@ impl Machine<'_> {
             [Option<crate::engine::tex::Span>; 5],
             Option<(crate::engine::tex::Span, crate::engine::tex::Span)>,
         )| { l.0.iter().flatten().chain(l.1.iter().flat_map(|p| [&p.0, &p.1])).any(on_edit) };
+        laps.lap("edited lines");
         if mine != theirs || places(&mine) {
             return Err("a place on the edited lines");
         }
@@ -435,7 +490,9 @@ impl Machine<'_> {
         if self.out.document_depth.is_none() {
             return Err("before the document");
         }
-        if (&self.diag_seen, &self.diag_raised, &self.diag_live) != (&old.diag_seen, &old.diag_raised, &old.diag_live) {
+        if (&self.diag_seen, &self.diag_raised, self.diag_raised_base, &self.diag_live)
+            != (&old.diag_seen, &old.diag_raised, old.diag_raised_base, &old.diag_live)
+        {
             return Err("diagnostics raised");
         }
         // Counts of tokens taken and assignments made differ by the edit's. They are compared
@@ -443,6 +500,7 @@ impl Machine<'_> {
         let parted = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.parted);
         let (mine, theirs) =
             (provisional::comparable_path(self, false, parted), provisional::comparable_path(old, false, parted));
+        laps.lap("path");
         if mine != theirs {
             return Err("path state");
         }
@@ -450,6 +508,7 @@ impl Machine<'_> {
         // only if it never read or wrote one of them ([`crate::engine::env::Env::touched`]).
         // They then end as this run binds them here.
         let delta = self.env.differing(&old.env);
+        laps.lap("bindings");
         let prior = self.checkpoints.on.as_ref().map(|t| &t.prior).ok_or("no checkpoints")?;
         if delta.iter().any(|&s| prior.used.get(s as usize).is_some_and(|&at| at >= old.out.steps)) {
             return Err("bindings the rest reads");
@@ -470,14 +529,19 @@ impl Machine<'_> {
         let since = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.since);
         let traces =
             [mine, self.env.trace((since.0, since.1), &delta), theirs, old.env.trace((since.0, since.1), &delta)];
+        laps.lap("traces");
         if traces.iter().any(|t| mentions(t, window)) {
             return Err("tokens of the edited lines");
         }
-        // Last: it splices `end` in place, so a failure leaves no end for a later line.
-        let mut end = self.checkpoints.on.as_mut().and_then(|t| t.prior.end.take()).ok_or("no end of the last run")?;
+        // On a copy of the end: where a record does not splice here, a later line may still meet it.
+        let end = self.checkpoints.on.as_ref().and_then(|t| t.prior.end.as_ref()).ok_or("no end of the last run")?;
+        let mut end = Box::new((**end).clone());
+        laps.lap("copy of the end");
         provisional::splice_out(&self.out, &old.out, &mut end.out, window, since.2, false)?;
+        laps.lap("record");
         provisional::splice_records(self, old, &mut end, window)?;
         end.env.carry(&self.env, &delta);
+        laps.lap("records, carry");
         end.kp = self.kp.clone();
         end.started = self.started;
         // The rest used what the last run used from here on.
@@ -485,7 +549,20 @@ impl Machine<'_> {
         let Some(taking) = self.checkpoints.on.as_mut() else { return Err("no checkpoints") };
         taking.used = Some(crate::engine::env::LastUse::joined(mine, &taking.prior.used, was, now));
         taking.tail = taking.prior.log.get(reads..).unwrap_or_default().to_vec();
+        taking.prior.end = None;
+        let (new, at) = (&self.out.facts, &old.out.facts);
+        let met = [new.expansions.len(), new.occurrences.len(), new.defs.len()];
+        taking.edited = Some(super::Since {
+            run: 0,
+            window: Some(window),
+            bindings: !delta.is_empty(),
+            // The rows the edited lines recorded, one for one in both runs; else none are told apart.
+            rows: (met == [at.expansions.len(), at.occurrences.len(), at.defs.len()])
+                .then(|| [0, 1, 2].map(|i| (taking.rows[i], met[i]))),
+            lines: line_shapes(&self.input, &old.input, window).unwrap_or_default().into(),
+        });
         taking.spliced = Some(end);
+        laps.lap("uses, log");
         Ok(())
     }
 
@@ -498,6 +575,11 @@ impl Machine<'_> {
     /// The first part of the state that differs from `old`'s, a necessary
     /// condition for both runs to go on alike. Facts are compared by count.
     pub(super) fn differs_from(&self, old: &Machine, lax: bool) -> Option<&'static str> {
+        self.differences(old, lax).first().copied()
+    }
+
+    /// Every part of the state that differs from `old`'s ([`Machine::differs_from`]).
+    fn differences(&self, old: &Machine, lax: bool) -> Vec<&'static str> {
         let since = self.checkpoints.on.as_ref().map_or((0, 0, 0), |t| t.since);
         let (f, g) = (&self.out.facts, &old.out.facts);
         let counts = |f: &crate::analysis::facts::Facts| {
@@ -517,7 +599,8 @@ impl Machine<'_> {
             (counts(f) != counts(g), "facts"),
         ]
         .into_iter()
-        .find_map(|(differs, what)| differs.then_some(what))
+        .filter_map(|(differs, what)| differs.then_some(what))
+        .collect()
     }
 
     /// Whether the run stands between paragraphs on a line past the edit (the line), or
@@ -530,7 +613,7 @@ impl Machine<'_> {
         let read = taking.edit.is_none() && (0..self.out.files.len()).any(|f| edited(f as crate::engine::tex::FileId));
         let between = self.mode == crate::engine::mode::Modes::VERTICAL
             && self.out.document_depth.is_some_and(|d| usize::from(d) == self.env.group_level());
-        let line = mouth.position().0;
+        let line = self.line_ahead(mouth);
         match open {
             true => (between && edited(mouth.file) && line > *hi).then_some(Some(line)),
             false => (between && read).then_some(None),
@@ -552,8 +635,43 @@ impl Machine<'_> {
     fn edit_gap(&self, taking: &Taking, mouth: &Mouth) -> Option<u32> {
         let (path, line) = taking.edit.as_ref()?;
         (Path::new(&self.out.files[usize::from(mouth.file)].path) == path)
-            .then(|| line.saturating_sub(mouth.position().0))
+            .then(|| line.saturating_sub(self.line_ahead(mouth)))
     }
+
+    /// The line the run reads next: the mouth's, or the one after where the rest of the
+    /// mouth's line adds no token ([`Mouth::quiet_line_mark`]).
+    fn line_ahead(&self, mouth: &Mouth) -> u32 {
+        mouth.quiet_line_mark(&self.catcodes).map_or(mouth.position().0, |m| m.line)
+    }
+}
+
+/// Keeps `list` within `most` checkpoints and `budget` bytes (0: no bound): past either, every
+/// other one goes and the spacing `every` doubles.
+/// Each copy holds what grows along the document (graph, facts, sites)
+/// anew, so their bytes are bounded too, not only their number.
+fn thin(list: &mut Vec<Checkpoint>, every: &mut u64, most: usize, budget: usize) {
+    let over = |list: &[Checkpoint]| budget > 0 && held(list) > budget;
+    let kept = |c: &Checkpoint| c.pinned || c.anchor;
+    while list.len() > most.max(1) || (over(list) && list.iter().filter(|c| !kept(c)).count() > 1) {
+        // Drop every other one. The last, the pinned and the anchors stay.
+        // Counted among the ones that may go, so the kept ones never shield their neighbours.
+        let len = list.len();
+        let mut n = list.iter().filter(|c| !kept(c)).count();
+        list.retain(|c| {
+            n -= usize::from(!kept(c));
+            kept(c) || n % 2 == 0
+        });
+        *every *= 2;
+        if list.len() == len {
+            break;
+        }
+    }
+}
+
+/// `list` in the order its run took them: placed ones may stand past ones the last run kept
+/// ([`Checkpoints::plant`]).
+fn in_run_order(list: &mut [Checkpoint]) {
+    list.sort_by_key(|c| c.machine.out.steps);
 }
 
 /// What copying `list` allocated, without its anchors (kept whatever they cost).
@@ -637,6 +755,26 @@ pub(super) fn edited_lines(
     Some((top.file, *differ.first()?, *differ.last()?))
 }
 
+/// How each line of `window` differs between the file `new` reads on top and the one `old`
+/// read there ([`super::LineShape`]). `None` unless both read the window's file.
+fn line_shapes(new: &super::Input, old: &super::Input, window: Window) -> Option<Vec<super::LineShape>> {
+    let top = |input: &super::Input| {
+        input.iter().rev().find_map(|f| if let Frame::File { mouth, .. } = f { Some(mouth.clone()) } else { None })
+    };
+    let (now, then) = (top(new).filter(|m| m.file == window.0)?, top(old).filter(|m| m.file == window.0)?);
+    let lines = |m: &Mouth, n: usize| m.source().split(|&c| c == '\n').nth(n).map(<[char]>::to_vec);
+    (window.1..=window.2)
+        .map(|line| {
+            let (now, then) = (lines(&now, line as usize - 1)?, lines(&then, line as usize - 1)?);
+            let kept = now.iter().zip(&then).take_while(|(a, b)| a == b).count();
+            let most = now.len().min(then.len()) - kept;
+            let tail = now.iter().rev().zip(then.iter().rev()).take(most).take_while(|(a, b)| a == b).count();
+            let by = now.len() as i64 - then.len() as i64;
+            Some(super::LineShape { line, kept: kept as u32, gone: (then.len() - kept - tail) as u32, by })
+        })
+        .collect()
+}
+
 /// Whether `text`, a state written with [`std::fmt::Debug`], holds a place in `window`.
 pub(super) fn mentions(text: &str, (file, lo, hi): Window) -> bool {
     let number = |s: &str, key: &str| {
@@ -701,6 +839,9 @@ pub struct Checkpoints<'a> {
     texts: HashMap<PathBuf, Rc<str>>,
     /// Steps the last run took itself (from its resume point, or all of them), and all its steps.
     pub ran: (u64, u64),
+    /// Steps the last run first took through the old text to place its checkpoints
+    /// ([`Checkpoints::plant`]); none where they stood already ([`Checkpoints::place_at`]).
+    pub placed: u64,
     /// The last run's machine at its end, before concluding.
     end: Option<Box<Machine<'a>>>,
     /// When the build's first run started. `limits.seconds` counts from here for every run.
@@ -711,9 +852,22 @@ pub struct Checkpoints<'a> {
     pub pending: Option<super::Unfinished>,
     /// What the next runs hand on early.
     pub hooks: RunHooks,
+    /// Set by a server that answers between its messages: what a run kept of the one before is
+    /// dropped by [`Checkpoints::rest`], after the run's results went out, not before.
+    pub defer_drops: bool,
+    buried: Option<Prior<'a>>,
+    /// Whether the next run keeps this one to meet its state again after the edit. A build's
+    /// later run does not: it reads build files this run read otherwise, and the rest of this
+    /// run, kept, is a second run in memory.
+    pub meet: bool,
 }
 
 impl<'a> Checkpoints<'a> {
+    /// Drops what the last run kept of the one before it ([`Checkpoints::defer_drops`]).
+    pub fn rest(&mut self) {
+        self.buried = None;
+    }
+
     /// Files outside the documents landed (a package bundle). A checkpoint holds while every
     /// name its run looked up resolves as before: the first that resolves otherwise goes, and
     /// every later one with it. What a run read is checked at its resume ([`reread`]).
@@ -784,11 +938,15 @@ impl<'a> Checkpoints<'a> {
             used: Default::default(),
             texts: HashMap::default(),
             ran: (0, 0),
+            placed: 0,
             end: None,
             build_started: None,
             between_runs: None,
             pending: None,
             hooks: RunHooks::default(),
+            defer_drops: false,
+            buried: None,
+            meet: true,
         }
     }
 
@@ -819,18 +977,19 @@ impl<'a> Checkpoints<'a> {
             (self.list, self.log, self.end) = (Vec::new(), Vec::new(), None);
         }
         self.setup = setup;
-        (self.resumed, self.converged) = (None, None);
+        (self.resumed, self.converged, self.placed) = (None, None, 0);
         // Nothing the last run read changed (another file opened in the editor): its end is this run's.
         if let Some(end) = self.end.as_ref().filter(|e| !e.out.exhausted && self.source == source)
             && self.log.iter().all(crate::project::overlay::Read::holds)
         {
-            let m = (**end).clone();
+            let mut m = (**end).clone();
             let id = m.out.main_file;
             if self.cfg.verbose >= 2 {
                 crate::util::progress::note!("satex: nothing the last run read changed ({} files)", self.log.len());
             }
             self.ran = (0, m.out.steps);
-            return m.conclude(id, source);
+            m.out.since = Some(super::Since { run: m.out.run, ..Default::default() });
+            return self.concluded(m, id, source);
         }
         let clock = std::time::Instant::now();
         let log = self.log.clone();
@@ -842,6 +1001,7 @@ impl<'a> Checkpoints<'a> {
             let stale = std::mem::take(&mut old);
             (resumed, edit, old) = self.resume(source);
             old.extend(stale);
+            in_run_order(&mut old);
         }
         let resumed_in = clock.elapsed();
         // The first changed line of the document is the best guess for the edit.
@@ -868,9 +1028,18 @@ impl<'a> Checkpoints<'a> {
         // name is only ever asked for its meaning (tex.web § 259 `id_lookup`: one never seen
         // and one undefined are the same to TeX), so more names change nothing.
         // After an edit only: a rerun of the same text meets nothing, and numbers as a run from the start does.
-        if let Some(end) = self.end.as_ref().filter(|_| self.resumed.is_some() && change.is_some()) {
-            if let Some(lists) = m.kp.grown(&end.kp) {
-                m.kp = lists;
+        // `cache.reruns`: a build's rerun is numbered like the run before too, to be compared with it.
+        let like_last = change.is_some() || self.cfg.cache.reruns && !self.meet;
+        if let Some(end) = self.end.as_ref().filter(|_| self.resumed.is_some() && like_last) {
+            match m.kp.grown(&end.kp, self.cfg.limits.list_items) {
+                Some(lists) => m.kp = lists,
+                // This run numbers its lists apart from the last run's: it cannot take that
+                // run's rest and goes on to the document's end. Said, with the setting to raise.
+                None if end.kp.holds(&m.kp) => crate::util::progress::note!(
+                    "satex: the last run recorded over half of limits.list_items ({}) list items: this edit's run cannot reuse its rest and runs to the end. Raise limits.list_items to let it",
+                    self.cfg.limits.list_items
+                ),
+                None => {}
             }
             if end.out.interner.holds(&m.out.interner) {
                 m.out.interner = end.out.interner.clone();
@@ -883,7 +1052,11 @@ impl<'a> Checkpoints<'a> {
         let edit = change.as_ref().map(|c| (at(c), c.lo)).or(edit);
         let past = change.as_ref().map(|c| (at(c), c.hi.1, self.cfg.limits.checkpoints_after_edit));
         if let (Some(then), Some((path, line))) = (self.hooks.preview.take(), &edit) {
-            self.preview(&m, id, source, path, *line, then);
+            self.preview(&mut m, id, source, path, *line, then);
+        }
+        // Not met, the last run's states go before this run, not after it.
+        if !self.meet && !self.cfg.cache.reruns {
+            old.clear();
         }
         let next = m.out.steps + self.every;
         let edited = edit.as_ref().map(|(path, _)| path.clone());
@@ -908,7 +1081,7 @@ impl<'a> Checkpoints<'a> {
                     Some((file as crate::engine::tex::FileId, c.lo, c.hi.0))
                 }),
                 stale: old,
-                end: self.end.take(),
+                end: self.end.take().filter(|_| self.meet),
                 log,
                 steps: self.steps,
                 used: self.used.clone(),
@@ -917,6 +1090,11 @@ impl<'a> Checkpoints<'a> {
             },
             converged: None,
             spliced: None,
+            edited: None,
+            rows: {
+                let facts = &m.out.facts;
+                [facts.expansions.len(), facts.occurrences.len(), facts.defs.len()]
+            },
             tail: Vec::new(),
             used: None,
             since: (m.env.assignments, m.env.journal_len(), m.out.facts.text.at.len() as u32),
@@ -929,6 +1107,7 @@ impl<'a> Checkpoints<'a> {
         m.run_guarded();
         self.used = m.env.touched.times();
         let ran = (clock.elapsed(), m.out.steps - from);
+        let mut laps = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "after the run");
         self.ran = (ran.1, m.out.steps);
         // Reads after the last checkpoint. No resume depends on them, but the build's reruns do.
         let after = crate::project::overlay::log(false);
@@ -937,15 +1116,21 @@ impl<'a> Checkpoints<'a> {
             self.hooks.provisional = taking.provisional.take().map(|(.., then)| then);
             (self.list, self.log, self.every) = (taking.list, taking.log, taking.every);
             self.converged = taking.converged;
+            if self.defer_drops {
+                self.buried = Some(std::mem::take(&mut taking.prior));
+            }
+            m.out.since = None;
             match taking.spliced.take() {
                 Some(end) => {
                     m = *end;
+                    m.out.since = taking.edited.take().map(|since| super::Since { run: m.out.run, ..since });
                     self.log.extend(taking.tail);
                     self.used = taking.used.take().unwrap_or_default();
                 }
                 None => self.log.extend(after),
             }
         }
+        laps.lap("end taken");
         self.steps = m.out.steps;
         // The project's files as this run read them: the next edit is told from them ([`Checkpoints::change`]).
         self.texts = (0..m.out.files.len() as crate::engine::tex::FileId)
@@ -959,9 +1144,12 @@ impl<'a> Checkpoints<'a> {
         if self.resumed.is_none() {
             self.ran = (m.out.steps, m.out.steps);
         }
+        laps.lap("texts");
         self.end = Some(Box::new(m.clone()));
+        laps.lap("end kept");
+        drop(laps);
         let (clock, verbose) = (std::time::Instant::now(), self.cfg.verbose >= 2);
-        let analysis = m.conclude(id, source);
+        let analysis = self.concluded(m, id, source);
         if verbose {
             crate::util::progress::note!(
                 "satex: resume {:.2}s, run {:.2}s for {} steps, conclude {:.2}s",
@@ -970,6 +1158,16 @@ impl<'a> Checkpoints<'a> {
                 ran.1,
                 clock.elapsed().as_secs_f64()
             );
+        }
+        analysis
+    }
+
+    /// `m` concluded, the run this call returns: the kept end is numbered as it is, so the next
+    /// run that takes its rest names it ([`super::Since::run`]).
+    fn concluded(&mut self, m: Machine<'a>, id: crate::engine::tex::FileId, source: &str) -> Analysis {
+        let analysis = m.conclude(id, source);
+        if let Some(end) = &mut self.end {
+            end.out.run = analysis.run;
         }
         analysis
     }
@@ -1006,12 +1204,24 @@ impl<'a> Checkpoints<'a> {
     /// `old` are the last run's checkpoints that no longer hold, `log` what it read.
     fn plant(&mut self, change: &Change, old: &[Checkpoint<'a>], log: &[crate::project::overlay::Read]) -> bool {
         let Some(last) = self.list.last() else { return false };
+        // The last one that holds stands on the line before the edit's (or on it): no line start
+        // lies between for a run of the old text to place one at.
+        let out = &last.machine.out;
+        let adjacent = reading_file_after(&last.machine.input, 1).is_some_and(|(mouth, _)| {
+            let path = Path::new(&out.files[usize::from(mouth.file)].path);
+            let edited = change.path.as_deref().map_or(mouth.file == out.main_file, |p| p == path);
+            edited && mouth.position().0 + 1 >= change.lo
+        });
+        // The last run's first checkpoint past the edit the new run can meet it at: one between
+        // paragraphs ([`Machine::splice`]). One inside a paragraph is passed.
+        let meets = old.iter().find(|c| c.machine.mode == crate::engine::mode::Modes::VERTICAL);
         // The last run's own checkpoints surround the edit already.
         if self.cfg.limits.checkpoint_meet_steps == 0
-            || (last.pinned || last.toward) && old.first().is_some_and(|c| c.pinned)
+            || (last.pinned || last.toward || adjacent) && meets.is_some_and(|c| c.pinned)
         {
             return false;
         }
+        let until = meets.map_or(u64::MAX, |c| c.machine.out.steps);
         let clock = std::time::Instant::now();
         // The edited file as the last run read it, for the files the checkpoint has open
         // (it may hold an older text of one, alike up to where it stands) and those read later.
@@ -1053,10 +1263,15 @@ impl<'a> Checkpoints<'a> {
             edit: Some((at.clone(), change.lo)),
             past: Some((at, change.hi.0, self.cfg.limits.checkpoints_after_edit)),
             apart: None,
-            until: Some(old.first().map_or(u64::MAX, |c| c.machine.out.steps)),
+            until: Some(until),
             prior: Prior::default(),
             converged: None,
             spliced: None,
+            edited: None,
+            rows: {
+                let facts = &m.out.facts;
+                [facts.expansions.len(), facts.occurrences.len(), facts.defs.len()]
+            },
             tail: Vec::new(),
             used: None,
             since: (m.env.assignments, m.env.journal_len(), m.out.facts.text.at.len() as u32),
@@ -1067,6 +1282,7 @@ impl<'a> Checkpoints<'a> {
         crate::project::overlay::log(false);
         restore();
         let Some(taking) = m.checkpoints.on.take() else { return false };
+        self.placed = m.out.steps - from;
         if self.cfg.verbose >= 2 {
             crate::util::progress::note!(
                 "satex: placed {} checkpoints around the edit in {:.2}s, {} steps",
@@ -1083,11 +1299,74 @@ impl<'a> Checkpoints<'a> {
         true
     }
 
-    /// Runs a copy of the resumed `m` to the end of the paragraph edited at `path`'s `line`, if that
-    /// line is in one of a file the run reads, and hands the result to `then`.
+    /// Before any edit: places checkpoints around `line` of `file`, a file the last run read
+    /// (the document itself or one it inputs), as the first edit there would
+    /// ([`Checkpoints::plant`]): a server calls it while idle for the line the editor's caret
+    /// stands on, so the edit that follows resumes there and meets the last run past its
+    /// paragraph. A run of the unchanged text, so its states are the last run's. `false`
+    /// where nothing was placed: the last run is not of these texts, the line already has
+    /// its checkpoints, or the run was stopped for a message.
+    pub fn place_at(&mut self, source: &str, file: &Path, line: u32) -> bool {
+        // What the last run read is checked where it counts: per checkpoint as it resumes, and
+        // by what the placing run reads.
+        if self.end.as_ref().is_none_or(|e| e.out.exhausted) || self.source != source {
+            return false;
+        }
+        let same =
+            |a: &Path, b: &Path| a == b || a.canonicalize().is_ok_and(|a| b.canonicalize().is_ok_and(|b| a == b));
+        let main = self.setup.as_ref().is_some_and(|(path, _)| same(path, file));
+        let part = self.texts.iter().find(|(at, _)| !main && same(at, file)).map(|(at, was)| (at.clone(), was.clone()));
+        let (path, was): (Option<PathBuf>, Rc<str>) = match part {
+            Some((at, was)) => (Some(at), was),
+            None if main => (None, Rc::from(source)),
+            None => return false,
+        };
+        let (_run, _entered) = crate::analysis::budget::Run::start();
+        // The checkpoints an edit on that line would leave standing: found with a text that differs there.
+        let mut lines: Vec<&str> = was.split('\n').collect();
+        let at = (line as usize).clamp(1, lines.len()) - 1;
+        let edited = format!("{}%", lines[at]);
+        lines[at] = &edited;
+        let edited = lines.join("\n");
+        let (log, was_resumed) = (self.log.clone(), self.resumed.take());
+        let held = path.as_ref().map(|p| (p, crate::project::overlay::text(p)));
+        if let Some((p, _)) = &held {
+            crate::project::overlay::set(p, edited.clone());
+        }
+        let (resumed, _, mut old) = self.resume(if path.is_none() { &edited } else { source });
+        match &held {
+            Some((p, Some(text))) => crate::project::overlay::set(p, text.clone()),
+            Some((p, None)) => crate::project::overlay::remove(p),
+            None => {}
+        }
+        let change = Change { path, was, lo: at as u32 + 1, hi: (at as u32 + 1, at as u32 + 1) };
+        // The time limit is the build's: this run is none of it.
+        self.build_started = None;
+        let before = self.list.len();
+        let placed = resumed.is_some() && self.plant(&change, &old, &log);
+        if placed {
+            // The caret's checkpoints replace the last edit's, as the next edit's would.
+            self.list[..before].iter_mut().chain(&mut old).for_each(|c| c.pinned = false);
+        }
+        self.list.extend(old);
+        in_run_order(&mut self.list);
+        (self.log, self.resumed) = (log, was_resumed);
+        if placed {
+            thin(
+                &mut self.list,
+                &mut self.every,
+                self.cfg.limits.checkpoints,
+                self.cfg.limits.checkpoint_memory.as_u64() as usize,
+            );
+        }
+        placed
+    }
+
+    /// Sets the resumed `m` to hand on the paragraph edited at `path`'s `line` once it reaches
+    /// the paragraph's end ([`Machine::hand_preview`]), if that line is in one of a file the run reads.
     fn preview(
         &self,
-        m: &Machine<'a>,
+        m: &mut Machine<'a>,
         id: crate::engine::tex::FileId,
         source: &str,
         path: &Path,
@@ -1103,28 +1382,13 @@ impl<'a> Checkpoints<'a> {
             },
         };
         let Some((lo, hi)) = paragraph_at(&text, line) else { return };
-        let clock = std::time::Instant::now();
-        let mut p = m.clone();
-        p.checkpoints.resume = m.checkpoints.resume.clone();
-        p.checkpoints.stop = Some((file as crate::engine::tex::FileId, hi, false));
-        let (cloned, from) = (clock.elapsed(), p.out.steps);
-        p.run_guarded();
-        let (ran, steps) = (clock.elapsed(), p.out.steps - from);
-        let at = p.checkpoints.stop.is_some_and(|(.., seen)| seen);
-        if at && !p.out.exhausted {
-            let analysis = p.conclude(id, source);
-            let concluded = clock.elapsed();
-            then(analysis, &m.out.files[file].path.clone(), lo, hi);
-            if self.cfg.verbose >= 2 {
-                crate::util::progress::note!(
-                    "satex: paragraph {lo}-{hi} first: clone {:.3}s, run {:.3}s for {steps} steps, conclude {:.3}s, rows {:.3}s",
-                    cloned.as_secs_f64(),
-                    (ran - cloned).as_secs_f64(),
-                    (concluded - ran).as_secs_f64(),
-                    (clock.elapsed() - concluded).as_secs_f64()
-                );
-            }
+        // The main file's last paragraph ends with the run: the run's own result is its preview.
+        if file == usize::from(id) && text.split('\n').skip(hi as usize).all(|l| l.trim().is_empty()) {
+            return;
         }
+        m.checkpoints.stop = Some((file as crate::engine::tex::FileId, hi, false));
+        let name = m.out.files[file].path.clone();
+        m.checkpoints.preview = Some(Box::new(Pending(then, id, Rc::from(source), name, lo, hi)));
     }
 
     /// The machine of the last checkpoint that is still valid, set up to read
@@ -1137,6 +1401,11 @@ impl<'a> Checkpoints<'a> {
     ) -> (Option<(Machine<'a>, crate::engine::tex::FileId)>, Option<Edit>, Vec<Checkpoint<'a>>) {
         let (mut holds, mut edit, mut old) = (HashMap::default(), None, Vec::new());
         while let Some(checkpoint) = self.list.pop() {
+            // The Lua state went on past this point: a run from here would not have its own.
+            if !crate::plugins::lua::in_step(&checkpoint.machine) {
+                old.push(checkpoint);
+                continue;
+            }
             // Only the input is reread: the machine is copied once it holds.
             let (mut input, mut drive) = (checkpoint.machine.input.clone(), checkpoint.drive.clone());
             if let Err(changed) = reread(
@@ -1149,7 +1418,11 @@ impl<'a> Checkpoints<'a> {
             ) {
                 if self.cfg.verbose >= 2 {
                     let at = reading_file_after(&input, 1).map(|(m, _)| m.position());
-                    crate::util::progress::note!("satex: checkpoint at {at:?} does not hold: {changed:?}");
+                    // where no place is known: which file it read or looked for is no longer what it found
+                    let read = (self.log[..checkpoint.reads].iter())
+                        .find(|r| changed.is_none() && !r.holds())
+                        .map(|r| (&r.path, r.probe));
+                    crate::util::progress::note!("satex: checkpoint at {at:?} does not hold: {changed:?} {read:?}");
                 }
                 // Keep the furthest changed line any invalid checkpoint found.
                 edit = edit.into_iter().chain(changed).max_by_key(|(_, line)| *line);

@@ -398,7 +398,7 @@ fn only_colors_side_by_side_are_compared() {
 /// a white page.
 #[test]
 fn a_page_drawn_at_shipout_is_an_unknown_background() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let preamble =

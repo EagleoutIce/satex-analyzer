@@ -299,11 +299,14 @@ pub enum Query {
     /// The names installed packages define, each with the file to load for it
     /// ([`crate::linter::shared::export_names`]).
     Exports,
+    /// Where a punctuation character became a letter or stopped being one,
+    /// per user file: what names can be typed where ([`letters`]).
+    Letters,
 }
 
 impl Query {
     /// Sorted by name: `--list`, the wiki and the playground show this order.
-    pub const ALL: [(&'static str, Query); 24] = [
+    pub const ALL: [(&'static str, Query); 25] = [
         ("calls", Query::Calls),
         ("catcodes", Query::Catcodes),
         ("definitions", Query::Definitions),
@@ -315,6 +318,7 @@ impl Query {
         ("exports", Query::Exports),
         ("files", Query::Files),
         ("gaps", Query::Gaps),
+        ("letters", Query::Letters),
         ("occurrences", Query::Occurrences),
         ("options", Query::Options),
         ("pgfkeys", Query::Pgfkeys),
@@ -362,6 +366,7 @@ impl Query {
             | Query::Trace => "0.1.0",
             Query::Previews | Query::TypePlugins | Query::Typeset => "0.2.0",
             Query::Tagging | Query::Exports => "0.2.5",
+            Query::Letters => "0.2.6",
         }
     }
 
@@ -394,6 +399,9 @@ impl Query {
             Query::TypePlugins => "the editor's type plugins: the types each triggers on and its features",
             Query::Tagging => "PDF tagging: whether it is on, the standard, language, title and each package's status",
             Query::Exports => "the names installed packages define, each with the package or library to load",
+            Query::Letters => {
+                "where a punctuation character becomes a letter or stops being one: what names are typeable where"
+            }
         }
     }
 }
@@ -540,13 +548,47 @@ pub fn compact_trace(rows: &[Record], file: &str, source: &str) -> Vec<String> {
 /// `\title`'s argument). Boxes lost unused (a measurement) set nothing.
 /// `linebreaks` lists a paragraph's lines as the run's breaker set them, where all are known.
 fn typeset(analysis: &Analysis) -> Vec<Record> {
+    let mut out = Vec::new();
+    typeset_each(analysis, &mut |row| out.push(row));
+    out
+}
+
+/// The rows of [`typeset_each`] on their way out, one at a time: a reader that keeps none
+/// (a message per part, one paragraph's rows) never holds the document's.
+struct Rows<'a> {
+    sink: &'a mut dyn FnMut(Record),
+    /// Set while the rows are of no use: those of a kernel read only partly.
+    cut: bool,
+}
+
+impl Rows<'_> {
+    fn push(&mut self, row: Record) {
+        let is = |k: &str, v: Json| row.get(k) == Some(&v);
+        // a paragraph that set nothing and stands on no line (`\end{document}`'s closing `\par`) is no row
+        let blank = is("kind", json!("paragraph")) && is("line", json!(0)) && is("detail", json!(""));
+        if !self.cut && !blank {
+            (self.sink)(row);
+        }
+    }
+}
+
+/// [`typeset`]'s rows, each handed to `sink` as soon as it is whole.
+pub fn typeset_each(analysis: &Analysis, sink: &mut dyn FnMut(Record)) {
     let text = &analysis.facts.text;
     let mut arms = text.arms.iter().peekable();
     let mut math = math_atoms(text, &analysis.settings.conventions.math_symbols, 0..text.at.len());
     let marks = script_marks(text, &mut math);
     // each mark with its place in `text.align`: rules set before it go first
     let mut aligns = text.align.iter().zip(&marks).enumerate().filter(|(_, (_, m))| !m.is_empty()).peekable();
-    let mut out = Vec::new();
+    // A kernel read only partly leaves the document names the engine's
+    // format defines (`\documentclass` set as text), so none of the text is
+    // sure; a run that stopped early never set the rest.
+    let kernel_cut = analysis
+        .facts
+        .diagnostics
+        .iter()
+        .any(|d| matches!(d.code, "format-truncated" | "format-incomplete" | "preload-truncated"));
+    let mut out = Rows { sink, cut: kernel_cut };
     let (mut line, mut first, mut choice) = (String::new(), None, None::<Choice>);
     let mut causes: Vec<Cause> = Vec::new();
     let close = |line: &mut String, choice: &mut Option<Choice>, causes: &mut Vec<Cause>| {
@@ -637,7 +679,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // (a frame's title box goes above its body, though set after it)
     let rank = |i: u32| text.placed.iter().position(|r| r.0 <= i && i < r.1);
     let mut foot = String::new();
-    let push_foot = |out: &mut Vec<Record>, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
+    let push_foot = |out: &mut Rows, foot: &mut String, at: Span, keys: &mut Keys<'_>| {
         if foot.trim().is_empty() {
             foot.clear();
             keys.clear();
@@ -650,19 +692,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // where the paragraph's and its footnotes' characters stand, and which files the user wrote (no `.aux`)
     let (mut places, mut foot_places, mut foot_keys) = (Places::default(), Places::default(), Keys::new());
     let mut documents: HashMap<FileId, &'static str> = HashMap::default();
-    // each replacement-text token written in the definition's own file: the macro, its line and whether
-    // the token is a control sequence (a character read there was made by expanding it: `\number`,
-    // `\the`). A token from elsewhere (`\title`'s argument kept in `\@title`) is no text of the macro's.
-    let bodies: HashMap<Span, (Sym, u32, bool)> = analysis
-        .facts
-        .defs
-        .iter()
-        .filter_map(|d| d.mac.as_ref().map(|m| (d, m)))
-        .flat_map(|(d, m)| {
-            let own = m.replacement_text.iter().filter(move |t| t.span.file == d.span.file);
-            own.map(move |t| (t.span, (d.name, d.span.line, t.cs().is_some())))
-        })
-        .collect();
+    let bodies = Bodies::new(analysis);
     // the paragraph's lines as the run's breaker set them, where all are known
     let linebreaks = |began: u32, end: u32, record: &mut Record| {
         let off = |k: usize| lost[k] || text.inserts.iter().any(|&(a, b)| (a..b).contains(&(k as u32)));
@@ -727,7 +757,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     // the pages shipped and filled before the character at `i`, in the order they came: a fill
     // before the page shipped after it
     let total = text.pages.len();
-    let mut breaks = |out: &mut Vec<Record>, i: usize, site: Span| loop {
+    let mut breaks = |out: &mut Rows, i: usize, site: Span| loop {
         let page = pages.peek().filter(|(_, p)| p.0 as usize <= i).map(|(k, _)| *k);
         if let Some((k, &(_, sure, _))) =
             fills.next_if(|(_, f)| f.0 as usize <= i && page.is_none_or(|p| f.2 as usize <= p))
@@ -957,7 +987,9 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             foot_places = Places::default();
             breaks(&mut out, i, site);
             style = "";
-            (places.on_line, places.last_origin) = (None, None);
+            // each row marks its own sites: the next paragraph set by the same call (`\maketitle`'s
+            // date after its author) has no mark of this one to follow
+            places = Places::default();
         }
         put_keys(&named[cut..upto], &mut line, &mut choice, &mut keys);
         put_keys(&named[read_keys], &mut line, &mut choice, &mut keys);
@@ -1074,17 +1106,7 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
     }
     push_foot(&mut out, &mut foot, first.unwrap_or_default(), &mut foot_keys);
     breaks(&mut out, usize::MAX, first.unwrap_or_default());
-    // A kernel read only partly leaves the document names the engine's
-    // format defines (`\documentclass` set as text), so none of the text is
-    // sure; a run that stopped early never set the rest.
-    let kernel_cut = analysis
-        .facts
-        .diagnostics
-        .iter()
-        .any(|d| matches!(d.code, "format-truncated" | "format-incomplete" | "preload-truncated"));
-    if kernel_cut {
-        out.clear();
-    }
+    out.cut = false;
     if kernel_cut || analysis.exhausted {
         let mut rest = paragraph(
             analysis,
@@ -1107,12 +1129,6 @@ fn typeset(analysis: &Analysis) -> Vec<Record> {
             out.push(record);
         }
     }
-    // a paragraph that set nothing and stands on no line (`\end{document}`'s closing `\par`) is no row
-    out.retain(|r| {
-        let is = |k: &str, v: Json| r.get(k) == Some(&v);
-        !(is("kind", json!("paragraph")) && is("line", json!(0)) && is("detail", json!("")))
-    });
-    out
 }
 
 /// Keys marked where the text stands: in the first arm of a choice being set, else in the line.
@@ -1145,7 +1161,9 @@ fn rule_note(line: &mut String, keys: &mut Keys<'_>, rule: Rule) {
 /// driver's literals moved the origin by a translation (`1 0 0 1 x y cm`) of
 /// at least `OFF_PAGE` bp and had not moved it back, as pgf's
 /// `\pgfsys@begininvisible` does for beamer's covered text.
-pub(crate) fn invisible(literals: &[crate::analysis::facts::Literal]) -> Vec<std::ops::Range<u32>> {
+pub(crate) fn invisible(
+    literals: &crate::fixed::Chunked<crate::analysis::facts::Literal>,
+) -> Vec<std::ops::Range<u32>> {
     const OFF_PAGE: f64 = 1000.0;
     let (mut out, mut shift, mut from) = (Vec::new(), (0.0, 0.0), None);
     for l in literals {
@@ -1503,11 +1521,7 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
         return out;
     }
     let Some(unicode) = read("tuenc.def") else { return out };
-    let code = regex::Regex::new(r#"\\DeclareUnicodeSymbol\{\\(\w+)\}\s*\{"([0-9A-Fa-f]+)\}"#).expect("tuenc regex");
-    let points: HashMap<&str, char> = code
-        .captures_iter(&unicode)
-        .filter_map(|c| Some((c.get(1)?.as_str(), char::from_u32(u32::from_str_radix(&c[2], 16).ok()?)?)))
-        .collect();
+    let points = unicode_points(&unicode);
     for encoding in encodings {
         let Some(def) = read(&format!("{}enc.def", encoding.to_lowercase())) else { continue };
         let symbol = regex::Regex::new(&format!(
@@ -1525,6 +1539,18 @@ fn encoding_slots(analysis: &Analysis) -> HashMap<String, HashMap<u32, char>> {
         out.insert(encoding.to_string(), table);
     }
     out
+}
+
+/// The code point `tuenc.def` gives each text symbol: `\DeclareUnicodeSymbol`,
+/// before 2020 `\DeclareTextSymbol` with `\UnicodeEncodingName`.
+fn unicode_points(tuenc: &str) -> HashMap<&str, char> {
+    let code = regex::Regex::new(
+        r#"\\Declare(?:Unicode|Text)Symbol\{\\(\w+)\}\s*(?:\\UnicodeEncodingName\s*)?\{"([0-9A-Fa-f]+)\}"#,
+    )
+    .expect("tuenc regex");
+    code.captures_iter(tuenc)
+        .filter_map(|c| Some((c.get(1)?.as_str(), char::from_u32(u32::from_str_radix(&c[2], 16).ok()?)?)))
+        .collect()
 }
 
 /// A character as typeset text: satex's private-use sentinels vanish.
@@ -1602,10 +1628,56 @@ struct Places {
     on_line: Option<(FileId, u32)>,
     /// The site of the last character set: the next one marks its own unless it follows.
     last_site: Option<Span>,
+    /// The last site mark stands for every character up to the next mark (`same`), not for a run of columns.
+    stays: bool,
     /// The same for where the last character was read.
     last_origin: Option<Span>,
     /// The math mode of the last character: [`MATH_MODE`]'s value.
     last_math: &'static str,
+}
+
+/// Each replacement-text token written in its definition's own file: the macro, its line and
+/// whether the token is a control sequence (a character read there was made by expanding it:
+/// `\number`, `\the`). A token from elsewhere (`\title`'s argument kept in `\@title`) is no text
+/// of the macro's. Indexed per file on the first lookup there: a typeset view looks up only the
+/// few files its characters were read in, not every package's definitions.
+/// A file's macro texts by the span they were made at: name, parameter count, long.
+type FileBodies = HashMap<Span, (Sym, u32, bool)>;
+
+struct Bodies<'a> {
+    analysis: &'a Analysis,
+    /// The definitions with a macro text, by the file they were made in.
+    by_file: std::cell::OnceCell<HashMap<FileId, Vec<usize>>>,
+    files: std::cell::RefCell<HashMap<FileId, FileBodies>>,
+}
+
+impl<'a> Bodies<'a> {
+    fn new(analysis: &'a Analysis) -> Self {
+        Bodies { analysis, by_file: Default::default(), files: Default::default() }
+    }
+
+    fn get(&self, at: Span) -> Option<(Sym, u32, bool)> {
+        let defs = &self.analysis.facts.defs;
+        let mut files = self.files.borrow_mut();
+        let file = files.entry(at.file).or_insert_with(|| {
+            let by_file = self.by_file.get_or_init(|| {
+                let mut by: HashMap<FileId, Vec<usize>> = HashMap::default();
+                for (i, d) in defs.iter().enumerate().filter(|(_, d)| d.mac.is_some()) {
+                    by.entry(d.span.file).or_default().push(i);
+                }
+                by
+            });
+            // in definition order, so a later definition's token wins as in one map of all
+            let own = by_file.get(&at.file).into_iter().flatten().map(|&i| &defs[i]);
+            own.filter_map(|d| Some((d, d.mac.as_ref()?)))
+                .flat_map(|(d, m)| {
+                    let own = m.replacement_text.iter().filter(move |t| t.span.file == d.span.file);
+                    own.map(move |t| (t.span, (d.name, d.span.line, t.cs().is_some())))
+                })
+                .collect()
+        });
+        file.get(&at).copied()
+    }
 }
 
 impl Places {
@@ -1616,7 +1688,7 @@ impl Places {
         &mut self,
         analysis: &Analysis,
         documents: &mut HashMap<FileId, &'static str>,
-        bodies: &HashMap<Span, (Sym, u32, bool)>,
+        bodies: &Bodies,
         site: Span,
         spot: &crate::analysis::facts::Spot,
         piece: &str,
@@ -1625,6 +1697,16 @@ impl Places {
     ) {
         use crate::engine::mode::Modes;
         let read = spot.span;
+        // a macro's argument read on its line (`\textbf{word}`): set where reading stood after
+        // it, its letters stand at their own columns. A macro's own text keeps its call's site.
+        let site = match unmarked(piece).chars().count() == 1
+            && (read.file, read.line) == (site.file, site.line)
+            && read.col < site.col
+            && bodies.get(read).is_none()
+        {
+            true => Span { col: read.col + 1, ..read },
+            false => site,
+        };
         let math = match spot.modes {
             m if !m.meets(Modes::ANY_MATH) => "",
             m if m.within(Modes::DISPLAY_MATH) => "display",
@@ -1642,17 +1724,22 @@ impl Places {
             keys.push_back((LINE, site.line.to_string().into()));
         }
         self.on_line = Some(here);
-        // a piece of several characters (a note, a math atom) shares its site
+        // a piece of several characters (a note, a math atom) shares its site, and so do the
+        // characters a macro's use set one after the other: one mark for all of them
         let single = unmarked(piece).chars().count() == 1;
-        let follows = self.last_site.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
-        if !(single && follows) {
+        let last = self.last_site.filter(|_| single);
+        let follows =
+            !self.stays && last.is_some_and(|l| (l.file, l.line, l.col + 1) == (site.file, site.line, site.col));
+        let stays = last == Some(site);
+        if !(follows || stays && self.stays) {
             line.push(KEY);
             let file = analysis.file_name(site.file);
-            let step = if single { "" } else { ":0" };
+            let step = if single && !stays { "" } else { ":0" };
             // the site is where reading stood after the character: one column back is its own
             // (a macro's text: the last letter of its name)
             let col = site.col.saturating_sub(1).max(1);
             keys.push_back((SITE, format!("{file}\u{1}{}:{col}{step}", site.line).into()));
+            self.stays = stays;
         }
         self.last_site = single.then_some(site);
         // a character read elsewhere than where it was set (the user's files or library code): where
@@ -1667,7 +1754,7 @@ impl Places {
             line.push(KEY);
             let at = own.map(|o| {
                 let kind = *documents.entry(o.file).or_insert_with(|| source_kind(analysis, o.file));
-                let def = bodies.get(&o).map_or(String::new(), |&(name, line, made)| {
+                let def = bodies.get(o).map_or(String::new(), |(name, line, made)| {
                     format!("\u{1}{}\u{1}{line}{}", analysis.interner.cs(name), if made { "\u{1}g" } else { "" })
                 });
                 format!("{}\u{1}{}:{}\u{1}{kind}{def}", analysis.file_name(o.file), o.line, o.col)
@@ -1684,43 +1771,13 @@ const ALIGN: &str = "align";
 /// The kind of a [`KEY`] before a ligature: what the font joined, `\u{1}`, the glyph set.
 const LIG: &str = "lig";
 
-/// Each row of [`Analysis::font_states`] as its family, series and shape
-/// among the kernel's defaults (`\sfdefault`, `\ttdefault`, `\bfdefault`,
-/// `\itdefault`, `\sldefault`, `\scdefault`, fntguide § 2.5): `sf`, `tt`,
-/// `bf`, `it`, `sl`, `sc`, space-separated; empty for the defaults or an
-/// unknown font.
-fn font_styles(analysis: &Analysis) -> Vec<String> {
-    // A default's text up to the kernel's `\@empty` end marker (`b\@empty`).
-    let axis = |names: &[&'static str]| -> Vec<(&'static str, String)> {
-        let text = |n| Some(crate::linter::shared::macro_text(analysis, n)?.split('\\').next()?.trim().to_string());
-        names.iter().filter_map(|n| Some((&n[..2], text(n)?))).collect()
-    };
-    // `\bfseries` sets the family's own bold series (`\bfseries@rm`, `bx`) when the kernel has one.
-    let (family, series, shape) = (
-        axis(&["sfdefault", "ttdefault"]),
-        axis(&["bfdefault", "bfseries@rm", "bfseries@sf", "bfseries@tt"]),
-        axis(&["itdefault", "sldefault", "scdefault"]),
-    );
-    let pick = |axis: &[(&'static str, String)], value: &str| axis.iter().find(|(_, d)| d == value).map(|(k, _)| *k);
-    // a series is the default's when its weight (the first letter) is: `\fontseries{b}` is as bold as `bx`
-    let weight = |value: &str| series.iter().find(|(_, d)| d.chars().next() == value.chars().next()).map(|(k, _)| *k);
-    analysis
-        .font_states
-        .iter()
-        .map(|s| {
-            let style = [
-                pick(&family, &s.family),
-                pick(&series, &s.series).or_else(|| weight(&s.series)),
-                pick(&shape, &s.shape),
-            ]
-            .into_iter()
-            .flatten()
-            .collect::<Vec<_>>()
-            .join(" ");
-            match css_color(&s.color) {
-                Some(color) => format!("{style}\u{1}{color}"),
-                None => style,
-            }
+/// [`crate::plugins::typeset::fontat::font_styles`], each with `\u{1}` and its CSS color when it has one.
+pub(crate) fn font_styles(analysis: &Analysis) -> Vec<String> {
+    let styles = crate::plugins::typeset::fontat::font_styles(analysis);
+    (styles.into_iter().zip(&analysis.font_states))
+        .map(|(style, s)| match css_color(&s.color) {
+            Some(color) => format!("{style}\u{1}{color}"),
+            None => style,
         })
         .collect()
 }
@@ -2190,6 +2247,7 @@ pub fn run(analysis: &Analysis, query: Query, filter: &Filter) -> Vec<Record> {
         Query::Diagnostics => diagnostics(analysis),
         Query::Distribution => distribution(analysis),
         Query::Catcodes => catcodes(analysis),
+        Query::Letters => letters(analysis),
         Query::SideEffects => side_effects(analysis),
         Query::Project => project(analysis),
         Query::Plugins => plugins(analysis),
@@ -2339,10 +2397,16 @@ fn dependencies(analysis: &Analysis) -> Vec<Record> {
 }
 
 fn occurrences(analysis: &Analysis) -> Vec<Record> {
+    occurrences_of(analysis, |_| true)
+}
+
+/// The `occurrences` records of one kind: a reader of the sections builds no record of the rest.
+pub fn occurrences_of(analysis: &Analysis, keep: impl Fn(OccKind) -> bool) -> Vec<Record> {
     analysis
         .facts
         .occurrences
         .iter()
+        .filter(|occ| keep(occ.kind))
         .map(|occ| {
             let mut record = place(analysis, occ.span);
             record.insert("kind".into(), json!(occ.kind.as_str()));
@@ -2589,6 +2653,20 @@ fn catcodes(analysis: &Analysis) -> Vec<Record> {
         .collect()
 }
 
+/// The run's letter changes in user files, in order: `char` became a letter (`letter`) or stopped
+/// being one at `file:line:col` (line 0: the letters the file opened with). Replayed up to a place
+/// they give the non-alphabetic letters there, as [`crate::analysis::facts::Facts::letters_at`].
+fn letters(analysis: &Analysis) -> Vec<Record> {
+    (analysis.facts.letters.iter())
+        .map(|&(span, character, letter)| {
+            let mut record = place(analysis, span);
+            record.insert("char".into(), json!(character.to_string()));
+            record.insert("letter".into(), json!(letter));
+            record
+        })
+        .collect()
+}
+
 fn distribution(analysis: &Analysis) -> Vec<Record> {
     let found = &analysis.distribution;
     let mut record = Map::new();
@@ -2623,21 +2701,27 @@ fn distribution(analysis: &Analysis) -> Vec<Record> {
 }
 
 /// One row per fact of [`crate::analysis::tagging`], then one per loaded file the status list
-/// names: nothing when the run never called `\DocumentMetadata`.
+/// names or lacks. Without `\DocumentMetadata` only the statuses: what turning tagging on meets.
 fn tagging(analysis: &Analysis) -> Vec<Record> {
-    let Some(t) = crate::analysis::tagging::of(analysis) else { return Vec::new() };
     let row = |kind: &str, name: Json, detail: Json| {
         Record::from_iter([("kind".into(), json!(kind)), ("name".into(), name), ("detail".into(), detail)])
+    };
+    let status = |s: &crate::analysis::tagging::Status| row("status", json!(s.file), json!(s.meaning()));
+    let Some(t) = crate::analysis::tagging::of(analysis) else {
+        return crate::analysis::tagging::loaded(analysis).iter().map(status).collect();
     };
     let val = |v: &crate::analysis::tagging::Val| json!(v);
     let mut out = vec![
         row("tagging", val(&t.tagging), json!(analysis.plugins.engine.as_str())),
+        row("running", val(&t.running), Json::Null),
+        row("modules", json!(t.modules), Json::Null),
+        row("marked", json!(t.marked.iter().map(|(tag, n)| format!("{tag} ×{n}")).collect::<Vec<_>>()), Json::Null),
         row("standard", json!(t.standards), Json::Null),
         row("lang", val(&t.lang), json!({ "set": t.lang_set })),
         row("title", val(&t.title), Json::Null),
         row("pdfversion", val(&t.pdfversion), Json::Null),
     ];
-    out.extend(t.statuses.iter().map(|s| row("status", json!(s.file), json!(s.meaning()))));
+    out.extend(t.statuses.iter().map(status));
     out
 }
 
@@ -2663,6 +2747,10 @@ fn project(analysis: &Analysis) -> Vec<Record> {
     first.insert("detail".into(), json!(identity.kind));
     first.insert("name".into(), json!(identity.class));
     first.insert("message".into(), json!(format!("engine {} ({})", identity.engine, identity.engine_source)));
+    // the LaTeX kernel's release the run read (`\fmtversion`): what a writer may use (`\mathcolor` from 2022-06)
+    if let Some(kernel) = crate::analysis::machine::macro_text(analysis, "fmtversion") {
+        first.insert("kernel".into(), json!(kernel));
+    }
     let mut out = vec![first];
     for file in &analysis.project.files {
         let mut record = Map::new();
@@ -3079,8 +3167,10 @@ pub fn reconstruct_mapped(analysis: &Analysis, slice: &[Record], source: &str) -
             .filter(|(_, v)| !(v.span.file == main && frame.ends.contains(&v.span.line)))
             .max_by_key(|(id, _)| *id);
         match last {
-            Some((id, last)) => analysis.graph.vertices[id as usize..]
-                .iter()
+            Some((id, last)) => analysis
+                .graph
+                .vertices
+                .iter_from(id as usize)
                 .position(|v| v.span.file == last.span.file && v.span.line > last.span.line)
                 .map_or(NodeId::MAX, |next| (id + next as NodeId).saturating_sub(1)),
             None => NodeId::MAX,
@@ -3315,9 +3405,12 @@ fn example_image(dir: &Path, file: &str, options: &str) -> Option<String> {
 pub fn project_files(analysis: &Analysis, text: &str) -> Vec<(PathBuf, PathBuf)> {
     let main_dir = Path::new(analysis.file_name(analysis.main_file)).parent().unwrap_or_else(|| Path::new(""));
     let local = |path: &Path| !analysis.distribution.roots.iter().any(|root| path.starts_with(root));
+    // both sides canonical: a main file named without a folder (`-f paper.tex`) has the folder `""`, which every
+    // absolute path starts with, and its copy was named by the absolute path (filecontents writing the user's file)
+    let canonical = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let main_abs = canonical(if main_dir.as_os_str().is_empty() { Path::new(".") } else { main_dir });
     let relative_to_main = |path: &Path| -> PathBuf {
-        path.strip_prefix(main_dir)
-            .map(Path::to_path_buf)
+        (canonical(path).strip_prefix(&main_abs).map(Path::to_path_buf))
             .unwrap_or_else(|_| PathBuf::from(path.file_name().unwrap_or_default()))
     };
     let mut seen: BTreeSet<PathBuf> = BTreeSet::new();
@@ -3327,7 +3420,7 @@ pub fn project_files(analysis: &Analysis, text: &str) -> Vec<(PathBuf, PathBuf)>
             continue;
         }
         let Some(path) = load.path.as_deref().map(Path::new) else { continue };
-        if !local(path) || !text.contains(&load.name) || !seen.insert(path.to_path_buf()) {
+        if !local(path) || !text.contains(&load.name) || !seen.insert(canonical(path)) {
             continue;
         }
         out.push((path.to_path_buf(), relative_to_main(path)));
@@ -3348,7 +3441,7 @@ pub fn project_files(analysis: &Analysis, text: &str) -> Vec<(PathBuf, PathBuf)>
                 ["pdf", "png", "jpg", "jpeg", "eps"].iter().map(|ext| main_dir.join(format!("{key}.{ext}"))).collect()
             };
             let Some(found) = candidates.into_iter().find(|p| p.is_file()) else { continue };
-            if seen.insert(found.clone()) {
+            if seen.insert(canonical(&found)) {
                 let relative = relative_to_main(&found);
                 out.push((found, relative));
             }
@@ -4467,7 +4560,7 @@ fn attach(
     Some(node)
 }
 
-fn identification(analysis: &Analysis, file: Option<FileId>) -> Option<String> {
+pub fn identification(analysis: &Analysis, file: Option<FileId>) -> Option<String> {
     let file = file?;
     analysis
         .facts
@@ -4707,10 +4800,11 @@ pub fn scope_named(
 pub struct ScopeRow {
     name: String,
     tier: u8,
-    record: Record,
+    /// Shared, so a row carried into the next run costs no copy.
+    record: std::sync::Arc<Record>,
     plain: bool,
     of: RowOf,
-    more: std::sync::OnceLock<Record>,
+    more: std::sync::OnceLock<std::sync::Arc<Record>>,
 }
 
 /// What a [`ScopeRow`] shows: a definition (its index in `facts.defs`) or a name only the
@@ -4729,7 +4823,7 @@ impl ScopeRow {
 
     /// The lean record with its short `doc` where the full row was made already: never made for it.
     pub fn lean_known(&self) -> Record {
-        let mut record = self.record.clone();
+        let mut record = (*self.record).clone();
         if let Some(doc) = self.more.get().and_then(|m| m.get("doc")) {
             record.insert("doc".into(), doc.clone());
         }
@@ -4738,42 +4832,43 @@ impl ScopeRow {
 
     /// The whole record: the lean one with the place, `usage` and what the documentation says.
     pub fn full(&self, analysis: &Analysis) -> Record {
-        let mut record = self.record.clone();
+        let mut record = (*self.record).clone();
         record.extend(self.more(analysis).clone());
         record
     }
 
     /// What [`ScopeRow::full`] adds to the lean record.
     pub fn more(&self, analysis: &Analysis) -> &Record {
-        self.more.get_or_init(|| {
-            let held;
-            let (sym, mac, span) = match self.of {
-                RowOf::Def(i) => {
-                    let def = &analysis.facts.defs[i];
-                    (def.name, def.mac.as_deref(), Some(def.span))
-                }
-                RowOf::Held(sym) => {
-                    held = analysis.env.meaning(sym);
-                    (sym, held.as_macro().map(|m| &**m), None)
-                }
-            };
-            let mut record = span.map(|span| place(analysis, span)).unwrap_or_default();
-            if span.is_none() {
-                record.insert("provider".into(), json!("kernel"));
+        self.more.get_or_init(|| std::sync::Arc::new(self.more_of(analysis)))
+    }
+
+    fn more_of(&self, analysis: &Analysis) -> Record {
+        let held;
+        let (sym, mac, span) = match self.of {
+            RowOf::Def(i) => {
+                let def = &analysis.facts.defs[i];
+                (def.name, def.mac.as_deref(), Some(def.span))
             }
-            let file =
-                span.and_then(|s| Some((analysis.files.get(usize::from(s.file))?.path.as_str(), s.line as usize)));
-            let said = super::said::said(analysis, &self.name, file, true);
-            // the comment block above a definition in the project's files names its arguments
-            let comment = span.and_then(|s| source_comment(analysis, s));
-            let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
-            record.insert("usage".into(), json!(usage_of(analysis, sym, mac, None, said.usage.as_deref(), params)));
-            super::said::insert(&mut record, &said);
-            if let Some(does) = record.get("does").and_then(Json::as_str) {
-                record.insert("doc".into(), json!(short_doc(does)));
+            RowOf::Held(sym) => {
+                held = analysis.env.meaning(sym);
+                (sym, held.as_macro().map(|m| &**m), None)
             }
-            record
-        })
+        };
+        let mut record = span.map(|span| place(analysis, span)).unwrap_or_default();
+        if span.is_none() {
+            record.insert("provider".into(), json!("kernel"));
+        }
+        let file = span.and_then(|s| Some((analysis.files.get(usize::from(s.file))?.path.as_str(), s.line as usize)));
+        let said = super::said::said(analysis, &self.name, file, true);
+        // the comment block above a definition in the project's files names its arguments
+        let comment = span.and_then(|s| source_comment(analysis, s));
+        let params = comment.as_ref().map_or(&[][..], |c| &c.params[..]);
+        record.insert("usage".into(), json!(usage_of(analysis, sym, mac, None, said.usage.as_deref(), params)));
+        super::said::insert(&mut record, &said);
+        if let Some(does) = record.get("does").and_then(Json::as_str) {
+            record.insert("doc".into(), json!(short_doc(does)));
+        }
+        record
     }
 }
 
@@ -4802,6 +4897,7 @@ fn def_row(analysis: &Analysis, i: usize) -> Option<ScopeRow> {
     if plain {
         completion_fields(analysis, def.name, def.mac.as_deref(), &mut record);
     }
+    let record = std::sync::Arc::new(record);
     Some(ScopeRow { name: name.to_string(), tier, record, plain, of: RowOf::Def(i), more: Default::default() })
 }
 
@@ -4819,11 +4915,7 @@ pub fn carry_scope(prior: &Analysis, analysis: &Analysis) {
 
 fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) -> ScopeRows {
     // the names both runs number alike: a meaning that names others means the same in both
-    let same = prior.map_or(0, |(p, _)| {
-        (0..analysis.interner.len().min(p.interner.len()) as u32)
-            .find(|&i| analysis.interner.name(Sym(i)) != p.interner.name(Sym(i)))
-            .unwrap_or(analysis.interner.len().min(p.interner.len()) as u32)
-    });
+    let same = prior.map_or(0, |(p, _)| analysis.interner.alike(&p.interner) as u32);
     let kept: HashMap<&str, &ScopeRow> =
         prior.map(|(_, rows)| rows.rest.iter().map(|r| (r.name.as_str(), r)).collect()).unwrap_or_default();
     // a definition's row, from the prior run's where a file outside the project made the same
@@ -4921,6 +5013,7 @@ fn scope_rows_from(analysis: &Analysis, prior: Option<(&Analysis, &ScopeRows)>) 
             completion_fields(analysis, sym, meaning.as_macro().map(|m| &**m), &mut record);
         }
         let (of, more) = (RowOf::Held(sym), Default::default());
+        let record = std::sync::Arc::new(record);
         rest.push(ScopeRow { name: name.to_string(), tier: 2, record, plain, of, more });
     }
     ScopeRows { defs, rest }
@@ -4939,48 +5032,70 @@ fn completion_fields(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::
     }
 }
 
-/// The arguments a call of `sym` reads as `m`, `o` and `s` letters ([`completion_fields`]): the
-/// probe's when one already ran, else the definition's own spec, else what calls were seen to
-/// read, else its parameter text. A macro without parameters that ends in another command
-/// (`\\textbf` is `\\protect\\textbf␣`) reads what that one reads. `None` where an argument
-/// is of another kind (delimited, a keyword).
+/// The arguments a call of `sym` reads as `m`, `o` and `s` letters ([`completion_fields`]), from
+/// [`call_items`] without a new probe. `None` where an argument is of another kind (delimited, a keyword).
 pub fn arg_letters(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::tex::MacroDef>) -> Option<String> {
     use crate::engine::tex::ArgType as A;
-    let letters = |items: &[A]| -> Option<String> {
-        items
-            .iter()
-            .map(|i| match i {
-                A::Mandatory => Some('m'),
-                A::Optional(_) | A::Delimited { open: '[', close: ']', required: false, .. } => Some('o'),
-                A::Star => Some('s'),
-                _ => None,
-            })
-            .collect()
+    (call_items(analysis, sym, mac, false)?.iter())
+        .map(|i| match i {
+            A::Mandatory => Some('m'),
+            A::Optional(_) | A::Delimited { open: '[', close: ']', required: false, .. } => Some('o'),
+            A::Star => Some('s'),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a call of `sym` reads, item by item: with `probe` what a probe call shows it reads where it can be
+/// called ([`crate::analysis::probe::probe_callable`]: an ltcmd spec, the `\@ifstar`, `\@dblarg` or
+/// `\@ifnextchar[` it hands on to, its parameter text), else a probe already run, else the definition's own
+/// spec, else the fullest call the run saw, else its parameter text. A macro without parameters that ends in
+/// another command (`\textbf` is `\protect\textbf␣`) reads what that one reads. `None` where none says.
+pub fn call_items(
+    analysis: &Analysis,
+    sym: Sym,
+    mac: Option<&crate::engine::tex::MacroDef>,
+    probe: bool,
+) -> Option<Vec<crate::engine::tex::ArgType>> {
+    use crate::engine::tex::ArgType as A;
+    let probed = match probe {
+        true => crate::analysis::probe::probe_inside(analysis, sym),
+        false => analysis
+            .probes
+            .lock()
+            .ok()
+            .and_then(|p| p.get(&(sym, crate::analysis::probe::State::End)).cloned())
+            .flatten(),
     };
-    let probed = analysis.probes.lock().ok().and_then(|p| p.get(&(sym, crate::analysis::probe::State::End)).cloned());
-    if let Some(Some(p)) = probed.filter(|p| p.as_ref().is_some_and(|p| p.complete)) {
-        return letters(&p.spec.items);
+    // a primitive's probe counts only where it read some (`\def`, `\count0=` are no arguments)
+    if let Some(p) = probed.filter(|p| p.complete && (mac.is_some() || !p.spec.items.is_empty())) {
+        return Some(p.spec.items);
     }
     if let Some(spec) = mac.and_then(|m| m.arg_spec.as_ref()) {
-        return letters(&spec.items);
+        return Some(spec.items.clone());
     }
     if let Some(shape) = analysis.facts.shapes.get(&sym).filter(|s| !s.is_empty()) {
-        return shape
-            .chars()
-            .filter(|c| !matches!(c, '}' | ']'))
-            .map(|c| match c {
-                '{' => Some('m'),
-                '[' => Some('o'),
-                '*' => Some('s'),
-                _ => None,
-            })
-            .collect();
+        let mut chars = shape.chars();
+        let mut items = Vec::new();
+        while let Some(open) = chars.next() {
+            items.push(match (open, open != '*' && open != '{' && open != '[') {
+                ('*', _) => A::Star,
+                ('{', _) => A::Mandatory,
+                ('[', _) => A::Optional(None),
+                (_, _) => A::Delimited { open, close: chars.clone().next()?, required: false, default: None },
+            });
+            if open != '*' {
+                chars.next()?;
+            }
+        }
+        return Some(items);
     }
     let mac = mac?;
-    let text = &mac.parameter_text;
-    if text.arity > 0 {
-        return (!text.brace_end && text.items.iter().all(|i| matches!(i, crate::engine::tex::ParamItem::Param(..))))
-            .then(|| "m".repeat(text.arity as usize));
+    if let Some(spec) = crate::engine::tex::ArgSpec::from_parameter_text(&mac.parameter_text, &analysis.interner) {
+        return Some(spec.items);
+    }
+    if mac.parameter_text.arity > 0 {
+        return Some(vec![A::Mandatory; mac.parameter_text.arity as usize]);
     }
     // a hand-off: the last token of a body without parameters, followed a few steps
     let mut last = mac.replacement_text.last()?.tok;
@@ -4991,7 +5106,7 @@ pub fn arg_letters(analysis: &Analysis, sym: Sym, mac: Option<&crate::engine::te
             return None;
         }
         if next_mac.arg_spec.is_some() || next_mac.parameter_text.arity > 0 {
-            return arg_letters(analysis, next, Some(&next_mac));
+            return call_items(analysis, next, Some(&next_mac), false);
         }
         last = next_mac.replacement_text.last()?.tok;
     }
@@ -5072,13 +5187,6 @@ pub fn signature(
     mac: &crate::engine::tex::MacroDef,
 ) -> Option<crate::engine::tex::ArgSpec> {
     probed(analysis, sym, Some(mac), Some(crate::analysis::probe::State::End)).filter(|p| p.complete).map(|p| p.spec)
-}
-
-/// What a call of the macro `sym` reads as the probe found it (`\\greet[hi]{2}`), for one name
-/// where a listing gave only its definition's own text.
-pub fn effective_probed(analysis: &Analysis, sym: crate::engine::tex::Sym) -> String {
-    let meaning = analysis.env.meaning(sym);
-    effective_of(analysis, sym, meaning.as_macro().map(|m| &**m), Some(crate::analysis::probe::State::End))
 }
 
 /// `view` is `None` where a listing reports many names at once and only
@@ -5750,10 +5858,9 @@ fn redefinition_chain(analysis: &Analysis, def: &crate::analysis::facts::Definit
     if prior.is_empty() && kernel.is_none_or(|k| k.file == def.span.file && k.line == def.span.line) {
         return None;
     }
-    // The kernel macro's text lies between its site and the next one.
-    let next = kernel.and_then(|k| {
-        analysis.kernel_sites.values().filter(|s| s.file == k.file && s.line > k.line).map(|s| s.line).min()
-    });
+    // The kernel's own meaning, which a `\let` before any redefinition copies.
+    let kernel_body =
+        analysis.kernel.as_ref().and_then(|k| k.meaning(def.name).as_macro().map(|m| m.replacement_text.clone()));
     let copies: Vec<&Definition> = analysis
         .facts
         .defs
@@ -5766,15 +5873,19 @@ fn redefinition_chain(analysis: &Analysis, def: &crate::analysis::facts::Definit
             .iter()
             .filter(|c| c.node > from.map_or(0, |f| f.node) && c.span.file == to.span.file && c.node < to.node)
             .filter(|c| {
-                let text = &c.mac.as_ref().expect("filtered").replacement_text;
-                match from {
-                    Some(f) => f.mac.as_ref().is_some_and(|m| Rc::ptr_eq(&m.replacement_text, text)),
-                    None => text.first().is_some_and(|t| {
-                        kernel.is_some_and(|k| {
-                            t.span.file == k.file && t.span.line >= k.line && next.is_none_or(|n| t.span.line < n)
-                        })
-                    }),
-                }
+                let b = &c.mac.as_ref().expect("filtered").replacement_text;
+                let original = match from {
+                    Some(f) => f.mac.as_ref().map(|m| &m.replacement_text),
+                    None => kernel_body.as_ref(),
+                };
+                // `\let` copies the body: the same tokens from the same places. A body replayed
+                // from a cache is a copy of its own, so identity alone differs cold and warm.
+                original.is_some_and(|a| {
+                    Rc::ptr_eq(a, b)
+                        || !a.is_empty()
+                            && a.len() == b.len()
+                            && a.iter().zip(b.iter()).all(|(x, y)| x == y && x.span == y.span)
+                })
             })
             .map(|c| analysis.interner.cs(c.name))
             .collect();
@@ -6783,7 +6894,7 @@ pub fn providers(analysis: &Analysis, names: &[String]) -> Vec<Record> {
     let exports = crate::caches::exports::Exports::of(
         &analysis.distribution.roots,
         crate::caches::format::default_cache_dir().as_deref(),
-        &crate::caches::exports::definers(analysis, &[]),
+        &crate::caches::exports::definers(analysis, &analysis.settings.conventions.definers),
     );
     names
         .iter()
@@ -7461,4 +7572,21 @@ pub(crate) fn defined_at(analysis: &Analysis, sym: Sym) -> Span {
         .maker(def.node)
         .and_then(|call| analysis.graph.vertices.get(call as usize))
         .map_or(def.span, |vertex| vertex.span)
+}
+
+#[cfg(test)]
+mod tests {
+    /// `tuenc.def` names a symbol's code point both ways: TeX Live 2019's
+    /// `\DeclareTextSymbol` with `\UnicodeEncodingName` and the later
+    /// `\DeclareUnicodeSymbol`. Pins `\{` read as OMS slot 102, `f`, where
+    /// only the later form was read.
+    #[test]
+    fn both_forms_of_a_unicode_symbol_give_its_code_point() {
+        let old = r#"\DeclareTextSymbol{\textbraceleft}       \UnicodeEncodingName{"007B}"#;
+        let new = r#"\DeclareUnicodeSymbol{\textbraceright}{"007D}"#;
+        let text = format!("{old}\n{new}");
+        let points = super::unicode_points(&text);
+        assert_eq!(points.get("textbraceleft"), Some(&'{'));
+        assert_eq!(points.get("textbraceright"), Some(&'}'));
+    }
 }

@@ -227,6 +227,23 @@ fn digit_tests_inside_a_number_join_at_its_end() {
     assert!(defined.contains(&"fits".to_string()) && defined.contains(&"h".to_string()), "{defined:?}");
 }
 
+/// Intuition: a positive number of unknown digits is read by an undelimited parameter as TeX
+/// reads it, one digit, the rest after it. `\count1` here is 1000000 or more (or wraps
+/// negative), so it prints 7 characters or more and `#1#2#3` take one each: `#4` ends at `\e`.
+/// Bug: a number nothing bounds was one argument whole (`digits-read-as-one-token`), so `#3`
+/// took the delimiter `\e` and `#4` ran to the end of the file on every path: no path reached
+/// the end (pgfmath's `\pgfmathrand@@` under an unknown clock).
+#[test]
+fn a_number_nothing_bounds_gives_one_digit_per_undelimited_parameter() {
+    let analysis = analyze(
+        r"\count1=\pdfuniformdeviate 2147483647 \advance\count1 1000000
+          \def\r#1#2#3#4\e{\gdef\took{#2.#3#4}}\expandafter\r\the\count1 \e \gdef\reached{}",
+    );
+    // The true run's path is live; arms of a shorter number may run away (TeX may raise it).
+    let live = |n: &str| crate::support::maybe_defined(&analysis, n);
+    assert!(live("reached") && live("took"), "{:?}", with_code(&analysis, "raised-error"));
+}
+
 /// pgfmath's `rand` takes a 7-digit number apart place by place
 /// (`\pgfmathrand@@#1#2#3#4\pgfmath@`). TeX reads one digit per
 /// undelimited parameter; the places keep their tie, so all of them
@@ -1177,6 +1194,64 @@ fn lists_of_names_through_an_undecided_loop_keep_their_names() {
     assert!(crate::support::maybe_defined(&analysis, "got"));
 }
 
+/// `\def` through such a list: the token `\def` reads is the list's first,
+/// one of the names it holds, so each of them may now mean the definition.
+/// Bug pinned: typed text listing names was taken for a name built around a
+/// gap (its names follow gap markers), so the `\def` gave the list token
+/// itself a meaning and `\elt` stayed `\relax` on every path, silently.
+#[test]
+fn a_definition_through_a_list_of_names_may_define_each_name() {
+    let analysis = analyze(
+        r"\chardef\bA=1 \chardef\bB=2 \def\F{}\let\elt\relax
+          \def\loop{\ifnum\pdfuniformdeviate2=0
+            \ifnum\pdfuniformdeviate2=0 \xdef\F{\F\elt\bA}\else\xdef\F{\F\elt\bB}\fi
+            \expandafter\loop\fi}\loop
+          \expandafter\def\F{x}\def\X{x}\ifx\elt\X\def\hit{}\fi",
+    );
+    assert!(crate::support::maybe_defined(&analysis, "hit"), "\\elt may now mean x");
+}
+
+/// A loop whose body holds a second undecided `\ifnum` before it calls
+/// itself has two heads, met in turns. Covered by its summary with no
+/// source read since, each meeting must drop one more input level, or
+/// the path runs the body again forever. Bug pinned: the count of such
+/// meetings was kept for one head only, so turns reset it; the run ended
+/// in the fork backstop and `\A` held any meaning.
+#[test]
+fn a_loop_of_two_heads_met_in_turns_ends_in_its_summary() {
+    let analysis = analyze(
+        r"\def\A{}\def\loop{\ifnum\pdfuniformdeviate2=0
+            \ifnum\pdfuniformdeviate2=0 \xdef\A{\A\relax}\else\xdef\A{\A\par}\fi
+            \expandafter\loop\fi}\loop",
+    );
+    for code in ["site-forks-widened", "undecided-condition", "joined-code-may-define"] {
+        assert!(with_code(&analysis, code).is_empty(), "{:?}", with_code(&analysis, code));
+    }
+}
+
+/// An enclosing loop that replays a copy of one text (beamer's slide loop
+/// over a frame) meets a call in it again, at an earlier place of the copy.
+/// That is another call, as in the same list read further, not a pass of the
+/// call's conditional. Bug pinned: a copy counted as another list, so the
+/// meeting was a pass; after three the bounding-box `\ifdim` was summarized,
+/// the box held anything, and a rounded shadow box on slide 2 of a beamer
+/// frame raised false errors.
+#[test]
+fn a_call_met_again_in_a_replayed_copy_of_its_text_is_not_a_pass() {
+    let analysis = analyze(
+        r"\dimendef\mx=1
+          \def\upd#1{\ifdim#1>\mx \global\mx=#1\relax\fi}
+          \def\run#1{#1}
+          \def\body{\run{\global\mx=\pdfuniformdeviate 19660800sp \upd{1pt}x\upd{2pt}y\upd{3pt}z}}
+          \count1=0
+          \def\iterate{\advance\count1 1 \body\ifnum\count1<3 \expandafter\iterate\fi}\iterate
+          \ifdim\mx<3pt \def\Bad{}\else\def\Good{}\fi",
+    );
+    assert!(with_code(&analysis, "recursion-widened").is_empty(), "{:?}", with_code(&analysis, "recursion-widened"));
+    assert!(crate::support::defined(&analysis, "Good"));
+    assert!(!crate::support::maybe_defined(&analysis, "Bad"));
+}
+
 /// Two lists a join left paired, as a float on the top list or deferred
 /// but never both: one `\xdef` of both holds the float once on every arm.
 #[test]
@@ -1290,16 +1365,20 @@ fn copies_of_a_typed_number_are_one_text() {
 }
 
 /// Intuition: a number with a lower bound under ten and no upper bound can have any spelling
-/// length, so a split by length keeps nothing of its bound, whatever that lower bound is.
+/// length. TeX reads its first digit (tex.web § 392), so the read parts by length, but only into
+/// `limits.digit_lengths` paths: past them all longer lengths are one path, whatever the bound.
 /// Bug: only a lower bound of at most 1 counted as any length: a page number known to be at
-/// least 4 split into ten paths per read, and the joined arms lost its digits.
+/// least 4 split into ten paths per read, and the joined arms lost its digits. Later such a
+/// number was read whole (`digits-read-as-one-token`), and a parameter after it took what follows.
 #[test]
-fn digits_of_any_length_stay_one_argument_above_any_small_bound() {
+fn digits_of_any_length_part_into_few_lengths_above_any_small_bound() {
     let analysis = analyze(
         r"\count1=\pdflastypos \ifnum\count1<4 \count1=4 \fi
           \edef\x{\the\count1}\def\f#1#2\end{\gdef\got{#1}\gdef\rest{#2}}\expandafter\f\x\end",
     );
-    assert!(!with_code(&analysis, "digits-read-as-one-token").is_empty());
+    assert!(with_code(&analysis, "digits-read-as-one-token").is_empty());
+    let lengths = usize::from(analysis.settings.limits.digit_lengths);
+    assert!(analysis.peak_paths <= lengths, "{} paths", analysis.peak_paths);
     // A number with only a negative side has any length too: its read parts by sign (`-`, or
     // `0`), never by length.
     let negative = analyze(
@@ -1308,6 +1387,21 @@ fn digits_of_any_length_stay_one_argument_above_any_small_bound() {
     );
     let signs = ["-", "0"].len();
     assert!(negative.peak_paths <= signs, "{} paths", negative.peak_paths);
+}
+
+/// Intuition: the rest of a number of open length after its first digit has no known width, so
+/// the digits read back together are any number of that length, not one value. `\count1` is 4 or
+/// more: `#1#2` read again is `\count1` itself, 4 among its values.
+/// Bug: the rest's width was its end place minus its start, its open end 0: an overflow (the
+/// benchmark tcolorbox document under TeX Live 2019, `PROFILE=ci`), else a width of 4 billion
+/// places that made the number exactly 2147483647.
+#[test]
+fn the_rest_of_a_number_of_open_length_has_no_known_width() {
+    let analysis = analyze(
+        r"\count1=\pdflastypos \ifnum\count1<4 \count1=4 \fi \edef\x{\the\count1}
+          \def\f#1#2\end{\count2=#1#2\relax \ifnum\count2=4 \gdef\four{}\fi}\expandafter\f\x\end",
+    );
+    assert!(crate::support::maybe_defined(&analysis, "four"), "{:?}", with_code(&analysis, "raised-error"));
 }
 
 /// Intuition: a printed number is one `-` at most, first, then digits. No `--` can start in it, so
@@ -1344,4 +1438,165 @@ fn the_of_a_constant_of_unknown_value_prints_digits() {
         assert_ne!(crate::support::last_body(&analysis, name), "[]", "{name}");
     }
     assert!(with_code(&analysis, "missing-number").is_empty(), "{:?}", with_code(&analysis, "missing-number"));
+}
+
+/// The arms of an undecided `\if` give `d` category code 11 or 12, and the
+/// join at `\fi` keeps either. On the arm that keeps 11 `\end{document}`
+/// ends the job (pdflatex writes its page); on the other `\en` is undefined
+/// and TeX stops with "no legal \end found". So the missing end is possible,
+/// not certain. Pins: the joined catcode tokenized `\end` as unknown text
+/// that "is assumed to change no state" (unmarked), and `missing-end` was
+/// reported as a certain error. The same holds for a joined `\endlinechar`
+/// before plain's `\bye`.
+#[test]
+fn a_joined_catcode_does_not_make_the_missing_end_certain() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nx\n\\ifnum\\pdfuniformdeviate2=0 \\catcode`\\d=12 \\fi\n\\end{document}\n";
+    let findings = satex::linter::lint(&crate::support::analyze_latex(source));
+    let wrong: Vec<_> = findings
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-end"))
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .collect();
+    assert!(wrong.is_empty(), "one arm reaches \\end{{document}}: {wrong:?}");
+}
+
+/// Lint findings of severity `error`, as `code: message`.
+fn certain_errors(analysis: &Analysis) -> Vec<String> {
+    let errors = satex::linter::lint(analysis).into_iter().filter(|r| r["severity"] == "error");
+    errors.map(|r| format!("{}: {}", r["code"], r["message"])).collect()
+}
+
+/// Pairs of names set alike in the arms of undecided tests, one pair more
+/// than the join's table of arms (`limits.join_arms`) tells apart, then
+/// `\ifnum\x=\y` per pair: equal in every run, so pdflatex never reads the
+/// `\else` text. The join forgets how the last pair goes together, and
+/// reading its meanings apart makes arms no run takes. The bug: an
+/// undefined name there was `never defined in this run` and a library
+/// error there `caused here`, both certain: the name's kind and the row
+/// looked at the path's flags only, not at whether every run takes the path.
+#[test]
+fn an_arm_no_run_takes_raises_no_certain_error() {
+    if !installed() {
+        return;
+    }
+    let pairs = crate::support::config().limits.join_arms.ilog2() as usize + 1;
+    let names: Vec<char> = ('a'..='z').take(pairs).collect();
+    for bad in [r"\undefinedcommand", r"\setlength{\parindent}{}"] {
+        let mut source = String::from("\\documentclass{article}\n\\begin{document}\n");
+        for n in &names {
+            source += &format!(
+                "\\ifnum\\pdfuniformdeviate 2=0 \\def\\x{n}{{1}}\\def\\y{n}{{1}}\\else\\def\\x{n}{{2}}\\def\\y{n}{{2}}\\fi\nText.\n\n"
+            );
+        }
+        for n in &names {
+            source += &format!("\\ifnum\\x{n}=\\y{n} \\else {bad} \\fi\n");
+        }
+        source += "\\end{document}\n";
+        let analysis = analyze_latex(&source);
+        assert_eq!(certain_errors(&analysis), Vec::<String>::new(), "{bad}");
+    }
+}
+
+/// An arm is not every run. `\count2=\count1` are equal in every run, but
+/// as two intervals the test is undecided, and its `\else` arm raises a
+/// library error at a library token (`\relax` in `\setlength`). A joined
+/// meaning read apart (`\b` is 1 or 2) makes such arms too. The bug: both
+/// were certain `caused-library-error`s. An error every run raises, after
+/// the arms, stays certain: an arm's error is TeX's on that arm, recovered
+/// as TeX does, and puts nothing after it in doubt.
+#[test]
+fn an_error_on_an_arm_is_possible_and_one_after_it_certain() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_latex(
+        r"\documentclass{article}
+\begin{document}
+\count1=\pdfuniformdeviate 2 \count2=\count1
+\ifnum\count1=\count2 \else \setlength{\parindent}{} \fi
+Text.
+
+\ifnum\pdfuniformdeviate 2=0 \def\b{1}\else\def\b{2}\fi
+Text.
+
+\ifnum\b=1 \setlength{\parskip}{}\undefinedcommand \fi
+Text.
+
+\errmessage{Always}
+\end{document}",
+    );
+    let errors = certain_errors(&analysis);
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].contains("Always"), "{errors:?}");
+    // The arms' errors are still said, as possible ones.
+    let raised = &analysis.facts.raised;
+    assert!(raised.iter().any(|r| r.text.starts_with("Missing number") && !r.certain), "no possible error raised");
+}
+
+/// Intuition: the texts a joined macro may hold are the arms of every read
+/// that parts them, and their order is the run's order. Typed digits are named
+/// by the steps of their line, so a `\relax` more renames them. Bug pinned:
+/// the texts stood in the order of a hash of those names, so the same
+/// document read its arms in another order after some `\relax`, and budgets
+/// cut elsewhere ([`tokens_tex_ignores_before_a_date_comparison_do_not_change_the_rows`]).
+#[test]
+fn the_texts_of_a_joined_macro_keep_their_order_after_tokens_tex_ignores() {
+    let order = |relaxes: usize| {
+        let a = analyze(&format!(
+            "{}\\count1=\\pdfuniformdeviate 2 \\count2=\\pdfuniformdeviate 1000 \\count3=\\pdfuniformdeviate 1000 \\edef\\t{{\\ifcase\\count1 x\\the\\count2 \\or \\the\\count3 y\\fi}}",
+            "\\relax".repeat(relaxes)
+        ));
+        (a.facts.defs.iter())
+            .filter(|d| a.interner.name(d.name) == "t")
+            .flat_map(|d| crate::support::site_bodies(&a, d))
+            .map(|t| t.chars().take(1).collect())
+            .collect::<Vec<String>>()
+    };
+    let plain = order(0);
+    assert_eq!(plain.len(), 2, "{plain:?}");
+    for relaxes in 1..=12 {
+        assert_eq!(plain, order(relaxes), "{relaxes} `\\relax` before change the order");
+    }
+}
+
+/// Tokens TeX ignores must not change what the run reports. `\includegraphics` of an EPS with
+/// its converted PDF beside it makes pdftex.def compare two unknown file dates digit by digit
+/// (`\GPT@ZapLeadingZeros`, pdftex.def; `\rem@pt`, latex.ltx): hundreds of undecided choices.
+/// Typed-digit names carry step counts, one-of members sort by a hash of those names, and the
+/// forks-per-site budget then cuts at another place: with some numbers of `\relax` before the
+/// command the run reports other rows (up to a possible "Division by 0") than with none.
+#[test]
+fn tokens_tex_ignores_before_a_date_comparison_do_not_change_the_rows() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-relax-lot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temporary directory");
+    let eps = "%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 200 100\nnewpath 0 0 moveto 200 100 lineto stroke\nshowpage\n%%EOF\n";
+    std::fs::write(dir.join("logo.eps"), eps).expect("logo.eps");
+    std::fs::write(dir.join("logo-eps-converted-to.pdf"), "%PDF-1.4\n").expect("converted pdf");
+    // The codes raised, each with its severity and how often: no names or places, which the `\relax` shift.
+    let rows = |relaxes: usize| {
+        let pad = "\\relax".repeat(relaxes);
+        let source = format!(
+            "\\documentclass{{article}}\n\\usepackage{{graphicx}}\n\\begin{{document}}\n\
+{pad}\\strut\\hfill\\includegraphics[width=73mm]{{logo}}\\hskip 1cm\\null\n\n\
+{pad}\\includegraphics[width=\\textwidth]{{logo}}\n\\end{{document}}\n"
+        );
+        let path = dir.join("doc.tex");
+        std::fs::write(&path, &source).expect("doc.tex");
+        let analysis = Machine::analyze(&source, Some(&path), &crate::support::config());
+        let mut rows: Vec<String> =
+            analysis.facts.diagnostics.iter().map(|d| format!("{} {}", d.code, d.severity.as_str())).collect();
+        rows.sort();
+        rows
+    };
+    let plain = rows(0);
+    for relaxes in 1..=16 {
+        assert_eq!(plain, rows(relaxes), "{relaxes} `\\relax` before each command change the rows");
+    }
 }

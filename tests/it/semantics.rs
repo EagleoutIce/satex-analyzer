@@ -188,6 +188,52 @@ fn a_name_around_unknown_digits_is_one_argument() {
     assert!(definition(&analysis, "wrong").is_none(), "#2 was not the \\relax after the name");
 }
 
+/// A name that holds an unknown character is a family: the first letter of an unknown roman
+/// numeral may be `i`, and `a@i` is defined as `5`, so the count read after `0` may be 5. Bug
+/// (2026-11-22, digitwalk): past `limits.meaning_set` splits at one `\csname` per line, the names
+/// `a@-` and `a@<unknown char>` stay one token (`one_of_spelled`). It looked the second up as
+/// spelled, found it undefined and made it `\relax`, so the count was 0 on every path.
+/// pgfmath's `pgfmath@operation@<unknown>@arity` became a missing number the same way.
+#[test]
+fn a_spelled_name_with_an_unknown_character_may_be_any_name_of_its_family() {
+    // Calls that use up the `\csname`'s splits on this line, over names spelled in full.
+    let warm = r"\t{-}{+}".repeat(12);
+    // Summaries off: each call runs, so the last decides by its own name.
+    let mut cfg = crate::support::bare();
+    cfg.limits.call_summary_after = 0;
+    let source = format!(
+        r"\expandafter\def\csname a@i\endcsname{{5}}\def\first#1#2\end{{#1}}\count1=\pdfuniformdeviate 200
+          \advance\count1 1 \edef\r{{\expandafter\first\romannumeral\count1\end}}
+          \def\t#1#2{{\ifnum\pdfuniformdeviate 2=0 \edef\x{{#1}}\else\edef\x{{#2}}\fi
+            \count2=0\csname a@\x\endcsname\relax \ifnum\count2=5 \gdef\yes{{}}\fi}}
+          {warm}\t{{-}}{{\r}}"
+    );
+    let a = Machine::analyze(&format!("{PRELUDE}{source}"), None, &cfg);
+    assert!(crate::support::maybe_defined(&a, "yes"), "`a@\\r` may be `a@i`, which gives 5");
+}
+
+/// A `\csname` over one unknown digit asks the same of every name it may build where those names
+/// hold one meaning (a dispatch table, as pgfmath's `pgfmath@token@numeric@0` to `9`): a test of the
+/// built name against `\relax` is decided and no path parts. A digit of ten values parts none, so
+/// one of four values must cost no more. Pins the root of pgfmath's digit forks (2548 for one signed
+/// count): `name_step` parts a path per value of a number in a small interval and
+/// `scan_csname_chars` a path per name, again at every lookup of the same digit.
+#[test]
+fn a_name_over_a_digit_of_few_values_parts_no_more_paths_than_one_of_ten() {
+    let run = |values: u32| {
+        let table: String = (0..values).map(|d| format!(r"\expandafter\let\csname tok@{d}\endcsname\e ")).collect();
+        analyze(&format!(
+            r"\def\e{{}}{table}\def\test#1{{\expandafter\ifx\csname tok@\string#1\endcsname\relax\def\no{{}}\else\def\yes{{}}\fi}}
+              \count1=\pdfuniformdeviate {values} \expandafter\test\the\count1 \expandafter\test\the\count1 \expandafter\test\the\count1"
+        ))
+    };
+    let (few, ten) = (run(4), run(10));
+    for a in [&few, &ten] {
+        assert!(definition(a, "yes").is_some() && definition(a, "no").is_none(), "every name is in the table");
+    }
+    assert!(few.forks <= ten.forks, "{} forks for a digit of 4 values, {} for one of 10", few.forks, ten.forks);
+}
+
 #[test]
 fn csname_builds_a_control_sequence() {
     let analysis = analyze(r"\expandafter\def\csname myname\endcsname{body}");
@@ -204,6 +250,9 @@ fn newcommand_signature_survives() {
 
 #[test]
 fn document_command_signature_is_parsed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s O{d} m}{#3}");
     let definition = definition(&analysis, "qx").expect("qx");
     let spec = query::signature(&analysis, definition.name, definition.mac.as_ref().unwrap()).expect("signature");
@@ -261,6 +310,31 @@ fn undefined_control_sequences_are_reported() {
             .iter()
             .any(|e| e.meaning == MeaningKind::Undefined && analysis.interner.name(e.name) == "thisdoesnotexist")
     );
+}
+
+/// A name one arm of an undecided conditional leaves undefined (`\let` to
+/// `\undefined`, or defined on the other arm only) is "Undefined control
+/// sequence" where it runs on that arm's runs (pdftex, seeds 1 and 3). The
+/// join keeps the defined meaning and the undefined one: a use is a possible
+/// error, a warning; a test that asks first (`\ifx`, `\ifdefined`) parts the
+/// arms and finds nothing. Bug pinned: the join ran the name with its defined
+/// meaning and reported nothing.
+#[test]
+fn a_name_undefined_on_one_arm_is_a_possible_error_where_it_runs() {
+    let undefined = |source: &str| -> Vec<String> {
+        let lints = satex::linter::lint(&analyze(source));
+        let found = lints.iter().filter(|l| l["code"] == "undefined-control-sequence");
+        found.map(|l| l["severity"].as_str().unwrap_or_default().to_string()).collect()
+    };
+    let arms = [r"\let\x\relax\else\let\x\undefined", r"\def\x{a}"];
+    for arm in arms {
+        let split = format!(r"\ifnum\pdfuniformdeviate2=0 {arm}\fi");
+        assert_eq!(undefined(&format!(r"{split} \x")), ["warning"], "{arm}");
+        assert_eq!(
+            undefined(&format!(r"{split} \ifx\x\undefined\else\x\fi \ifdefined\x\x\fi \ifcsname x\endcsname\x\fi")),
+            Vec::<String>::new()
+        );
+    }
 }
 
 #[test]
@@ -536,6 +610,9 @@ fn etex_expressions_respect_precedence() {
 
 #[test]
 fn document_commands_take_the_full_argument_specification() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     // pdflatex refuses `!` before a leading optional argument.
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s o >{\TrimSpaces}m +m}{#4}");
     let definition = definition(&analysis, "qx").expect("qx");
@@ -703,6 +780,21 @@ fn a_terminal_read_in_nonstop_mode_ends_the_job() {
     assert!(definition(&analysis, "after").is_none());
     let analysis = analyze(r"\errorstopmode\read-1 to\x \def\after{}");
     assert!(definition(&analysis, "after").is_some());
+}
+
+/// A fatal error is a certain finding: TeX ends the job at a terminal read
+/// in nonstop mode (tex.web § 484), in every run. On one arm of an undecided
+/// conditional it is a possible one. Bug pinned: the stop was only a
+/// diagnostic row, and the linter reported nothing about a run that it
+/// said reached its end.
+#[test]
+fn a_fatal_terminal_read_is_a_certain_error_and_on_an_arm_a_possible_one() {
+    let fatal = |source: &str| {
+        let found = problems(&analyze(source));
+        found.into_iter().filter(|p| p.4.contains("cannot \\read from terminal")).map(|p| p.1).collect::<Vec<_>>()
+    };
+    assert_eq!(fatal("\\nonstopmode\\read-1 to\\x\n"), ["error"]);
+    assert_eq!(fatal("\\nonstopmode\\ifnum\\pdfuniformdeviate2=0 \\read-1 to\\x \\fi\n"), ["warning"]);
 }
 
 #[test]
@@ -2134,6 +2226,52 @@ fn a_parshape_count_satex_cannot_pin_down_leaves_the_shape_unknown() {
     assert!(!diagnosed(&analysis, "unknown-parshape").is_empty());
 }
 
+/// Intuition: the pairs after a `\parshape` count satex cannot pin down are its lines, not
+/// commands. Bug: left unread, wrapfig's `\@@parshape\c@WF@wrappedlines … \z@ \hsize` (TeX
+/// Live 2019, box height unknown) ran `\z@ \hsize` as an assignment: `\z@` became 345pt,
+/// `\prevgraf` then read 22609920, and the next shape asked for 22 million lines.
+#[test]
+fn the_pairs_after_an_unknown_parshape_count_are_read_as_its_lines() {
+    let analysis = analyze(
+        r"\hsize=345pt \dimen1=0pt \parshape=\pdfuniformdeviate 9 \dimen1 \hsize \dimen1 \hsize \edef\x{\the\dimen1}",
+    );
+    assert_eq!(body(&analysis, "x"), "0.0pt");
+    assert!(!diagnosed(&analysis, "unknown-parshape").is_empty());
+    // the pairs a loop built, joined with the count after its group (wrapfig's `\WF@ps`)
+    let joined = analyze(
+        r"\hsize=345pt \dimen1=0pt \count1=\numexpr3+\pdfuniformdeviate 2\relax \count2=1 \gdef\ps{}
+          \begingroup\loop\ifnum\count2<\count1 \xdef\ps{\ps 1pt 2pt }\advance\count2 1 \repeat\endgroup
+          \parshape\count1 \ps\dimen1 \hsize \edef\x{\the\dimen1}",
+    );
+    assert_eq!(body(&joined, "x"), "0.0pt");
+}
+
+/// Intuition: TeX reads every line a `\parshape` count names (tex.web § 1248), however many.
+/// satex keeps `limits.parshape_lines` of them and the budgets bound the reading, so a huge
+/// known count ends. Bug: each of 2147483647 lines got two names of its own (wrapfig under
+/// TeX Live 2019): memory ran out before any budget stopped it.
+#[test]
+fn a_huge_parshape_count_is_read_within_the_budgets() {
+    let analysis = analyze(r"\parshape 2147483647 \def\after{}");
+    assert!(analysis.interner.len() < 1_000_000, "{} names", analysis.interner.len());
+}
+
+/// Intuition: a line past the kept ones reads back unknown; a kept one stays known.
+#[test]
+fn a_parshape_line_past_the_kept_ones_is_unknown() {
+    let kept = analyze("").settings.limits.parshape_lines as usize;
+    let pairs = (0..kept + 2).map(|_| "0pt 2pt ").collect::<String>();
+    let source = format!(
+        r"\parshape {} {pairs}\ifdim\parshapelength 1=2pt \def\first{{}}\else\def\notfirst{{}}\fi
+          \ifdim\parshapelength {}=2pt \def\past{{}}\else\def\notpast{{}}\fi",
+        kept + 2,
+        kept + 1
+    );
+    let defined = names(&analyze(&source));
+    let has = |n: &str| defined.contains(&n.to_string());
+    assert!(has("first") && !has("notfirst") && has("past") && has("notpast"), "{defined:?}");
+}
+
 /// tex.web § 1370: `\write` to a stream satex could not pin down may reach
 /// the shell, so the run says a shell escape may have happened.
 #[test]
@@ -2157,6 +2295,15 @@ fn an_argument_scan_that_ran_into_a_brace_drops_the_call() {
     }
     assert!(diagnosed(&analysis, "unbalanced-argument").is_empty());
     assert!(!analysis.facts.defs.iter().any(|d| analysis.interner.name(d.name) == "got"), "the call was dropped");
+}
+
+/// The extra `}` names the macro whose argument is read (TeX's
+/// `warning_index`), not the call the line started: `\grab` called from
+/// `\zcall`'s body is "Argument of \grab". Pins the outer call's name.
+#[test]
+fn an_extra_brace_names_the_macro_reading_the_argument() {
+    let analysis = analyze(r"\def\grab#1\stop{}\def\zcall{\grab}{\zcall abc}");
+    assert_eq!(diagnosed(&analysis, "extra-right-brace"), ["Argument of \\grab has an extra }"]);
 }
 
 /// tex.web § 392: an argument is read by counting braces, and text satex
@@ -2185,6 +2332,10 @@ fn an_argument_whose_braces_hide_unknown_text_is_not_known() {
 /// `unbalanced-argument` 98297 times inside expl3's file-name scanners.
 #[test]
 fn a_scan_that_cannot_find_its_delimiter_does_not_run_out_the_site_budget() {
+    // TeX Live 2019's kernel has no expl3, so no file-name scanners
+    if !crate::support::kernel_has("\\ExplSyntaxOn") {
+        return;
+    }
     let analysis = analyze_kernel(r"\count0=\pdfuniformdeviate 9 \catcode`\Q=\count0 \IfFileExists{x/Q}{}{}");
     let raised: u32 = analysis
         .facts
@@ -2530,15 +2681,17 @@ fn a_minipage_of_two_lines_has_its_exact_size() {
 
 /// Where the line width is not known, the breaks are not either: the
 /// height is a range from one line to one per breakpoint (four words, nine
-/// breakpoints with hyphenation, ten lines of 12pt at most), never one
-/// number and never negative.
+/// breakpoints with hyphenation, ten lines), that count rounded up to a power of
+/// two (16 lines of 12pt at most: a word typed into the paragraph then leaves the
+/// bound as it was, see `incremental::letters_typed_into_a_paragraph_of_unknown_lines…`),
+/// never one number and never negative.
 #[test]
 fn a_paragraph_of_uncertain_breaks_has_a_bounded_height() {
     let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
     let analysis = Machine::analyze(
         r"\documentclass{article}\begin{document}
           \setbox0\vbox{\hsize=\pdfuniformdeviate 300pt aa bb cc dd}
-          \ifdim\ht0<0pt \gdef\negative{}\fi \ifdim\ht0>120pt \gdef\high{}\fi
+          \ifdim\ht0<0pt \gdef\negative{}\fi \ifdim\ht0>192pt \gdef\high{}\fi
           \xdef\out{\the\ht0}\end{document}",
         None,
         &cfg,
@@ -2864,6 +3017,23 @@ fn a_summarized_loop_keeps_the_bounds_no_pass_moved() {
     );
     let defined = names(&analysis);
     assert!(!defined.contains(&"neg".to_string()), "{defined:?}");
+}
+
+/// Intuition: `\sep 1` after `\sep` and a number of 11000..11999 is met at once: every
+/// value is spelled with a leading `1`, so TeX's match is decided and the argument is `x`.
+/// Bug pinned (H5, l3fp's `\__fp_exp_after_normal:Nwwwww` over `\int_value:w 1 #4`): the
+/// read forked on whether the text begins with `1`. The arm where it does not is no run, and
+/// once the site's forks were spent the read took that arm alone: it read on past the real
+/// end, ran away, and every value of `\fp_eval:n{\a*\b}` was lost.
+#[test]
+fn digits_every_value_of_which_begins_a_delimiter_end_the_argument_there() {
+    let analysis = analyze(
+        r"\count1=\pdfuniformdeviate 1000 \advance\count1 by 11000 \def\a#1\sep 1#2\sep{\xdef\got{#1/#2}}
+          \edef\b{\noexpand\a x\noexpand\sep\the\count1 \noexpand\sep}\b",
+    );
+    assert_eq!(analysis.peak_paths, 1, "no path parts on a decided match");
+    assert!(diagnosed(&analysis, "raised-error").is_empty(), "{:?}", diagnosed(&analysis, "raised-error"));
+    assert!(body(&analysis, "got").starts_with("x/"), "{}", body(&analysis, "got"));
 }
 
 /// Typed text that cannot hold a whole delimiter (other characters, and
@@ -3445,4 +3615,138 @@ fn digits_then_typed_digits_of_either_sign_may_be_negative() {
     );
     assert!(crate::support::defined(&analysis, "after"));
     assert!(crate::support::maybe_defined(&analysis, "negative"), "1\\x may be below 0");
+}
+
+/// A `\def` or `\let` to a name of unknown text is assumed to make a fresh
+/// name (`unknown-name-defines-fresh`, `unknown-name`). That assumption
+/// approximates the path: in some runs the random name is `xi` (or `fooxi`),
+/// the `\errmessage` macro is replaced, and TeX raises nothing (pdftex with
+/// `\pdfsetrandomseed 18523` and range 5000 shows it). So `boom` is at most a
+/// possible error. Pins: an `\errmessage` occurrence takes its certainty
+/// from `exact()` alone, which ignores the path's `approximated` mark, so it
+/// was reported as a certain `raised-error`.
+#[test]
+fn an_error_after_a_definition_of_an_unknown_name_is_only_possible() {
+    for (what, source) in [
+        (
+            "def",
+            "\\def\\xi{\\errmessage{boom}}\n\\expandafter\\def\\csname\\romannumeral\\pdfuniformdeviate 12\\endcsname{}\n\\xi\n",
+        ),
+        (
+            "prefix",
+            "\\def\\fooxi{\\errmessage{boom}}\n\\expandafter\\def\\csname foo\\romannumeral\\pdfuniformdeviate 12\\endcsname{}\n\\fooxi\n",
+        ),
+        (
+            "let",
+            "\\def\\xi{\\errmessage{boom}}\n\\expandafter\\let\\csname\\romannumeral\\pdfuniformdeviate 12\\endcsname\\relax\n\\xi\n",
+        ),
+    ] {
+        let found = problems(&analyze(source));
+        let certain: Vec<_> = found.iter().filter(|p| p.0 == "raised-error" && p.1 == "error").collect();
+        assert!(certain.is_empty(), "{what}: a run may redefine the macro, so boom is not certain: {found:?}");
+    }
+}
+
+/// `\csname foo\romannumeral<0..11>\endcsname` may spell `\fooxi`, a macro
+/// that raises an error, so after the definition `\fooxi` means its old body
+/// or the empty one: the error is possible, never certain. And a macro the
+/// text cannot spell (`\barxi`) keeps its body: its error stays certain.
+/// Pins: a definition of a name with a known prefix and an unknown rest
+/// only marked undefined names as maybe defined. A bound name it may spell
+/// kept its one meaning, so its error was reported as certain.
+#[test]
+fn a_prefixed_unknown_name_may_redefine_a_name_it_spells() {
+    let define = "\\expandafter\\def\\csname foo\\romannumeral\\pdfuniformdeviate 12\\endcsname{}\n";
+    let certain = |source: String| {
+        let found = problems(&analyze(&source));
+        found.iter().any(|p| p.0 == "raised-error" && p.1 == "error" && p.4.contains("boom"))
+    };
+    assert!(!certain(format!("\\def\\fooxi{{\\errmessage{{boom}}}}\n{define}\\fooxi\n")));
+    assert!(certain(format!("\\def\\barxi{{\\errmessage{{boom}}}}\n{define}\\barxi\n")));
+}
+
+/// A name of wholly unknown text that may spell more names with a meaning
+/// than `limits.text_names` touches none of them and says so: the row
+/// `unknown-name-defines-fresh` names the assumption. Pins: the weak update
+/// of every name the text may spell must stay bounded, and past the bound
+/// the assumption must be reported, never made silently.
+#[test]
+fn an_unknown_name_past_the_bound_is_assumed_fresh_and_says_so() {
+    let source = "\\def\\xi{\\errmessage{boom}}\n\\expandafter\\let\\csname\\romannumeral\\pdfuniformdeviate 12\\endcsname\\relax\n";
+    let rows = analyze(source).facts.diagnostics;
+    assert!(rows.iter().any(|d| d.code == "unknown-name-defines-fresh"), "{rows:?}");
+}
+
+/// A `\write` to a stream drawn from 0..3 never reaches the shell, and a
+/// `\write18` on one arm of an undecided `\if` runs in only some runs.
+/// Neither is a certain shell escape. Pins: the unpinned stream records a
+/// `ShellEscape` occurrence, and the `shell-escape` rule reports every such
+/// occurrence as an error without looking at `certain`.
+#[test]
+fn a_shell_escape_no_run_or_only_some_runs_make_is_no_certain_error() {
+    for source in
+        ["\\immediate\\write\\pdfuniformdeviate 4{b}\n", "\\ifnum\\pdfuniformdeviate2=0 \\immediate\\write18{b}\\fi\n"]
+    {
+        let found = problems(&analyze(source));
+        let certain: Vec<_> = found.iter().filter(|p| p.0 == "shell-escape" && p.1 == "error").collect();
+        assert!(certain.is_empty(), "{source}: {found:?}");
+    }
+}
+
+/// `\the` prints a dimension so that reading it back gives the same
+/// dimension (tex.web § 103, print_scaled is exact). A dimension of
+/// whole points in 0..N-1 printed and read back is never past N-1 pt.
+/// Pins the printed dimen's unknown fraction: `\the` of an interval is
+/// its integer part then any five digits, so the top value plus any
+/// fraction leaves the High arm live (pgfmath results go through this:
+/// documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range).
+#[test]
+fn a_printed_interval_dimen_read_back_keeps_its_bound() {
+    const SPAN: i64 = 16000;
+    let top = SPAN - 1;
+    let analysis = analyze(&format!(
+        r"\dimen0=\pdfuniformdeviate {SPAN}pt \edef\x{{\the\dimen0}}\ifdim\x>{top}pt \def\high{{}}\else\def\within{{}}\fi"
+    ));
+    assert!(!crate::support::undefined(&analysis, "within"), "the true arm is live");
+    assert!(crate::support::undefined(&analysis, "high"), "\\the\\dimen0 read back may pass {top}pt");
+}
+
+/// The printed fraction belongs to the digits it was printed after
+/// (tex.web § 103): `\the` of a dimension in 3pt to 4.5pt read back is
+/// in that interval, in any unit, with either sign, and on the path a
+/// test left its integer digits. After other digits it is any fraction.
+/// Pins the link's soundness: each row names a test no run takes (`0`)
+/// or some runs take (`?`), never one all take.
+#[test]
+fn a_printed_fraction_keeps_its_bound_only_after_its_own_digits() {
+    const FROM_PT: i64 = 3;
+    const SPAN_SP: i64 = 98304;
+    let prelude = format!(
+        r"\dimen0=\pdfuniformdeviate {SPAN_SP} sp \advance\dimen0 {FROM_PT}pt \edef\x{{\the\dimen0}}\dimen2=-\dimen0 \edef\n{{\the\dimen2}}\begingroup\catcode`P=12 \catcode`T=12 \lowercase{{\endgroup\def\strip#1PT{{#1}}\def\other#1.#2PT{{7.#2}}\def\on#1#2.#3PT#4{{\ifnum#2=#1 \ifdim#2.#3pt#4 \def\hit{{}}\fi\fi}}}}"
+    );
+    let rows = [
+        (r"\ifdim\x>4.5pt \def\hit{}\fi", "0"),
+        (r"\ifdim\x<3pt \def\hit{}\fi", "0"),
+        (r"\ifdim\x>4.4pt \def\hit{}\fi", "?"),
+        (r"\ifdim\n<-4.5pt \def\hit{}\fi", "0"),
+        (r"\ifdim\n>-3pt \def\hit{}\fi", "0"),
+        (r"\ifdim\n<-4.4pt \def\hit{}\fi", "?"),
+        // 3pt to 4.5pt as centimetres: 85.3pt to 128.1pt
+        (r"\ifdim\expandafter\strip\x cm>128.1pt \def\hit{}\fi", "0"),
+        (r"\ifdim\expandafter\strip\x cm<85.3pt \def\hit{}\fi", "0"),
+        (r"\ifdim\expandafter\strip\x cm>100pt \def\hit{}\fi", "?"),
+        // its integer digits tested first
+        (r"\expandafter\on\expandafter4\x{>4.5pt}", "0"),
+        (r"\expandafter\on\expandafter4\x{<4pt}", "0"),
+        (r"\expandafter\on\expandafter4\x{>4.4pt}", "?"),
+        (r"\expandafter\on\expandafter3\x{>3.9pt}", "?"),
+        // after other digits: 7.0pt to 7.99999pt
+        (r"\ifdim\expandafter\other\x pt>7.6pt \def\hit{}\fi", "?"),
+        (r"\ifdim\expandafter\other\x pt<7.4pt \def\hit{}\fi", "?"),
+        (r"\ifdim\expandafter\other\x pt<7pt \def\hit{}\fi", "0"),
+    ];
+    for (test, expected) in rows {
+        let analysis = analyze(&format!("{prelude}{test}"));
+        assert_eq!(crate::support::presence(&analysis, "hit"), expected, "{test}");
+    }
 }

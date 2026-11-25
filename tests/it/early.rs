@@ -218,6 +218,20 @@ fn an_installed_graphic_is_not_missing_early() {
     assert_eq!(early, last);
 }
 
+/// Intuition: `\input` searches TeX's input path (kpathsea) as well as the document's folder, so
+/// a file the installation has is no missing file early either. Bug pinned: linting
+/// `hyperref.sty` itself opened with "File `pd1enc.def' not found" for its own `\input{pd1enc.def}`,
+/// which the run then read from hyperref's tree.
+#[test]
+fn an_installed_input_is_not_missing_early() {
+    let installed = std::process::Command::new("kpsewhich").arg("size10.clo").output();
+    if !installed.is_ok_and(|o| o.status.success()) {
+        return;
+    }
+    let Some((early, _)) = of_codes("input-installed", "\\input{size10.clo}\n", &[], &["raised-error"]) else { return };
+    assert!(!early.iter().any(|m| m.contains("size10.clo")), "{early:#?}");
+}
+
 /// Intuition: a verdict of `complete` is a claim, so a run that gave up on a conditional or lost an
 /// argument to unknown text says where, in the file:line it happened, not that it reached the end.
 /// Bug pinned: `satex lint` said "complete: the run reached the end" while the run raised

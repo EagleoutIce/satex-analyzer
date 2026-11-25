@@ -113,8 +113,8 @@ test("The feature-model preset", async () => {
   const tpl = F.parse(P.template), keys = new Set(P.styles.map(([k]) => k.replace(/^\/tikz\//, '').replace('/.style', '')));
   assert.equal(F.presetOf(tpl), 'feature model');
   for (const k of P.template.match(/fm [a-z]+/g)) assert.ok(keys.has(k), `${k} has a style`);
-  // the example (examples/feature-model.tex, compiled with pdflatex) holds the styles as the preset writes them
-  const ex = readFileSync(new URL('./examples/feature-model.tex', SITE), 'utf8');
+  // the fixture (tests/fixtures/feature-model.tex, compiled with pdflatex) holds the styles as the preset writes them
+  const ex = readFileSync(new URL('./tests/fixtures/feature-model.tex', SITE), 'utf8');
   for (const [k, v] of P.styles) assert.ok(ex.includes(`${k}=${v}`), `the example has ${k}`);
   assert.equal(F.presetOf(F.parse(ex.slice(ex.indexOf('\\begin{forest}') + 14, ex.indexOf('\\end{forest}')))), 'feature model');
 });

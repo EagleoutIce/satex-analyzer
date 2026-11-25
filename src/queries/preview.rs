@@ -51,9 +51,15 @@ const DEPTH: usize = 3;
 const PX: f64 = 2.0;
 /// The ink of every preview, readable on light and dark backgrounds.
 const INK: &str = "#888888";
-/// A shape sample's minimum width and height (cm).
+/// The text box (cm) a shape sample is drawn around. A box, not `minimum width`/`height` on no text: those
+/// collapse a `trapezium` into a line and stand a `single arrow` upright (its height is its length).
 pub const SAMPLE_W: f64 = 1.0;
 pub const SAMPLE_H: f64 = 0.5;
+/// The line an arrow sprite draws its tips on, in cm.
+const ARROW_W: f64 = 0.9;
+/// Room around an arrow sprite's line, in cm, half of it above and below: more than a thick line's tips reach
+/// (`diamond` 0.28 cm back, 0.09 cm up).
+const TIP_ROOM: f64 = 0.3;
 /// The width, in points, a dash pattern is drawn with when the run left `\pgflinewidth` unknown.
 const UNKNOWN_WIDTH: f64 = 0.4;
 
@@ -305,55 +311,135 @@ fn sprite(kind: Stroke, name: &str) -> String {
 #[derive(Default)]
 struct Sheet {
     svgs: BTreeMap<String, String>,
-    loaded: bool,
+    /// The file the sheet was read from, once read: the installation it was drawn with.
+    loaded: Option<Option<std::path::PathBuf>>,
     busy: bool,
     failed: bool,
 }
 
-static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: false, busy: false, failed: false });
+static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: None, busy: false, failed: false });
 
-fn sheet_path() -> Option<std::path::PathBuf> {
-    crate::caches::format::default_cache_dir().map(|d| d.join("previews.json"))
+/// The sheet of the installation `analysis` ran on: TeX draws the sprites,
+/// so one drawn by another release (its tips, its `dvisvgm`) is not this one's.
+fn sheet_path(analysis: &Analysis) -> Option<std::path::PathBuf> {
+    sheet_in(&analysis.settings, installation_key(analysis))
 }
 
-fn load(sheet: &mut Sheet) {
-    if !sheet.loaded {
-        sheet.loaded = true;
-        let read = sheet_path().and_then(|p| std::fs::read(p).ok());
-        sheet
-            .svgs
-            .extend(read.and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok()).unwrap_or_default());
+/// The sheet of installation `key` in the run's cache directory, as every cache picks it
+/// (`cache.dir`, `SATEX_CACHE`, the platform's): a test or project with its own cache never
+/// reads or writes the user's sheet. None when the cache is off.
+fn sheet_in(cfg: &crate::project::config::Config, key: u64) -> Option<std::path::PathBuf> {
+    // `-v3`: shapes drawn around a text box; an older sheet holds cut-off tips or collapsed shapes
+    crate::caches::format::enabled_cache_dir(cfg).map(|d| d.join(format!("previews-v3-{key:016x}.json")))
+}
+
+/// Whether `svg` is a whole sprite `key`: drawn, and an arrow's at least the box around its line
+/// (`TIP_ROOM` around `ARROW_W`, in the view box's bp). A smaller arrow is cut off (a `dvisvgm` or
+/// an older satex dropped the box), so it is neither kept nor read back: it is drawn again.
+fn whole(key: &str, svg: &str) -> bool {
+    if svg.is_empty() || !key.starts_with("arrow:") {
+        return !svg.is_empty();
+    }
+    let view = svg.split("viewBox=").nth(1).and_then(|v| v.get(1..)?.split(['\'', '"']).next()).unwrap_or_default();
+    let size: Vec<f64> = view.split_whitespace().skip(2).filter_map(|n| n.parse().ok()).collect();
+    // 2% short of the box: rounding of the bounding box, not a cut tip
+    let bp = |cm: f64| cm * 72.0 / 2.54 * 0.98;
+    matches!(size[..], [w, h] if w >= bp(ARROW_W + 2.0 * TIP_ROOM) && h >= bp(TIP_ROOM))
+}
+
+/// The installation a sprite is drawn with: its trees, release and format,
+/// and the `dvisvgm` on `PATH` ([`installation_hash`]).
+fn installation_key(analysis: &Analysis) -> u64 {
+    static DVISVGM: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    let dvisvgm = DVISVGM.get_or_init(|| {
+        let out = std::process::Command::new("dvisvgm").arg("--version").output();
+        out.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    });
+    let d = &analysis.distribution;
+    installation_hash(&d.roots, d.year, d.format_version.as_deref(), dvisvgm)
+}
+
+/// [`installation_key`] of its parts, hashed (FNV-1a) the same in every process.
+fn installation_hash(roots: &[std::path::PathBuf], year: Option<u32>, format: Option<&str>, dvisvgm: &str) -> u64 {
+    let roots: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+    let text = format!("{}\n{year:?}\n{format:?}\n{dvisvgm}", roots.join("\n"));
+    text.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3))
+}
+
+/// The sheet of `analysis`'s installation, read once; another
+/// installation's is set aside.
+fn load(sheet: &mut Sheet, analysis: &Analysis) {
+    let path = sheet_path(analysis);
+    if sheet.loaded.as_ref() != Some(&path) {
+        *sheet = Sheet { loaded: Some(path.clone()), ..Sheet::default() };
+        // else the sheet a site build drew (`previews.json`, the playground's): no TeX draws one in the browser
+        let read = |p: std::path::PathBuf| {
+            Some(read_sheet(&p))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| read_sheet(&p.with_file_name("previews.json")))
+        };
+        sheet.svgs = path.map(read).unwrap_or_default();
     }
 }
 
-/// The picture of a tip or pattern TeX drew. One the sheet lacks is drawn
-/// in the background, with every other the run declared, for a later ask.
+/// The sprites drawn in the sheet at `path`. One TeX could not draw, or drew
+/// cut off ([`whole`]), is never read back: a later run tries it again.
+fn read_sheet(path: &std::path::Path) -> BTreeMap<String, String> {
+    let read = std::fs::read(path).ok();
+    let svgs = read.and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok()).unwrap_or_default();
+    svgs.into_iter().filter(|(key, svg)| whole(key, svg)).collect()
+}
+
+/// The picture of a tip or pattern TeX drew ([`sprite_of`]).
 pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
-    let key = sprite(kind, name);
+    let svg = sprite_of(analysis, &sprite(kind, name))?;
+    let what = match kind {
+        Stroke::Arrows => "arrows",
+        Stroke::Shape => "shape",
+        _ => "pattern",
+    };
+    Some(Preview { text: format!("{what}={}", name.trim()), svg })
+}
+
+/// The sample of offered font `name` (`type_plugins.font.fonts`) TeX set ([`sprite_of`]).
+pub fn font_sample(analysis: &Analysis, name: &str) -> Option<String> {
+    sprite_of(analysis, &font_sprite(name))
+}
+
+/// A math font's sample as TeX set it: big operators and letters in it ([`MATH_SAMPLE`]).
+pub fn math_font_sample(analysis: &Analysis, name: &str) -> Option<String> {
+    sprite_of(analysis, &format!("mathfont:{name}"))
+}
+
+/// The sprite `key` of the sheet. One the sheet lacks is drawn in the
+/// background, with every other the run wants, for a later ask.
+fn sprite_of(analysis: &Analysis, key: &str) -> Option<String> {
     let mut sheet = SHEET.lock().ok()?;
-    load(&mut sheet);
-    match sheet.svgs.get(&key) {
-        Some(svg) if !svg.is_empty() => {
-            let what = match kind {
-                Stroke::Arrows => "arrows",
-                Stroke::Shape => "shape",
-                _ => "pattern",
-            };
-            Some(Preview { text: format!("{what}={}", name.trim()), svg: svg.clone() })
-        }
+    load(&mut sheet, analysis);
+    match sheet.svgs.get(key) {
+        Some(svg) if !svg.is_empty() => Some(svg.clone()),
         Some(_) => None,
         None => {
             if !cfg!(target_os = "emscripten") && !sheet.busy && !sheet.failed {
                 sheet.busy = true;
-                let (all, libs) = wanted(analysis);
-                let wanted: Vec<String> = all.into_iter().filter(|w| !sheet.svgs.contains_key(w)).collect();
+                let mut plan = wanted(analysis);
+                // a math font's sample costs a TeX run each: drawn only when one is asked for
+                let math = |w: &str| w.starts_with("mathfont:");
+                if !math(key) {
+                    plan.names.retain(|w| !math(w));
+                    plan.fonts.retain(|w, _| !math(w));
+                }
+                plan.names.retain(|w| !sheet.svgs.contains_key(w));
+                let path = sheet.loaded.clone().flatten();
                 std::thread::spawn(move || {
-                    let svgs = render(&libs, &wanted);
-                    if let Ok(mut sheet) = SHEET.lock() {
+                    let svgs = render(&plan, path.as_deref());
+                    if let Ok(mut sheet) = SHEET.lock()
+                        && sheet.loaded.as_ref() == Some(&path)
+                    {
                         sheet.busy = false;
                         sheet.failed = svgs.is_none();
                         sheet.svgs.extend(svgs.unwrap_or_default());
-                        save(&sheet.svgs);
+                        save(path.as_deref(), &sheet.svgs);
                     }
                 });
             }
@@ -362,26 +448,69 @@ pub fn drawn(analysis: &Analysis, kind: Stroke, name: &str) -> Option<Preview> {
     }
 }
 
-fn save(svgs: &BTreeMap<String, String>) {
-    if let (Some(path), Ok(json)) = (sheet_path(), serde_json::to_vec(svgs)) {
+/// The sheet written to `path`, without the sprites TeX did not draw whole
+/// ([`whole`]): a failure is this process's, never a later one's.
+fn save(path: Option<&std::path::Path>, svgs: &BTreeMap<String, String>) {
+    let drawn: BTreeMap<&String, &String> = svgs.iter().filter(|(key, svg)| whole(key, svg)).collect();
+    if let (Some(path), Ok(json)) = (path, serde_json::to_vec(&drawn)) {
         let _ = path.parent().map(std::fs::create_dir_all);
-        let tmp = path.with_extension("json.tmp");
+        // this process's: another one saving at once never writes into it
+        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
         if std::fs::write(&tmp, json).is_ok() {
             let _ = std::fs::rename(tmp, path);
         }
     }
 }
 
-/// Every tip, pattern and shape the run declared and every shape the installation's libraries
-/// declare, as sprite names, with the loads that draw them.
-fn wanted(analysis: &Analysis) -> (Vec<String>, Vec<String>) {
+/// The sprites a sheet holds and what draws them: the TikZ loads, and each font sprite's preamble.
+struct Plan {
+    names: Vec<String>,
+    libs: Vec<String>,
+    /// Each font sprite's preamble and picture, and whether XeTeX draws it (an OpenType font).
+    fonts: BTreeMap<String, (String, &'static str, bool)>,
+}
+
+/// The text a font's sample sets.
+const FONT_SAMPLE: &str = "\\mbox{\\color{ink}Aa Bb 123}";
+
+/// The formula a math font's sample sets: big operators, then letters.
+const MATH_SAMPLE: &str = "\\mbox{\\color{ink}$\\displaystyle\\sum_{i}\\prod_{k}\\int f\\,dx\\; \\alpha+\\Gamma x$}"; // not prose
+
+/// A font sample's sprite name in `previews.json`: `font:Libertinus`.
+fn font_sprite(name: &str) -> String {
+    format!("font:{name}")
+}
+
+/// Every tip, pattern and shape the run declared, every shape the installation's libraries
+/// declare and every offered font the installation has a package of, as sprite names, with
+/// what draws them. A font is drawn by its pdfLaTeX package, as `type_plugins.font` writes it.
+fn wanted(analysis: &Analysis) -> Plan {
     let more = library_shapes(analysis);
-    let mut loads = libraries(analysis);
-    loads.extend(more.iter().map(|(_, l)| l.clone()).filter(|l| !loads.contains(l)).collect::<BTreeSet<_>>());
+    let mut libs = libraries(analysis);
+    libs.extend(more.iter().map(|(_, l)| l.clone()).filter(|l| !libs.contains(l)).collect::<BTreeSet<_>>());
     let arrows = arrow_specs(analysis).into_iter().map(|s| sprite(Stroke::Arrows, &s));
     let patterns = pattern_names(analysis).into_iter().map(|p| sprite(Stroke::Pattern, &p));
     let shapes = shape_names(analysis).into_iter().chain(more.into_iter().map(|(n, _)| n));
-    (arrows.chain(patterns).chain(shapes.map(|s| sprite(Stroke::Shape, &s))).collect(), loads)
+    let mut fonts: BTreeMap<String, (String, &'static str, bool)> = (analysis.settings.type_plugins.font.fonts.iter())
+        .filter_map(|(name, spec)| {
+            let package = spec.first().filter(|p| crate::linter::shared::installed_package(analysis, p))?;
+            let sans = spec.get(2).is_some_and(|s| s == "sans").then_some("\\renewcommand\\familydefault\\sfdefault");
+            let preamble = format!("\\usepackage[T1]{{fontenc}}\\usepackage{{{package}}}{}", sans.unwrap_or_default());
+            Some((font_sprite(name), (preamble, FONT_SAMPLE, false)))
+        })
+        .collect();
+    // the installation's math fonts: a package (pdfTeX), an OpenType font (XeTeX, unicode-math)
+    for (name, files) in crate::linter::shared::declared(analysis, "mathfont") {
+        let Some(file) = files.first() else { continue };
+        let otf = file.ends_with(".otf");
+        let preamble = match otf {
+            true => format!("\\usepackage{{unicode-math}}\\setmathfont{{{file}}}"),
+            false => format!("\\usepackage{{{}}}", file.trim_end_matches(".sty")),
+        };
+        fonts.insert(format!("mathfont:{name}"), (preamble, MATH_SAMPLE, otf));
+    }
+    let names = arrows.chain(patterns).chain(shapes.map(|s| sprite(Stroke::Shape, &s))).chain(fonts.keys().cloned());
+    Plan { names: names.collect(), libs, fonts }
 }
 
 /// The pgf and TikZ libraries the run loaded, by their files' names.
@@ -402,30 +531,39 @@ pub fn libraries(analysis: &Analysis) -> Vec<String> {
 /// Every sprite of `previews.json` the run needs, drawn now: what the
 /// `previews` query gives and the site ships for the playground.
 pub fn sheet(analysis: &Analysis) -> BTreeMap<String, String> {
-    let (wanted, libs) = wanted(analysis);
+    let mut plan = wanted(analysis);
     let Ok(mut sheet) = SHEET.lock() else { return BTreeMap::new() };
-    load(&mut sheet);
-    let missing: Vec<String> = wanted.iter().filter(|w| !sheet.svgs.contains_key(*w)).cloned().collect();
-    if !missing.is_empty() {
-        sheet.svgs.extend(render(&libs, &missing).unwrap_or_default());
-        save(&sheet.svgs);
+    load(&mut sheet, analysis);
+    let wanted = plan.names.clone();
+    plan.names.retain(|w| !sheet.svgs.contains_key(w));
+    if !plan.names.is_empty() {
+        let path = sheet.loaded.clone().flatten();
+        sheet.svgs.extend(render(&plan, path.as_deref()).unwrap_or_default());
+        save(path.as_deref(), &sheet.svgs);
     }
     wanted.into_iter().filter_map(|w| Some((w.clone(), sheet.svgs.get(&w)?.clone()))).collect()
 }
 
-/// Draws each sprite on its own page with `latex` and `dvisvgm`, `None`
-/// when they cannot run. A sprite TeX could not draw maps to nothing.
-fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>> {
-    let dir = crate::caches::format::default_cache_dir()?.join(format!("previews-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).ok()?;
+/// Draws each sprite of `plan` on its own page with `latex` and `dvisvgm`, beside the sheet
+/// at `sheet`, `None` when they cannot run or the cache is off. A sprite TeX could not draw
+/// maps to nothing. The TikZ sprites share a document, each font sample has one of its own.
+fn render(plan: &Plan, sheet: Option<&std::path::Path>) -> Option<BTreeMap<String, String>> {
+    let dir = workspace(sheet?.parent()?);
+    let (fonts, wanted): (Vec<String>, Vec<String>) =
+        plan.names.iter().cloned().partition(|w| plan.fonts.contains_key(w));
     let pictures: Vec<String> = wanted
         .iter()
         .map(|w| match w.split_once(':') {
-            Some(("arrow", spec)) => format!("\\tikz\\draw[ink,thick,{spec}] (0,0) -- (0.9,0);"), // not prose
-            // twice as wide as high: a shape that keeps its own proportions shows it
+            // a tip declared the old way (`\pgfarrowsdeclare`: the `arrows` library, `hooks`, `latex'`) adds nothing to the
+            // picture's bounding box, so the sprite cut it off: the points around the line keep room for any tip
+            Some(("arrow", spec)) => format!(
+                "\\tikz{{\\path (-{TIP_ROOM}cm,-{h}cm) ({}cm,{h}cm);\\draw[ink,thick,{spec}] (0,0) -- ({ARROW_W}cm,0);}}", // not prose
+                ARROW_W + TIP_ROOM,
+                h = TIP_ROOM / 2.0
+            ),
+            // around a box twice as wide as high: a shape that keeps its own proportions shows it
             Some(("shape", name)) => format!(
-                "\\tikz\\node[draw=ink,fill=ink,fill opacity=.15,shape={{{name}}},inner sep=0pt,minimum width={SAMPLE_W}cm,minimum height={SAMPLE_H}cm] {{}};" // not prose
+                "\\tikz\\node[draw=ink,fill=ink,fill opacity=.15,shape={{{name}}},inner sep=0pt] {{\\rule{{{SAMPLE_W}cm}}{{0pt}}\\rule{{0pt}}{{{SAMPLE_H}cm}}}};" // not prose
             ),
             Some((_, name)) => {
                 format!("\\tikz\\path[pattern={{{name}}},pattern color=ink] (0,0) rectangle (0.9,0.45);") // not prose
@@ -433,9 +571,45 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
             None => String::new(),
         })
         .collect();
+    let tikz = format!(
+        "\\def\\pgfsysdriver{{pgfsys-dvisvgm.def}}\\documentclass{{article}}\\usepackage{{tikz}}\n{}",
+        plan.libs.join("\n")
+    );
+    let mut svgs = BTreeMap::new();
+    if !wanted.is_empty() {
+        svgs.extend(draw(&dir, &tikz, &wanted, &pictures, false)?);
+    }
+    for (i, font) in fonts.iter().enumerate() {
+        let (preamble, picture, xe) = &plan.fonts[font];
+        let preamble = format!("\\documentclass{{article}}\\usepackage{{xcolor}}{preamble}");
+        let (dir, one) = (dir.join(format!("font-{i}")), std::slice::from_ref(font));
+        svgs.extend(draw(&dir, &preamble, one, &[picture.to_string()], *xe).unwrap_or_default());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    Some(svgs)
+}
+
+/// A directory in `cache` no other render uses: the background one and [`sheet`]'s may draw at
+/// once, and neither may clear the other's pages.
+fn workspace(cache: &std::path::Path) -> std::path::PathBuf {
+    static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    cache.join(format!("previews-{}-{n}", std::process::id()))
+}
+
+/// Each of `pictures` on a page of its own after `preamble`, in `dir`, as the sprites `wanted`;
+/// by XeTeX (`xe`: an OpenType font), else by `latex`.
+fn draw(
+    dir: &std::path::Path,
+    preamble: &str,
+    wanted: &[String],
+    pictures: &[String],
+    xe: bool,
+) -> Option<BTreeMap<String, String>> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).ok()?;
     let tex = format!(
-        "\\def\\pgfsysdriver{{pgfsys-dvisvgm.def}}\\documentclass{{article}}\\usepackage{{tikz}}\n{}\n\\pagestyle{{empty}}\\definecolor{{ink}}{{HTML}}{{{}}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
-        libs.join("\n"),
+        "{preamble}\n\\pagestyle{{empty}}\\definecolor{{ink}}{{HTML}}{{{}}}\n\\begin{{document}}\n{}\n\\end{{document}}\n",
         INK.trim_start_matches('#'),
         // Each page names its sprite: a library's error may ship a page of its own.
         pictures
@@ -446,11 +620,21 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
             .join("\n")
     );
     std::fs::write(dir.join("previews.tex"), tex).ok()?;
-    let run = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).current_dir(&dir).output();
-    run("latex", &["-interaction=batchmode", "previews.tex"]).ok()?;
-    let done = run("dvisvgm", &["--no-fonts", "--exact-bbox", "--page=1-", "--output=p%p.svg", "previews.dvi"]);
-    if !done.is_ok_and(|o| o.status.success()) {
-        let _ = std::fs::remove_dir_all(&dir);
+    let run = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).current_dir(dir).output();
+    match xe {
+        true => run("xelatex", &["-no-pdf", "-interaction=batchmode", "previews.tex"]).ok()?,
+        false => run("latex", &["-interaction=batchmode", "previews.tex"]).ok()?,
+    };
+    let output = if xe { "previews.xdv" } else { "previews.dvi" };
+    // a page drawn: dvisvgm 2.6 (TeX Live 2019) ends well on an option it lacks
+    let drawn =
+        || std::fs::read_dir(dir).is_ok_and(|d| d.flatten().any(|e| e.path().extension() == Some("svg".as_ref())));
+    let svg = |exact: &[&str]| {
+        let args = [exact, &["--no-fonts", "--page=1-", "--output=p%p.svg", output]].concat();
+        run("dvisvgm", &args).is_ok_and(|o| o.status.success()) && drawn()
+    };
+    // that dvisvgm has no `--exact-bbox`; glyph-free sprites need none
+    if !svg(&["--exact-bbox"]) && !svg(&[]) {
         return None;
     }
     static MARK: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
@@ -459,7 +643,7 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
     static SIZE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let size = SIZE.get_or_init(|| regex::Regex::new(r"(width|height)='([0-9.]+)pt'").unwrap());
     let mut svgs: BTreeMap<String, String> = wanted.iter().map(|w| (w.clone(), String::new())).collect();
-    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+    for entry in std::fs::read_dir(dir).ok()?.flatten() {
         let Ok(svg) = std::fs::read_to_string(entry.path()) else { continue };
         let n = mark.captures(&svg).and_then(|c| c[1].parse::<usize>().ok());
         let (Some(at), Some(w)) = (svg.find("<svg"), n.and_then(|n| wanted.get(n))) else { continue };
@@ -467,9 +651,9 @@ fn render(libs: &[String], wanted: &[String]) -> Option<BTreeMap<String, String>
         let svg = size.replace_all(&svg, |c: &regex::Captures| {
             format!("{}='{:.2}'", &c[1], c[2].parse::<f64>().unwrap_or_default() * PX)
         });
-        svgs.insert(w.clone(), svg.into_owned());
+        // a cut sprite is not drawn
+        svgs.insert(w.clone(), Some(svg.into_owned()).filter(|svg| whole(w, svg)).unwrap_or_default());
     }
-    let _ = std::fs::remove_dir_all(&dir);
     Some(svgs)
 }
 
@@ -570,4 +754,65 @@ pub fn formula(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\"><text x=\"4\" fill=\"{INK}\" font-family=\"Latin Modern Math, STIX Two Math, Cambria Math, serif\" xml:space=\"preserve\">{spans}</text></svg>"
     );
     Some(Preview { text: plain, svg })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sheet is the installation's: another TeX Live release, format or
+    /// `dvisvgm` draws its sprites anew. Pins one sheet shared by all, whose
+    /// sprite an older release could not draw stayed undrawn after an upgrade.
+    #[test]
+    fn each_installation_has_its_own_sheet() {
+        let roots = [std::path::PathBuf::from("/texlive/2022/texmf-dist")];
+        let key = |year, dvisvgm| installation_hash(&roots, Some(year), Some("2022-06-01"), dvisvgm);
+        assert_eq!(key(2022, "dvisvgm 2.13"), key(2022, "dvisvgm 2.13"));
+        assert_ne!(key(2022, "dvisvgm 2.13"), key(2025, "dvisvgm 2.13"));
+        assert_ne!(key(2022, "dvisvgm 2.13"), key(2022, "dvisvgm 3.4"));
+    }
+
+    /// A sprite TeX did not draw (`""`) is this process's failure: it is
+    /// neither written nor read back, so a later run draws it again.
+    #[test]
+    fn an_undrawn_sprite_is_not_kept() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/preview-sheet-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("sheet-{}.json", std::process::id()));
+        let svgs =
+            BTreeMap::from([("pattern:a".to_string(), "<svg/>".to_string()), ("pattern:b".to_string(), String::new())]);
+        save(Some(&path), &svgs);
+        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["pattern:a"]);
+        std::fs::write(&path, r#"{"pattern:a":"<svg/>","pattern:c":""}"#).unwrap();
+        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["pattern:a"]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The sheet lives in the run's cache directory (`cache.dir`), as every cache does, and
+    /// nowhere when the cache is off. Pins a sheet always in the user's `~/.cache/satex`: a
+    /// test run read the cut tips a stale sheet there held.
+    #[test]
+    fn the_sheet_is_in_the_run_s_cache() {
+        let mut cfg = crate::project::config::Config::default();
+        cfg.cache.dir = Some(std::path::PathBuf::from("/project/cache"));
+        let path = sheet_in(&cfg, 1).unwrap();
+        assert!(path.starts_with("/project/cache"), "{}", path.display());
+        cfg.cache.enabled = false;
+        assert_eq!(sheet_in(&cfg, 1), None);
+        // two renders at once draw apart
+        assert_ne!(workspace(std::path::Path::new("/c")), workspace(std::path::Path::new("/c")));
+    }
+
+    /// An arrow sprite smaller than the box around its line is cut off and
+    /// not whole: the sheet holding one draws it again. Pins a stale sheet's
+    /// tips, 26.3 x 0.8 bp, shown as if drawn.
+    #[test]
+    fn a_cut_arrow_is_not_whole() {
+        let svg = |w: f64, h: f64| format!("<svg width='1' viewBox='76.7 61.9 {w} {h}'></svg>");
+        assert!(!whole("arrow:diamond-", &svg(26.308613, 0.797001)));
+        assert!(whole("arrow:diamond-", &svg(42.5, 8.5)));
+        assert!(!whole("arrow:diamond-", "<svg/>"));
+        assert!(whole("shape:circle", "<svg/>"));
+        assert!(!whole("shape:circle", ""));
+    }
 }

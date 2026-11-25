@@ -87,6 +87,18 @@ A file that is not UTF-8 is never overwritten, and a file with `\r\n` line ends 
 
 The pages come from a built site: `share/satex/site` beside the binary, or `--site DIR`. In a checkout of satex, `cargo playground` builds one in `target/site`, which `satex gui` finds by itself.
 
+## Package updates
+
+`satex updates main.tex` lists each package and class the document loads with its status. `outdated` means the index knows a newer release. `current` means the installed one is the newest. `unknown` means satex cannot tell.
+
+The installed version is what the file's `\ProvidesPackage` set when it ran. The newest comes from `updates.index`, by default CTAN's JSON API. Network access is off by default (`updates.fetch: false`). Without a fresh record a package is `unknown`, never `current`. Records are cached in the cache directory under `updates` for `updates.refresh_days`.
+
+With `updates.changes: true` satex also gets the newest release of each outdated package from `updates.archives` and unpacks it under the cache. It then runs a document that loads the package once with each release. The columns `added`, `removed` and `changed` name the commands (`\x`), environments (`{x}`) and options (`[x]`) whose meaning differs. A command changed when its arity, prefixes or body differ. Internal names are only counted. A release that ships only `.dtx` sources is reported in `note`.
+
+```sh
+satex updates main.tex --set updates.fetch=true --set updates.changes=true
+```
+
 ## Command tree as JSON
 
 `satex completions json` prints the subcommands, flags, value names, possible values, query names and config keys as JSON. It is hidden from `--help`. Tools such as the web playground use it.
@@ -94,3 +106,5 @@ The pages come from a built site: `share/satex/site` beside the binary, or `--si
 ## Benchmarks
 
 `python3 scripts/bench.py --build` builds the release binary, runs the documents of `benches/docs.txt` under every kernel and writes the entry for the current version to `doc/site/bench/data.json`. Entries of other versions stay. `cargo playground` then serves the Benchmarks page from that file, and shows a hint while it is missing. `cargo bench --bench analysis` runs the Criterion micro-benchmarks. CI appends an entry on each release.
+
+`python3 scripts/bench_compile.py` compares `satex compile --system satex` with latexmk and the plain engine on the documents of `benches/compile.txt` and, with `--big article-200,book-1000`, on generated ones. It measures a cold build, a rebuild with nothing changed and a rebuild after one changed word. For each it records the median wall time of N runs and its spread, CPU time, peak memory and engine passes. It also checks that each PDF has latexmk's page count and text. The clock is pinned for every tool. The entry goes to `doc/site/bench/compile.json`; the module docstring says which caches each scenario has.

@@ -41,7 +41,9 @@ fn a_typed_section_number_names_its_label() {
                 \\begin{equation}x\\label{eq:x}\\end{equation}\nBy Eq. (1) and Table 9.\n\
                 \\appendix\n\\section{B}\\label{app:b}\nIn Appendix A.\n\\end{document}\n";
     let found = records("typed", body, "", "hand-written-reference");
-    if !crate::support::installed() {
+    // A kernel without `\@currentcounter` (TeX Live 2019) and without anchors in `\newlabel`
+    // names no label's counter, so no number is known to be a section's.
+    if !crate::support::kernel_has("\\@currentcounter") {
         return;
     }
     // the fix writes `\Cref` after a capital word and loads cleveref, which prints the word itself
@@ -209,6 +211,20 @@ fn an_inline_list_item_is_labelled_too() {
 fn a_label_format_gives_its_own_word() {
     let lists = "\\begin{enumerate}[label=Step~\\arabic*]\n\\item a\n\\item b\n\\end{enumerate}";
     let found = item_fixes("item-step", "\\usepackage{enumitem}\n", lists, "Then step 2 follows.");
+    if !crate::support::installed() {
+        return;
+    }
+    assert_eq!(found, [r"\label{item:step2}", r"\ref{item:step2}"]);
+}
+
+/// Intuition: a robust hard space in the item's number (`\protect\nobreakspace␣` after
+/// `\protected@edef`, what `~` leaves before LaTeX made it `\protected`) prints as `~` does.
+/// Bug: on TeX Live 2022 the label read `Stepprotectnobreakspace 2`, so no word was found.
+#[test]
+fn a_robust_hard_space_in_the_label_is_a_space() {
+    let preamble = "\\renewcommand\\theenumi{Step\\nobreakspace\\arabic{enumi}}\n";
+    let lists = "\\begin{enumerate}\n\\item a\n\\item b\n\\end{enumerate}";
+    let found = item_fixes("item-robust", preamble, lists, "Then step 2 follows.");
     if !crate::support::installed() {
         return;
     }

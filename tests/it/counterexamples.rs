@@ -208,6 +208,15 @@ const BODIES: &[crate::support::BodyRow] = &[
           \lccode`\Q=`\z \lowercase{\def\w{Q}}",
         &[("v", "[97][65][999]"), ("w", "z")],
     ),
+    // tex.web § 358: behind `\noexpand`'s marker a command past `max_command`
+    // reads as `relax`, and `undefined_cs` is `max_command + 1`. Pins satex
+    // printing `undefined` here. `pdftex`: `\meaning` gives `\relax` for an
+    // undefined name as for a macro.
+    (
+        "an_undefined_name_behind_noexpand_means_relax",
+        r"\def\m{x}\edef\u{\expandafter\meaning\noexpand\undefinedQ}\edef\v{\expandafter\meaning\noexpand\m}",
+        &[("u", r"\relax"), ("v", r"\relax")],
+    ),
 ];
 
 #[test]
@@ -592,24 +601,100 @@ fn a_mutually_recursive_pair_is_reported_for_both_names() {
     );
 }
 
-/// A `\newcommand` with an optional argument whose body genuinely calls
-/// itself with no conditional is still real recursion: `\foo`'s own
-/// wrapper is exempted, but its internal counterpart, which actually calls
-/// `\foo` back, is not.
+/// A cycle nothing expands is judged by its texts, all of them: the test that ends it may stand
+/// in another macro of the cycle. hyperref's `\HyPsd@GetTwoBytes` only hands on to
+/// `\HyPsd@DoConvert`, which tests `\ifx#1\@empty` before it calls back.
 #[test]
-fn a_genuinely_recursive_newcommand_with_an_optional_argument_is_still_reported() {
+fn a_cycle_one_of_whose_macros_tests_is_guarded() {
     if !installed() {
         return;
     }
     let analysis = document(
         r"\documentclass{article}
-\newcommand\realrec[1][x]{\realrec{#1}}
+\def\stepA#1{#1\stepB}
+\def\stepB#1{\ifx#1\relax\else\expandafter\stepA\fi}
 \begin{document}
 \end{document}",
     );
     let findings = recursion_findings(&analysis);
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].0, "unguarded-recursion");
+    assert!(findings.is_empty(), "a test on the cycle ends it: {findings:?}");
+}
+
+/// A text calls a name only where the name stands to be expanded. Not where it redefines the
+/// name: `\global\let\once\relax` is how a warning is given once (hyperref's
+/// `\Hy@WarningPageColor`), and amsmath's `\eqno` and `\leqno` each disable both. Not after
+/// `\string`, in a message (caption's `\flushsubcaptionlistentries`), nor inside braces, where
+/// another command is handed it (minted's `\FVExtraAlwaysUnexpanded{\minted@read…}`). And a
+/// cycle of names is one of calls only if each name calls the next (`\flush` calls `\addsub`,
+/// which only prints `\flush`'s name). A text that also calls the name is still reported.
+#[test]
+fn a_macro_that_only_names_itself_is_no_recursion() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\def\once{x\global\let\once\relax}
+\def\eqA{\let\eqA\relax\let\eqB\relax}
+\def\eqB{\let\eqB\relax\let\eqA\relax}
+\def\named{\typeout\string\named}
+\def\handed{\unexpanded{\handed}}
+\def\flush{\addsub\relax}
+\def\addsub#1{\typeout{\string\flush}}
+\def\twice{\def\twice{}\twice}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings.iter().map(|f| f.1.as_str()).collect::<Vec<_>>(), ["\\twice"], "{findings:?}");
+}
+
+/// A quark is a macro that expands to itself, compared and never expanded (the TeXbook's
+/// `\def\q{\q}`, forest's `\def\Q@END{\Q@END}` and `\def\forest@spacegen{ \forest@spacegen}`,
+/// expl3's `\quark_new:N`): another macro's text
+/// or parameter text holds it. The same definition nothing else names is a loop waiting for its
+/// first call ([`a_directly_recursive_def_is_still_reported`]).
+#[test]
+fn a_quark_is_no_recursion() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\def\qend{\qend}
+\def\upto#1\qend{#1}
+\def\qmark{\qmark}
+\def\ismark#1{\ifx#1\qmark yes\fi}
+\def\qspace{ \qspace}
+\def\tospace#1\qspace{#1}
+\def\lonely{\lonely}
+\begin{document}
+\end{document}",
+    );
+    let findings = recursion_findings(&analysis);
+    assert_eq!(findings.iter().map(|f| f.1.as_str()).collect::<Vec<_>>(), ["\\lonely"], "{findings:?}");
+}
+
+/// A `\newcommand` with an optional argument whose body genuinely calls
+/// itself with no conditional is real recursion, and a run that calls it
+/// says so: TeX's memory runs out. Read off the texts alone it is not
+/// claimed: the wrapper hands both names to `\@protected@testopt`, which
+/// tests, and only a run sees that its test does not end the cycle.
+#[test]
+fn a_genuinely_recursive_newcommand_with_an_optional_argument_is_reported_by_its_run() {
+    if !installed() {
+        return;
+    }
+    let source = |body: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newcommand\\realrec[1][x]{{\\realrec{{#1}}}}\n\\begin{{document}}\n{body}\\end{{document}}"
+        )
+    };
+    let called = findings(&document(&source("\\realrec\n")));
+    let endless = |f: &String| f.starts_with("unguarded-recursion") || f.starts_with("raised-error");
+    assert!(called.iter().any(endless), "the run goes round the cycle: {called:?}");
+    let unread = recursion_findings(&document(&source("")));
+    assert!(unread.is_empty(), "{unread:?}");
 }
 
 /// A `\newcommand` with no optional argument whose body calls itself is the
@@ -631,21 +716,22 @@ fn a_genuinely_recursive_plain_newcommand_is_still_reported() {
 
 /// latex.ltx defines `\@empty` as an empty macro, and a zero-argument
 /// `\newcommand` is not `\long` (`\@yargd@f`), so all of these compare
-/// equal.  `pdflatex`: `[T][T][T][T]`.
+/// equal.  `pdflatex`: `[T][T][T][T]`. Kernels before that rule (TeX Live 2022)
+/// make `\qb` `\long`: `[T][F][T][T]`, so the installed engine gives the answer.
 #[test]
 fn ifx_compares_empty_macros_the_way_the_engine_does() {
     if !installed() {
         return;
     }
-    let analysis = document(
-        r"\documentclass{article}
+    let source = r"\documentclass{article}
 \makeatletter
 \newcommand*\qa{}\newcommand\qb{}\newcommand*\qc[1]{#1}\def\qd#1{#1}\edef\qe{}
 \xdef\qv{[\ifx\qa\@empty T\else F\fi][\ifx\qb\@empty T\else F\fi][\ifx\qc\qd T\else F\fi][\ifx\qe\@empty T\else F\fi]}
+\typeout{QV \qv}
 \begin{document}
-\end{document}",
-    );
-    assert_eq!(last_body(&analysis, "qv"), "[T][T][T][T]");
+\end{document}";
+    let analysis = document(source);
+    assert_eq!(last_body(&analysis, "qv"), crate::support::engine_typeout(source, "QV", "[T][T][T][T]"));
 }
 
 /// `\ifmmode` outside any math group is false: a display opened in its
@@ -1197,6 +1283,65 @@ A\par\xdef\one{\the\deadcycles}
     }
 }
 
+/// A test undecided while a page is made takes its first arm, no path parted
+/// (`page-one-arm`). The arm must not learn the test's outcome as a value: `\n` is any of
+/// 0..4 after the page, and it read 3 for certain. LaTeX's shipout compares the page count
+/// with `\@abspage@last` this way: a count a loop had widened became 2^30 and was written
+/// to the `.aux` as that, a build run after the other.
+#[test]
+fn an_arm_taken_by_assumption_learns_no_value() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\newcount\n
+\AddToHook{shipout/before}{\ifnum\n=3 \fi}
+\begin{document}
+\n=\pdfuniformdeviate 5 x\clearpage
+\xdef\after{\the\n}
+\end{document}",
+    );
+    for n in 0..5 {
+        let n = n.to_string();
+        assert!(covers(&analysis, "after", &n), "\\after is {:?}, which leaves out {n}", last_body(&analysis, "after"));
+    }
+}
+
+/// tex.web § 1026: what an output routine leaves on its list goes before the
+/// contributions, and the page builder goes on over it, so a forced penalty there
+/// fires `\output` again. LaTeX's `\@doclearpage` leaves `\vbox{}\clearpage` in the
+/// second column, and that ships the page. It never fired: page 1 and no page
+/// shipped after `\clearpage`, where pdflatex has 2 and 1 (2 and 2 at the end).
+#[test]
+fn a_forced_break_the_output_routine_leaves_fires_it_again() {
+    if !crate::support::kernel_has("\\AddToHook") {
+        return;
+    }
+    for (class, after) in [("[twocolumn]", "2/1"), ("", "2/1")] {
+        let source = format!(
+            r"\documentclass{class}{{article}}
+\AddToHook{{enddocument/afterlastpage}}{{\xdef\last{{\the\count0/\the\ReadonlyShipoutCounter}}\typeout{{LAST \last}}}}
+\begin{{document}}
+x
+\clearpage
+\xdef\after{{\the\count0/\the\ReadonlyShipoutCounter}}
+y
+\end{{document}}"
+        );
+        let analysis = document(&source);
+        // Older kernels step `\count0` once more before the hook: TeX Live 2022 gives 3/2.
+        let last = crate::support::engine_typeout(&source, "LAST", "2/2");
+        for (name, pages) in [("after", after), ("last", last.as_str())] {
+            assert!(
+                covers(&analysis, name, pages),
+                "{class} \\{name} is {:?}, pdflatex gives {pages}",
+                last_body(&analysis, name)
+            );
+        }
+    }
+}
+
 /// tex.web §§ 1056, 1060: a rule, glue or kern in vertical mode only joins
 /// the contribution list. `build_page` runs after a box, a penalty or a
 /// paragraph, so `\pagetotal` right after `\hrule` is still the page before
@@ -1248,6 +1393,24 @@ fn a_brace_inserted_where_a_scantokens_file_ends_is_read_on() {
     assert_eq!(body(&analysis, "R"), "O");
 }
 
+/// e-TeX `\scantokens` of text satex does not know (`\pdftexbanner` is the
+/// engine's own): it reads back as unknown text, as from a file the run
+/// wrote, and the known text around it is read as written. Pinned: the
+/// unknown-text token's own name was printed and read back as letters, so the
+/// delimited macro after it "did not match its definition" (hyperxmp's
+/// `\hyxmp@remove@this`: a false certain error in every acmart document).
+#[test]
+fn scantokens_of_unknown_text_reads_it_back_as_unknown_text() {
+    let analysis = analyze(
+        r"\def\rem This is #1\relax{\gdef\R{[#1]}}\def\btp#1{{\scantokens{\rem#1\relax}}}
+\expandafter\btp\expandafter{\pdftexbanner}\def\S{end}",
+    );
+    assert_eq!(crate::support::broken_gaps(&analysis), Vec::<String>::new());
+    assert!(!crate::support::codes(&analysis).iter().any(|c| c == "raised-error"));
+    assert_eq!(body(&analysis, "S"), "end");
+    assert!(crate::support::maybe_defined(&analysis, "R") || crate::support::defined(&analysis, "R"));
+}
+
 /// pdftex.web `\pdfprimitive`: for a primitive that does not expand, its
 /// expansion is a frozen `\pdfprimitive` followed by the token read, so
 /// `\string` prints `\pdfprimitive` and `\relax` stays. `pdftex`: `\R` is
@@ -1256,4 +1419,87 @@ fn a_brace_inserted_where_a_scantokens_file_ends_is_read_on() {
 fn a_frozen_pdfprimitive_prints_as_pdfprimitive() {
     let analysis = analyze(r"\xdef\R{\expandafter\string\pdfprimitive\relax}");
     assert_eq!(body(&analysis, "R"), r"\pdfprimitive\relax ");
+}
+
+/// pdftex.web `\pdfprimitive`: the frozen `\pdfprimitive` its expansion
+/// puts back makes the next token the primitive, once. `pdftex`: `\R` is
+/// `3.0pt`. Pinned: the frozen copy froze its token again, a loop without
+/// end (memoize ships its externs with `\pdf@primitive\shipout`).
+#[test]
+fn a_primitive_behind_pdfprimitive_runs_once() {
+    let analysis = analyze(r"\setbox0\hbox{\pdfprimitive\kern3pt}\xdef\R{\the\wd0}");
+    assert_eq!(body(&analysis, "R"), "3.0pt");
+}
+
+/// memoize's extern loop in plain TeX (memoize.sty `\mmz@shipout@externs`):
+/// `\lastbox` takes each box back until `\lastskip` sees the skip under
+/// them, and each is shipped with `\pdfprimitive\shipout`. Pinned: the
+/// shipout never ran, the run looped until limits.memory stopped it.
+#[test]
+fn a_lastbox_loop_shipping_through_pdfprimitive_ends() {
+    let analysis = analyze(
+        r"\setbox1\hbox{x}\setbox2\vbox{\copy1}
+\setbox3\vbox{\vskip1pt \unvbox2
+  \def\next{\ifdim0pt=\lastskip \setbox4\lastbox \pdfprimitive\shipout\box4 \expandafter\next\fi}\next}
+\gdef\R{end}",
+    );
+    assert_eq!(body(&analysis, "R"), "end");
+}
+
+/// web2c's `scan_file_name_braced`: a braced file name expands as `\edef` does, so
+/// `\openout1{\jobname.zz}` writes `<job>.zz`. Pinned: the primitive `\jobname` stayed
+/// unexpanded in the name, so the build never read memoize's `.mmz` (opened that way) again.
+#[test]
+fn a_braced_file_name_expands_the_job_name() {
+    let analysis = analyze(r"\immediate\openout1{\jobname.zz}\immediate\closeout1 \xdef\R{\jobname.zz}");
+    let name = body(&analysis, "R");
+    let written: Vec<_> = analysis.written.iter().map(|(n, _)| n.as_str()).collect();
+    assert!(written.contains(&name.as_str()), "{name} not in {written:?}");
+}
+
+/// The texts the last `\name` stands for, for messages.
+fn texts(analysis: &Analysis, name: &str) -> Vec<String> {
+    crate::support::last_definition(analysis, name).map_or_else(Vec::new, |d| crate::support::site_bodies(analysis, d))
+}
+
+/// l3fp parses `1/x` in a tower of nested value scans whose arms do not join, so
+/// each scan reruns its enclosing one per arm. `pdftex` over random seeds: `\Ra`
+/// is `-1`, `1`, or (x = 0) an error and a long number. Pinned: a nested scan whose
+/// last rerun was refuted left that run's "infeasible" on the path it went on with,
+/// so the enclosing run of the other sign counted as refuted and was dropped
+/// unmarked: `\Ra` was exactly `-1`.
+#[test]
+fn an_fp_quotient_over_an_unknown_sign_keeps_both_signs() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\int_set:Nn\l_tmpa_int{\int_rand:nn{-1}{1}}\xdef\Ra{\fp_eval:n{1/\l_tmpa_int}}
+\ExplSyntaxOff
+\begin{document}\Ra\end{document}",
+    );
+    let texts = texts(&analysis, "Ra");
+    assert!(covers(&analysis, "Ra", "-1") && covers(&analysis, "Ra", "1"), "{texts:?}");
+}
+
+/// The same tower over an integer of one sign. `pdftex`: `\Ra` is `1` or `0.5`.
+/// Open: the cut of a scan the tower re-enters past `limits.loop_entries` reads one
+/// unknown token into l3fp's parser, a delimited argument runs past the body's `}`,
+/// and `\Ra` is exactly `\par`.
+#[test]
+fn an_fp_quotient_over_an_unknown_positive_integer_covers_its_values() {
+    if !installed() {
+        return;
+    }
+    let analysis = document(
+        r"\documentclass{article}
+\ExplSyntaxOn
+\int_set:Nn\l_tmpa_int{\int_rand:nn{1}{2}}\xdef\Ra{\fp_eval:n{1/\l_tmpa_int}}
+\ExplSyntaxOff
+\begin{document}\Ra\end{document}",
+    );
+    let texts = texts(&analysis, "Ra");
+    assert!(covers(&analysis, "Ra", "1") && covers(&analysis, "Ra", "0.5"), "{texts:?}");
 }

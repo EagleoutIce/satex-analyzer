@@ -17,6 +17,7 @@
 - [exports](#exports): the names installed packages define, each with the package or library to load (since 0.2.5)
 - [files](#files): every file read, in the order it was opened (since 0.1.0)
 - [gaps](#gaps): constructs the run could not interpret, grouped by cause (since 0.1.0)
+- [letters](#letters): where a punctuation character becomes a letter or stops being one: what names are typeable where (since 0.2.6)
 - [occurrences](#occurrences): package banners, passed options and other one-off events (since 0.1.0)
 - [options](#options): the keys an environment or command's optional argument accepts (since 0.1.0)
 - [pgfkeys](#pgfkeys): pgfkeys defined at the end of the run and what each does (since 0.1.0)
@@ -98,7 +99,7 @@ variable-definition  \pkgcls@targetdate                                         
 use                  @                                                             paper.tex  @ paper.tex:1:1
 use                  11pt                                                          paper.tex  @ paper.tex:1:1
 macro-call           \value                                                        paper.tex  @ paper.tex:0:0
-… 527 more lines omitted
+… 530 more lines omitted
 ```
 
 ## diagnostics
@@ -107,13 +108,12 @@ Everything SaTeX noticed while interpreting the document: widened conditionals, 
 
 ```text
 $ satex query diagnostics -f samples/paper.tex
-severity    code                      count  message                  file            
-assumption  digits-read-as-one-token  3      a number of unknown di…  expl3-code.tex  @ expl3-code.tex:12611:48
-assumption  page-one-arm              2      an undecided choice wh…  latex.ltx       @ latex.ltx:21194:8
-assumption  page-one-arm              2      an undecided choice wh…  latex.ltx       @ latex.ltx:9338:7
-assumption  forced-page-breaks        1      the page may fill here…  paper.tex       @ paper.tex:58:9
-assumption  page-one-arm              1      an undecided choice wh…  latex.ltx       @ latex.ltx:20715:3
-… 1 more line omitted
+severity    code                count  message                         file            
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:9350:12
+assumption  forced-page-breaks  1      the page may fill here, and p…  paper.tex       @ paper.tex:82:15
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20715:3
+assumption  page-one-arm        1      an undecided choice while a p…  latex.ltx       @ latex.ltx:20717:7
+assumption  clock-assumed       1      the document is assumed to be…  expl3-code.tex  @ expl3-code.tex:8203:38
 ```
 
 ## distribution
@@ -158,7 +158,7 @@ id   kind     file
 2    input    texsys.cfg                                
 3    input    texsys.aux                                
 4    input    expl3.ltx                                 
-… 295 more lines omitted
+… 307 more lines omitted
 ```
 
 ## gaps
@@ -170,6 +170,10 @@ $ satex query gaps -f doc/src/wiki/challenges/06-unknown.tex
 severity     code                    count  message                        file            
 unsupported  unbalanced-conditional  1      end of 06-unknown.tex occurr…  06-unknown.tex  @ 06-unknown.tex:0:0
 ```
+
+## letters
+
+Where a punctuation character becomes a letter (catcode 11) or stops being one, per file of the project, at the user's line that caused it (`\makeatletter`, `\ExplSyntaxOn`). Line 0 holds the letters a file opened with (`@` in a package). Replayed up to a place, the records give the characters a command's name may hold there. Completion uses them to end the name typed (after `\sum_` in a body none is typed) and to offer only names typeable there, and the playground's editor colors command names by them.
 
 ## occurrences
 
@@ -295,6 +299,7 @@ $ satex explain '\itshape'
 ## project
 
 The document class, engine, and build configuration SaTeX detected or was told to assume (see [profiles](configuration.md#profiles)).
+The first row's `kernel` is the LaTeX kernel's release the run read (`\fmtversion`). The playground's writers use it (`\mathcolor` from 2022-06).
 
 The rows below list what the project scan found, without what `.gitignore` excludes.
 `unreachable` lists the inputs, packages, classes and bibliographies no root reads.
@@ -377,7 +382,7 @@ index  step    name         detail                        file
 | `paired` | the names a join kept paired across its arms, and how many arms |
 | `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
 
-A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+A `value` names its type in the [`Ty` lattice](domains.md#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
 ## exports
 
@@ -385,11 +390,11 @@ The names the installed packages define, read off their text, each with the file
 
 ## tagging
 
-PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX. Nothing without `\DocumentMetadata`. The tagging lints read the same facts.
+PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. `running` is the tagging code's own answer at `\begin{document}` (`\tag_if_active:TF`), which `\tagpdfsetup` can turn against the declaration. `modules` are the tagging code's files the run read, `marked` the marked-content sequences it wrote by tag (pdfTeX). Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX: `unlisted` where the list has no entry. Without `\DocumentMetadata` only these statuses: what turning tagging on would meet. An installation without the list gives none. The tagging lints read the same facts.
 
 ## type-plugins
 
-The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
+The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](type-plugins.md) for what each does.
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
@@ -399,12 +404,12 @@ widget       environment      environment name                            change
 widget       table            environment the run met                     a grid dialog for each tabular, booktabs an…  
 widget       image            graphic file                                a crop, rotate and size dialog for each fig…  
 widget       float            environment the run met                     a float's placement: what each letter lets …  
-… 20 more lines omitted
+… 22 more lines omitted
 ```
 
 ## typeset
 
-The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](challenges.md) compare it with what pdflatex sets.
 
 ```text
 $ satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex
@@ -562,23 +567,19 @@ Each answer is `{"type": …, "records": […]}`, or `{"type": …, "error": …
 $ satex query --request doc/src/wiki/request-example.json
 [
   {
-    "hints": [],
-    "records": [
-      {
-        "arguments": [
-          "⟨arg1⟩ the text to box"
-        ],
-        "arity": 1,
-        "body": "\\fbox {#1}",
-        "by": "\\newcommand",
-        "certain": true,
-        "col": 13,
-        "comment": "Draws a frame around its argument.",
-        "context": "outside environments",
-        "effective": "\\mybox{1}",
-        "file": "mypackage.sty",
-        "line": 21,
-        "name": "\\mybox",
-        "package": null,
-… 28 more lines omitted
+    "hints": [
+      "`\\mybox` has no meaning the run gave it"
+    ],
+    "records": [],
+    "type": "explain"
+  },
+  {
+    "records": [],
+    "type": "controls"
+  },
+  {
+    "records": [],
+    "type": "options"
+  }
+]
 ```

@@ -78,7 +78,11 @@ const FLAG: u64 = 852156;
 const NOTEBOOK: u64 = 3669404;
 const OVERFULL: u64 = 2287795;
 // 2026-11-17: calls that pop or peek the parser stacks no longer summarize (unsound), +31% steps
-const PGFMATH_TYPED: u64 = 1740671;
+// 2026-11-22: a typed rest that may be empty is read a token per argument, never whole (sound),
+// so pgfmath's digit walks take a pass per digit. Target 1_740_671.
+const PGFMATH_TYPED: u64 = 2_830_219;
+/// Measured 2026-11-24 on TeX Live 2025 (2022: 657k, 2019: 132k).
+const PGFMATH_LOOP: u64 = 1_104_426;
 const GRAPHIC: u64 = 1181589;
 const REGEX_SCAN: u64 = 10924212;
 
@@ -101,10 +105,30 @@ fn kernel_build() {
     within("kernel", format.steps, KERNEL);
 }
 
+/// A list the run no longer records (`limits.list_items` reached) has no exact lines or
+/// sizes from there on. That loss was silent: nothing named the setting, so a very large
+/// document quietly lost detail in its later part. The finding names it.
+#[test]
+fn recorded_lists_past_their_limit_are_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\nSome words of a paragraph, enough of them to record.\n\\end{document}\n";
+    let named = |cfg: &satex::project::config::Config| {
+        let analysis = Machine::analyze_once(source, None, cfg);
+        analysis.facts.diagnostics.iter().any(|d| d.code == "limit-reached" && d.message.contains("limits.list_items"))
+    };
+    let mut cfg = crate::support::config();
+    assert!(!named(&cfg), "the default limit was reached by one paragraph");
+    cfg.limits.list_items = 8;
+    assert!(named(&cfg), "the reached limit was not named");
+}
+
 // termination: a kernel build is bounded by `limits.seconds` too.
 #[test]
 fn a_kernel_build_over_the_seconds_limit_stops_with_the_limit_named() {
-    if !crate::support::installed() {
+    // A kernel without expl3 (before 2020-02) is built well within the smallest limit, one second.
+    if !crate::support::installed() || !crate::support::kernel_has("\\ExplSyntaxOn") {
         return;
     }
     let dir = fresh("kernel-seconds");
@@ -190,6 +214,23 @@ fn pgfmath_parse_of_typed_numbers() {
     }
 }
 
+/// Intuition: a `\pgfmathparse` met again in a loop, whose run forks on an unknown
+/// number, applies what its earlier runs left (`call-learned-effect`) instead of
+/// parsing again. Bug: the runs never taught their effect, since the `rand` run wrote
+/// the seed and the forked run left `\pgfmathresult` vague. TeX Live 2022's parser then
+/// joined paths at different parser states: 506M tokens for two passes.
+#[test]
+fn a_parse_in_a_loop_learns_its_effect() {
+    let analysis = budget(
+        "pgfmath-loop",
+        "\\documentclass{article}\\usepackage{pgfmath}\\newcount\\k\\loop\\pgfmathparse{rand}\\pgfmathparse{\\pdfuniformdeviate 1000 + 1}\\advance\\k1 \\ifnum\\k<2 \\repeat\\begin{document}x\\end{document}",
+        PGFMATH_LOOP,
+    );
+    if let Some(analysis) = analysis {
+        without("pgfmath-loop", &analysis, &["limit-reached", "repeated-failure"]);
+    }
+}
+
 /// The steps a warm run runs: the second of two in one cache directory,
 /// less what the package caches replayed.
 fn warm_steps(name: &str, source: &str) -> Option<u64> {
@@ -245,7 +286,8 @@ const WARM_TESTPHASE_LOADING: u64 = 4_620_000;
 /// Cold and warm must find the same.
 #[test]
 fn testphase_latest_loads_from_cache_warm() {
-    if !crate::support::installed() {
+    // TeX Live 2022 has no `testphase=latest` ("LaTeX-lab package 'latest' not found"), 2019 no `\DocumentMetadata`.
+    if !crate::support::installed_file_has("latex-lab-testphase-latest.sty", "") {
         return;
     }
     let source = "\\DocumentMetadata{testphase=latest,lang=en}\n\\documentclass{article}\n\\begin{document}\nx\n\\end{document}\n";
@@ -331,6 +373,67 @@ fn a_growing_document_stays_under_its_memory_limit() {
         .expect("a peak in --stats");
     // Resident memory: the limit and a half, and the binary itself.
     assert!(peak << 20 <= LIMIT * 3 / 2 + (48 << 20), "peak {peak} MiB past a 64M limit");
+}
+
+/// A build's second run holds about what its first held, not both. The first run makes many
+/// definitions and writes an `.aux` the second reads on its first line, so the second runs it
+/// all again. Pins the build keeping run 1 three times while run 2 ran: its analysis (the
+/// fallback report), its end and its last checkpoint (to meet it again), all sharing its tables.
+/// On a thesis run 1's 4 GB stayed under run 2, which then stopped at the 8 GiB limit.
+#[test]
+fn a_build_run_holds_no_earlier_run() {
+    let dir = fresh("memory-build");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\
+        \\openin1=\\jobname.aux \\ifeof1 \\else\\closein1 \\input \\jobname.aux \\fi\n\
+        \\def\\l{\\advance\\count1 1 \\expandafter\\def\\csname m\\the\\count1\\endcsname{x}\\ifnum\\count1<300000 \\expandafter\\l\\fi}\\l\n\
+        \\immediate\\openout2=\\jobname.aux \\immediate\\write2{\\relax}\\immediate\\closeout2\n";
+    std::fs::write(dir.join("doc.tex"), source).expect("write document");
+    let peak = |runs: &str| {
+        let output = crate::support::satex()
+            .args(["lint", "--no-config", "--stats", "-v", "-f", "doc.tex"])
+            .args(["--set", "load.format=false", "--set", "limits.seconds=0", "--set", "cache.document=false"])
+            .args(["--set", &format!("limits.build_runs={runs}")])
+            .current_dir(&dir)
+            .output()
+            .expect("satex runs");
+        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+        let peak: u64 = stderr
+            .split_whitespace()
+            .zip(stderr.split_whitespace().skip(1))
+            .find_map(|(n, unit)| (unit == "MiB").then(|| n.parse().ok()).flatten())
+            .expect("a peak in --stats");
+        (peak, stderr)
+    };
+    let (one, _) = peak("1");
+    let (two, stderr) = peak("2");
+    assert!(stderr.contains("build run 2 took"), "no second run: {stderr}");
+    // One run, its encoded report and the allocator's slack: 1.5 times, both runs held 2.3 times.
+    assert!(two * 5 <= one * 9, "two runs peak at {two} MiB, one at {one} MiB");
+}
+
+/// A build whose second run a budget stops reports its first run, now kept encoded beside the
+/// second ([`a_build_run_holds_no_earlier_run`]): run 1 defines `\First`; run 2 reads the `.aux`
+/// that run 1 wrote and loops past `limits.steps`. The report is run 1's, decoded whole, and
+/// says that run 2 was stopped.
+#[test]
+fn a_build_stopped_in_its_second_run_reports_its_first() {
+    let dir = fresh("build-fallback");
+    let source = "\\catcode`\\{=1 \\catcode`\\}=2 \\catcode`\\#=6\n\
+        \\openin1=\\jobname.aux \\ifeof1 \\def\\First{}\\else\\closein1 \\input \\jobname.aux \\fi\n\
+        \\ifx\\again\\undefined\\else\\def\\l{\\advance\\count1 1 \\ifnum\\count1<100000000 \\expandafter\\l\\fi}\\l\\fi\n\
+        \\immediate\\openout2=\\jobname.aux \\immediate\\write2{\\def\\noexpand\\again{}}\\immediate\\closeout2\n";
+    let main = dir.join("doc.tex");
+    std::fs::write(&main, source).expect("write document");
+    let mut cfg = satex::project::config::Config {
+        cache: Cache { dir: Some(dir.clone()), document: false, ..Default::default() },
+        load: Load { format: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    (cfg.limits.steps, cfg.limits.seconds) = (1_000_000, 0);
+    let analysis = Machine::analyze_build(source, Some(&main), &cfg);
+    assert!(crate::support::defined(&analysis, "First"), "the report is not run 1's");
+    let said = |d: &satex::analysis::facts::Diagnostic| d.code == "budget-exhausted" && d.message.contains("run 2");
+    assert!(analysis.facts.diagnostics.iter().any(said), "run 2 was not stopped: {:?}", analysis.limits);
 }
 
 /// A document that only makes small things (a name and a one-token body

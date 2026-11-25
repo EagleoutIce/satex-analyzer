@@ -38,8 +38,9 @@ fn bounded(mut cfg: Config) -> Config {
         satex::project::config::Clock::At(time::OffsetDateTime::from_unix_timestamp(1_767_268_800).expect("a date"));
     cfg.limits.steps = 300_000_000;
     // Counted for the whole test process (tests/it/main.rs): the run stops
-    // itself at 4 GiB, and an allocation past 6 GiB aborts the process, so
-    // the test cgroup (10 GB) never has to kill it.
+    // itself at 4 GiB at its next token, and what one step takes past that
+    // is bounded (one block, then half the limit: `Counter::admit`), so the
+    // test cgroup never has to kill it.
     cfg.limits.memory = bytesize::ByteSize::gib(4);
     satex::analysis::budget::set_limit(cfg.limits.memory.as_u64());
     cfg.limits.facts = 1_000_000;
@@ -52,6 +53,170 @@ fn bounded(mut cfg: Config) -> Config {
 /// is `false`.
 pub fn installed() -> bool {
     satex::project::paths::which("kpsewhich").is_ok()
+}
+
+/// Whether the installation's `file` (found by `kpsewhich`) contains `text`
+/// (exists, for an empty `text`):
+/// a test of a feature newer than some installations (`\NeedsDocumentMetadata`
+/// in `latex.ltx`) skips itself where the feature is not there.
+pub fn installed_file_has(file: &str, text: &str) -> bool {
+    let Ok(out) = std::process::Command::new("kpsewhich").arg(file).output() else { return false };
+    let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    !path.is_empty()
+        && std::fs::read(path).is_ok_and(|b| text.is_empty() || b.windows(text.len()).any(|w| w == text.as_bytes()))
+}
+
+/// Whether the installed kernel's `latex.ltx` names `cs`: TeX Live 2019's has no
+/// hooks (`\AddToHook`), no `\NewDocumentCommand` and loads no expl3 (`\ExplSyntaxOn`).
+pub fn kernel_has(cs: &str) -> bool {
+    installed_file_has("latex.ltx", cs)
+}
+
+/// Whether `\DocumentMetadata` has the key `tagging=on`: TeX Live 2022's
+/// latex-lab tags only with `testphase=tagpdf`.
+pub fn tagging_installed() -> bool {
+    installed() && installed_file_has("documentmetadata-support.ltx", "tagging / on")
+}
+
+/// The lines `pdflatex -file-line-error` names for errors in `source`'s own
+/// text, sorted, once each; `None` without `pdflatex`. For an expectation that
+/// is whatever the installed kernel does.
+pub fn pdflatex_error_lines(source: &str) -> Option<Vec<u32>> {
+    let pdflatex = satex::project::paths::which("pdflatex").ok()?;
+    let hash = source.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    let dir = scratch_dir(tmp_root().join(format!("pdflatex-{hash:x}")));
+    std::fs::write(dir.join("main.tex"), source).ok()?;
+    std::process::Command::new(pdflatex)
+        .args(["-interaction=nonstopmode", "-file-line-error", "main.tex"])
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    let log = std::fs::read_to_string(dir.join("main.log")).ok()?;
+    let mut lines: Vec<u32> =
+        log.lines().filter_map(|l| l.strip_prefix("./main.tex:")?.split(':').next()?.parse().ok()).collect();
+    lines.sort_unstable();
+    lines.dedup();
+    Some(lines)
+}
+
+/// Whether `tool` with `args` exits successfully in `dir`: an installed tool its
+/// runtime no longer runs (TeX Live 2022's arara on Java 21) counts as absent.
+pub fn tool_runs(tool: &str, args: &[&str], dir: &Path) -> bool {
+    std::process::Command::new(tool).args(args).current_dir(dir).output().is_ok_and(|o| o.status.success())
+}
+
+/// The line pdflatex prints after `\typeout{<tag> …}` in `source`, `<tag> ` cut off, or
+/// `fallback` without pdflatex. An expectation the kernel decides (what `\newcommand`
+/// makes, which page a hook sees) is read off the installed engine, not one release.
+pub fn engine_typeout(source: &str, tag: &str, fallback: &str) -> String {
+    engine_typeout_with(source, tag, fallback, &[])
+}
+
+/// Whether the installed pdflatex runs `source` without an error (`true` without pdflatex):
+/// what an older class rejects (TeX Live 2022's KOMA on an unexpandable option) checks nothing there.
+pub fn engine_accepts(source: &str) -> bool {
+    engine_said(source).is_none_or(|said| !said.lines().any(|l| l.starts_with("! ")))
+}
+
+/// Whether the installed pdflatex prints `text` on `source` (`true` without pdflatex): an
+/// error only some kernels raise is expected where the engine raises it.
+pub fn engine_says(source: &str, text: &str) -> bool {
+    engine_said(source).is_none_or(|said| said.contains(text))
+}
+
+/// What plain `engine` (`xetex`) makes `\out` after running `source`, its meaning's body
+/// as `\meaning` prints it; `None` without the engine. Font data differ between TeX
+/// Live releases, so a font query is checked against the installed engine.
+pub fn engine_out(engine: &str, source: &str) -> Option<String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    let binary = satex::project::paths::which(engine).ok()?;
+    let dir = scratch_dir(tmp_root().join(format!("engine-out-{}", RUN.fetch_add(1, Ordering::Relaxed))));
+    let text = format!("{source}\n\\immediate\\write-1{{OUT=\\expandafter\\strip@\\meaning\\out}}\\end\n");
+    let text = format!("\\catcode`\\@=11 \\def\\strip@#1->{{}}{text}");
+    std::fs::write(dir.join("t.tex"), text).ok()?;
+    std::process::Command::new(binary)
+        .args(["-interaction=batchmode", "t.tex"])
+        .env("max_print_line", "100000")
+        .current_dir(&dir)
+        .output()
+        .ok()?;
+    let log = std::fs::read_to_string(dir.join("t.log")).ok()?;
+    log.lines().find_map(|l| l.strip_prefix("OUT=").map(str::to_string))
+}
+
+/// What pdflatex prints on `source`, run in a scratch directory; `None` without pdflatex.
+fn engine_said(source: &str) -> Option<String> {
+    engine_said_with(source, &[])
+}
+
+/// [`engine_typeout`] with pdflatex given `flags` too (`-no-shell-escape`).
+pub fn engine_typeout_with(source: &str, tag: &str, fallback: &str, flags: &[&str]) -> String {
+    engine_typeouts(source, &[(tag, fallback)], flags).remove(0)
+}
+
+/// [`engine_typeout_with`] for several `(tag, fallback)` pairs, from one pdflatex run.
+pub fn engine_typeouts(source: &str, tags: &[(&str, &str)], flags: &[&str]) -> Vec<String> {
+    let said = engine_said_with(source, flags);
+    let line = |said: &str, tag: &str| {
+        let line = said.lines().find_map(|l| l.strip_prefix(tag)?.strip_prefix(' ').map(str::to_string));
+        line.unwrap_or_else(|| panic!("pdflatex printed no `{tag}` line:\n{said}"))
+    };
+    tags.iter().map(|(tag, fallback)| said.as_deref().map_or_else(|| fallback.to_string(), |s| line(s, tag))).collect()
+}
+
+fn engine_said_with(source: &str, flags: &[&str]) -> Option<String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    satex::project::paths::which("pdflatex").ok()?;
+    let dir = scratch_dir(tmp_root().join(format!("engine-typeout-{}", RUN.fetch_add(1, Ordering::Relaxed))));
+    std::fs::write(dir.join("t.tex"), source).expect("the engine's input");
+    let out = std::process::Command::new("pdflatex")
+        .args(flags)
+        .args(["-interaction=nonstopmode", "t.tex"])
+        .env("max_print_line", "100000")
+        .current_dir(&dir)
+        .output()
+        .expect("pdflatex runs");
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Whether the installed LaTeX defines the expl3 function `name` (`tl_set:Ne`) after
+/// `\documentclass{article}`: TeX Live 2022's expl3 has no `e` variants of most setters.
+/// Without pdflatex it is taken as defined, so the test runs.
+pub fn engine_defines(name: &str) -> bool {
+    let source = format!(
+        "\\documentclass{{article}}\\typeout{{HAS \\ifcsname {name}\\endcsname yes\\else no\\fi}}\\begin{{document}}\\end{{document}}"
+    );
+    engine_typeout(&source, "HAS", "yes") == "yes"
+}
+
+/// Whether `kpsewhich`, run in `dir`, finds every class and package `source` loads
+/// by `\documentclass`, `\usepackage` or `\RequirePackage`: a fixture written for a
+/// package an older TeX Live does not ship yet (memoize before 2023) has nothing to check.
+/// Nor has one calling `\NewDocumentEnvironment` or the like without xparse where
+/// the kernel lacks it (TeX Live 2019).
+pub fn ships_what_it_loads(dir: &Path, source: &str) -> bool {
+    let mut files = Vec::new();
+    for (call, ext) in [("\\documentclass", "cls"), ("\\usepackage", "sty"), ("\\RequirePackage", "sty")] {
+        for rest in source.split(call).skip(1) {
+            let rest = rest.trim_start();
+            let rest = match rest.strip_prefix('[') {
+                Some(r) => r.split_once(']').map_or("", |(_, r)| r).trim_start(),
+                None => rest,
+            };
+            let Some(names) = rest.strip_prefix('{').and_then(|r| r.split_once('}')).map(|(n, _)| n) else { continue };
+            let plain = |n: &&str| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c));
+            files.extend(names.split(',').map(str::trim).filter(plain).map(|n| format!("{n}.{ext}")));
+        }
+    }
+    let xparse = ["New", "Renew", "Provide", "Declare"].iter().any(|c| source.contains(&format!("\\{c}Document")));
+    if xparse && !files.iter().any(|f| f == "xparse.sty") && !kernel_has("\\NewDocumentCommand") {
+        return false;
+    }
+    files.iter().all(|f| {
+        std::process::Command::new("kpsewhich").arg(f).current_dir(dir).output().is_ok_and(|o| o.status.success())
+    })
 }
 
 /// `config()` with package, class, input and format loading all off, and
@@ -118,6 +283,44 @@ pub fn satex() -> std::process::Command {
     command
 }
 
+/// Whether the installed `luatex` has the primitive `name`, asked with `\ifcsname` in an
+/// INITEX run with LuaTeX's extra primitives enabled; `true` without the binary. TeX Live
+/// 2019's LuaTeX has no `\mathdefaultsmode`.
+pub fn luatex_has(name: &str) -> bool {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static RUN: AtomicUsize = AtomicUsize::new(0);
+    if satex::project::paths::which("luatex").is_err() {
+        return true;
+    }
+    let dir = scratch_dir(tmp_root().join(format!("luatex-has-{}", RUN.fetch_add(1, Ordering::Relaxed))));
+    let probe = format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 \\directlua{{tex.enableprimitives('',tex.extraprimitives())}}\
+         \\immediate\\write16{{HAS \\ifcsname {name}\\endcsname yes\\else no\\fi}}\\end\n"
+    );
+    std::fs::write(dir.join("probe.tex"), probe).expect("the probe");
+    let out = std::process::Command::new("luatex")
+        .args(["-ini", "-interaction=batchmode", "probe.tex"])
+        .current_dir(&dir)
+        .output()
+        .expect("luatex runs");
+    let log = std::fs::read_to_string(dir.join("probe.log")).unwrap_or_default();
+    let said = format!("{}{log}", String::from_utf8_lossy(&out.stdout));
+    !said.contains("HAS no")
+}
+
+/// Builds the pdfLaTeX kernel and article caches of [`test_cache`] once per process, with no time
+/// limit. A child run under a short `limits.seconds` (shorter than an older TeX Live's kernel
+/// build) is cut before it stores the kernel, so every child would build it again and be cut.
+pub fn warm_suite_kernel() {
+    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    DONE.get_or_init(|| {
+        let dir = scratch_dir(tmp_root().join("warm-suite-kernel"));
+        std::fs::write(dir.join("main.tex"), "\\documentclass{article}\n\\begin{document}x\\end{document}\n")
+            .expect("the warming document");
+        let _ = satex().args(["lint", "-f", "main.tex", "--set", "limits.seconds=0"]).current_dir(&dir).output();
+    });
+}
+
 /// Appends `label steps` to the file named by `SATEX_STEPS_LOG` (set by
 /// scripts/ci-test.sh), which scripts/regress.sh compares with tests/steps-baseline.txt.
 pub fn record_steps(label: &str, steps: u64) {
@@ -143,7 +346,10 @@ pub fn seed_kernel(cfg: &Config) {
     static BUILT: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
     let dir = cfg.cache.dir.clone().expect("a cache directory to seed");
     let shared = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target/scratch/test-kernel");
-    let key = format!("{:?}", (cfg.engine, &cfg.load, &cfg.kernel, &cfg.texmf));
+    // the kernel cache is keyed by all that changes the interpretation, so each such config builds its own
+    let interpreted =
+        serde_json::to_string(&cfg.interpretation(&|p| p.clone(), Default::default())).unwrap_or_default();
+    let key = format!("{:?}{interpreted}", (cfg.engine, &cfg.kernel, &cfg.texmf));
     static START: std::sync::OnceLock<std::time::SystemTime> = std::sync::OnceLock::new();
     let start = *START.get_or_init(|| std::time::SystemTime::now() - std::time::Duration::from_secs(1));
     let mut used = Vec::new();

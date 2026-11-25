@@ -1,58 +1,48 @@
 # Failing tests with an open root (see ~/satex-plan.md): CI runs and reports them, a new failure fails it.
-# Two kinds, soundness first: a soundness red (a value or finding silently wrong, a real error missed)
-# blocks other work until it is fixed. A precision red is sound but coarse: too many paths or forks,
-# a run cut by a budget, a false error from over-approximation.
+# Soundness reds (a value or finding silently wrong, a real error missed) block other work. Precision reds are
+# sound but coarse (too many paths or forks, a budget cut, a false possible error). One or two comment lines per
+# entry: owner, root guess, MWE. S = target/scratch. Clean with target/scratch/reds/ledger-clean.py.
 
 # == soundness ==
 
 # == precision ==
-# Open (2026-11-20, owner: P0.1 (b) sound pruning of assumed arms, see ~/satex-plan.md): since assume_arm marks arms that guess where a delimiter lies in unknown text as approximated (sound), this tikz loop of random-width nodes no longer prunes those arms: on TeX Live 2025 it runs into the time budget (241 s warm, was 12 s at 9ebd0457), under 1 min on TeX Live 2026.
-observed::literals_around_skipped_code_have_unknown_balance
-# Open (2026-11-20, owner: one-of class round, from tagfix): a delimited argument that ends inside a one-of now parts known texts with and without the delimiter (sound, fixes false C013/C007 on tagged graphics). pgfmath's `#1.#2` scan meets one-of tokens of class `ds+` counted as "may hold `.`", so it forks on every pass (1109 vs 439 forks). Root: tighten the one-of class so sign/digit texts are known far/inside texts. Log target/scratch/round-0740/tagfix/log.md.
-documents::pgfmath_divides_learn_past_their_scratch_names
-# Open (2026-11-20, owner: fpfork / intdom round 0740): l3fp parses a typed unknown (the image's natural size \Gin@urx) per character, so only the first of several tagged graphics is recorded.
-tagging::a_graphic_is_tagged_by_its_last_mode_key
-# Open (2026-11-20, owner: luahang round 0740): tagpdf under LuaTeX: \int_to_Hex:n of \int_rand forks per digit and a \lua_now:e per namespace line keeps the paths apart; the run never ends. Lua state is shared across paths (mlua clone), limits.seconds not honored there.
-tagging::lualatex_without_unicode_math_writes_no_mathml
-# Open (2026-11-19, owner: speed; cex3 round 2): `\begin{document}` reads l3backend-pdftex.def anew every run (~25% of the line's steps). A load inside a group is cacheable since cex3 (locals replay as locals; a checkpoint needs the group's `\aftergroup` tokens and catcodes as at the start). Left: the `.def` is an `\input`, not a package; tried caching library `\input` files (cacheable_at_push by `!project_file`): 12 package_cache/incremental tests then differ cold vs cached (body-time facts a package never produces: `facts.spaces`, letters, conditionals, one graph edge). Needs those facts in the segment (or library inputs counted as package code), not landed.
-package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
-# Open (2026-11-19, owner: next box round, from sound2): `\lastbox` now takes a plain box (was void, unsound). LaTeX's mark extraction (latex.ltx `\__mark_prepare_and_extract:nn`) takes the column's last vbox (a here float) and unpacks it; a box taken from a list keeps no facts of its own (calm, last item, `vl` record), so the `\vsplit` to `\maxdimen` after it is unknown and `\box_if_empty` loops "maybe". Needs per-item box facts in the vl record (Kp::Box with box kind and its register facts).
-differential::a_here_figure_after_a_display_stays_on_its_page
-differential::a_here_figure_after_a_display_with_limits_stays_on_its_page
-differential::a_here_figure_after_a_paragraph_stays_on_its_page
-differential::the_sample_paper_breaks_its_pages_where_pdflatex_does
-# owner: quick fixes B (2026-11-19), exports index reads definitions off the text with the definers the current run saw, so url's \DeclareUrlCommand\url and siunitx's \NewDocumentCommand \SI are missed; root fix: index what each package's own run defines (by effect), then key the cache by roots only
-quick_fixes::a_command_made_by_a_package_s_own_definer_loads_its_package
-# owner: lintv (2026-11-18), facts: no Ref occurrence for a \ref in a command argument, accent occurrence in a footnote missed
-lint_contexts::prose_rules_find_their_trigger_in_footnotes
-# owner: Root L (W2), 7 paths
+# owner pgf (found by night 2026-11-22, root of the digit-walk cluster): `\csname` over a typed digit in a small interval parts a path per value (exec.rs name_step) and per name (scan_csname_chars) at every lookup, though the names hold one meaning: 40 forks for 3 lookups of a digit in 0..3, 0 for one in 0..9. Keeping such names one token (one_of_spelled) takes the ledger's signed count from 2548 to 259 forks but lets arms join earlier and lose their pairing (tikz_bend 7 s -> 58 s). Experiment + traces: S/night/p2-experiment.patch, S/night/LAND.md.
+semantics::a_name_over_a_digit_of_few_values_parts_no_more_paths_than_one_of_ten
+# owner pgf (found by cert-finish 2026-11-21): red on main without a ledger line; base and patched give the same output ({0 | ?.?}, NEG|POS). See S/cert-finish/ab.out.
+documents::rounding_math_of_an_interval_dimension_ends_bounded
+# owner pgf (Root L/W2): rounding a path at an unknown or interval dimension never ends bounded (unmerged again: one test per bug)
 documents::rounding_a_path_at_an_unknown_dimension_ends_bounded
-# owner: Root L (W2), 19 paths
 documents::rounding_a_path_at_an_interval_dimension_ends_bounded
-documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
-# owner: Root L (W2), 3869 forks against 543; also false extra-else/extra-fi at pgfmath trig 385 / pgfcorepathprocessing 263 at HEAD 5394edaf
-documents::tikz_loop_of_unknown_height_nodes_converges
-# owner: Root D (W1)
-documents::graph_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
-# owner: Root L (W2), 227 forks
+# owner pgf (Root D/L): pgfmath divisions/reciprocals of intervals fork per digit (227 / 1109 / 40 forks)
 documents::one_pgfmath_divide_of_two_intervals_stays_on_few_forks
-# owner: Root L (tail calls), 439 forks against 80 (scr: scratch outputs widen)
 documents::four_pgfmath_divides_of_two_intervals_stay_on_few_forks
-# owner: Root D (W1), 40 forks
 documents::one_pgfmath_reciprocal_of_an_interval_stays_on_few_forks
-# owner: Root T (W4), out of steps
+# owner reds (one-of class): parting a one-of at `#1.#2` by dark/far/inside (sound, tagfix) forks on every pass, 1109 forks against 439. Log S/reds/log.md.
+documents::pgfmath_divides_learn_past_their_scratch_names
+# owner lua (precision land-03, 2026-11-21): string compares of unknown text now have their three results under LuaTeX (a run per outcome), Lua stops 966 -> 95 on the document, no run is out of step. Left: luaotfload.lua:103 stops at `status.safer_option ~= 0` after it wrote, so `fonts` is missing, tagpdf.lua:119 (`fonts.hashes`) stops the module and `ltx.__tag` is never made: 61 `alloctag` runs are unknown text, garbage props and messages (9.7k forks at expl3 12205 `\__iow_wrap_do:`), limits.seconds at tagpdf.sty:1770. Next: `status` values the engine fixes (safer_option), then what luaotfload meets next; reading a tainted global as the unknown value hangs lua::luacode_environments (tried). MWE S/precision/mwe/lua, log S/precision/log.md.
+tagging::lualatex_without_unicode_math_writes_no_mathml
+# owner reds (speed): l3backend-pdftex.def is an `\input`, not a package, so no cache serves it; caching library inputs needs body-time facts in the segment (12 tests differed cold vs cached).
+package_cache::the_backend_loaded_by_begin_document_is_served_from_a_cache
+# owner pages (2026-11-21): all pages decided and the page count right. One row differs: "page 1 → 2 by here" (2026-11-22: sample renamed \\repeat to \\recurse, one page less) comes after the heading "4" instead of before it. satex reports a break where the page's length passes `\vsize` (observe::page_fill); TeX breaks at the best legal breakpoint before that (tex.web § 1005), here before the heading (`\nobreak` after it). Needs the last legal breakpoint of the main list (glue after a non-discardable item, a penalty under 10000; inside a paragraph its interline penalties). MWE target/scratch/pages/mwe/paper.
+differential::the_sample_paper_breaks_its_pages_where_pdflatex_does
+# owner pgf (Root L): 3869 forks against 543, false extra-else/extra-fi at pgfmath trig 385.
+documents::tikz_loop_of_unknown_height_nodes_converges
+# owner Root X (pgfkeys key of unknown text, 2026-11-25): both tcolorbox reds end in this gap. A later pgf node is taken for a pass of the summarized node loop at pgfmoduleshapes:963 (tail chain, explore.rs reentry), end_covered widens \tcb@split@state with Reach::Havoc to letters, skin@\csname kvtcb@skin@@…\endcsname is then a key of unknown text, pgfkeys' split loop runs out of paths, `#1/\relax` reads on past `\relax\fi` (unforked_end), \ifcsname pgfk@… meets \relax. MWE: the pgfkeys test. S/tlfix/wt-X/target/scratch/REPORT.md.
+documents::a_pgfkeys_key_of_unknown_text_keeps_its_name_whole
+documents::tcolorbox_of_unknown_height_keeps_its_anchors_local
+# owner pgf (Root D): the parser's digit rests keep forking.
+documents::graph_arrow_to_a_node_of_unknown_width_joins_its_digit_arms
+# owner Root X (see the pgfkeys test above): same 4 gaps as the anchors box, no longer out of steps.
 documents::a_breakable_blanker_box_around_a_rule_of_unknown_height_ends
-# Open (2026-11-17): unbounded typed digits stay one token in part_digits; l3fp char tests fork per arm. Splitting breaks pgfmath canaries (target/scratch/fp-work.patch, owner: next l3fp round).
-# owner: next l3fp round; warm: 1176 forks on 2026-11-19 (8775 before), bound 100
+# owner reds-fp: l3fp's 4-digit packing forks on the length of typed digits, 1176 forks, bound 100. MWE S/fp/d.tex.
 tagging::an_fp_eval_of_an_unknown_integer_stays_on_few_paths
-# Open (2026-11-17, owner p1): one node of tikz_nodes, Root A (digit-split wait in partner). p1c: forks within budget, 14 paths remain (arms of xcolor's clamps meet only at the line's end).
+# owner reds-fp (pgf-round fix C): 2.5k forks, bound 1.3k. The earlier 1.2k relied on runs wrongly taken for refuted (a nested drive's last refuted rerun left `infeasible` set): `\fp_eval:n` of the unknown integer was then the certain text `0`. Now unknown text (sound); the cost is the length forks named above. MWE S/pgf-round/m/h/t1.tex.
+tagging::an_fp_eval_of_an_unknown_integer_forks_only_on_its_length
+# owner pgf (Root A): 14 paths remain, arms of xcolor's clamps meet only at the line's end.
 termination::convergence::colorlet_of_an_unknown_pgfmath_result
-
-# Open (2026-11-18, owner: main + stall helper): calls that update a still-precise register run for real since the stack soundness fix; in the second build run (positions known from the .aux) the thirty nodes end with 27 paths waiting at \clearpage in \enddocument, past any time. Text-only refusal ends it but loses bend/divides precision. Likely the uncharged path work of explore (larsw/stall).
+# owner loophead (was pgf; crashfix 2026-11-22: no longer aborts, now slow): in the second build run thirty nodes end with 27 paths waiting at `\clearpage`, past any time; stack samples: path switching (Env::resume under loop_head) and Env::unfold -> widen_in_place.
 termination::convergence::tikz_nodes_of_unknown_width
-# owner: pgfmath dispatch widening (sgn 2026-11-18): loop summaries widen \pgfmath@parse@next to unknown (env.rs widen_slot hull), the value is sound but any number text
+# owner pgf (precision land-01, 2026-11-21): the printed fraction now keeps its dimen when read back whole (semantics::a_printed_interval_dimen_read_back_keeps_its_bound green). Left here: pgfmath's parser walks the printed digits (2.5k forks, 39 paths for one signed count), so the result is cut to any number text. MWE S/precision/mwe/c1.
 documents::pgfmath_signed_random_count_plus_a_constant_stays_in_range
-# Open (2026-11-18, owner: main, stack joins at loop heads): since call summaries keep no text of other arguments (u3gw), pgfmath's parser runs for real here and its operation stack (toks) is joined at a loop head as one-of {`{neg}…`, `…`}; a pop then takes `neg` or the empty operator (missing-number at pgfmathparser:803). stack_depth keeps such paths apart only at partner joins.
+# owner pgf: pgfmath's operation stack is joined at a loop head as a one-of, a pop takes `neg` or the empty operator (missing-number at pgfmathparser:803).
 documents::tikz_bend_to_a_point_of_unknown_width_closes_the_picture
-latex::a_name_read_under_assumed_category_codes_is_no_certain_error
-# Open (2026-11-19, owner: cex): the test needs a line-budget cut inside `\spin`, but the loop is now summarized after a few passes and never reaches the budget; a fixed 400000 instead cut `\begin{document}` (877k steps now). Needs a cut that does not come from a loop (a big non-repeating expansion) or a test hook for a line cut.

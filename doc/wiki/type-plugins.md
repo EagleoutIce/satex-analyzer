@@ -2,11 +2,11 @@
 
 # Type plugins
 
-A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: how TeX read the text, what kind of name a `\csname` built from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin without any setup.
+A type plugin adds editor features where text of a type stands. The type comes from the run, as the [type at the cursor](lsp.md#completion) finds it: how TeX read the text, what kind of name a `\csname` built from it, else the role of the argument. No plugin looks at a command's name or a text pattern. A new command that takes a color gets the color plugin with no setup. For writing one, see [Writing a type plugin](writing-type-plugins.md). The types come from the [`Ty` lattice](domains.md#argument-types-the-ty-lattice).
 
-Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` takes all its features away. <div class="plugin-tiles" data-plugin-tiles></div>
+Each plugin has a block under `type_plugins:` in `satex.yaml`, grouped there by its category: `widget` (dialogs and lenses), `hover`, `completion`, `lint`, `incremental` (whether an edit needs a new run) and `build` (the build file a project is read with, its settings under `l3build:`). `enabled: false` turns it off. Every other setting is in [configuration](configuration.md#plugins). <div class="plugin-tiles" data-plugin-tiles></div>
 
-The tiles above group the plugins by category, each with its section below and, where an example of the playground shows it, a demo. They come from `satex query type-plugins --format json`, whose records add the category's `purpose` and `places`: how many lenses, swatches and inlay hints the plugin has for the document. The list below is what it prints, by category:
+The tiles group the plugins by category. Each links to its section below and, where the playground has an example, to a demo. They come from `satex query type-plugins --format json` (see [queries](queries.md)). Its records add the category's `purpose` and `places`: how many lenses, swatches and inlay hints the plugin has for the document. The list below is its output by category:
 
 ```text
 $ satex query type-plugins -f samples/paper.tex
@@ -24,8 +24,11 @@ widget       glossary         declared key                                manage
 widget       bibliography     citation key                                a reference manager: entries filtered by ty…  
 widget       index            index entry                                 manage index terms: edit levels, sort keys,…  
 widget       theorem          environment name                            manage theorem-like environments: kinds, co…  
+widget       labels           label                                       browse every label: kind, number, caption o…  
 widget       page             environment the run met                     the page geometry to scale: margins, paper,…  
+widget       font             environment the run met                     the document's font and base size: a class …  
 widget       tagging          environment the run met                     PDF tagging: on or off, the standard, langu…  
+widget       class            environment the run met                     the class's options as its code declares th…  
 hover        units            dimen, glue, dimen register, skip register  a length in every unit, each value a click …  
 hover        overlay          overlay specification                       the slides of its frame the material shows …  
 completion   keys             options, option key, pgf key, declared key  key list completion, family continuation an…  
@@ -53,8 +56,7 @@ build        l3build                                                      the bu
 
 ## keys
 
-Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to the definition. A key written twice in one list says which value wins: keyval runs the keys in order, so the later one.
-Its view ("Edit keys…") lists the same keys. A choice writes one at the cursor.
+Key lists of pgfkeys, l3keys, kvoptions and xkeyval, and package options. Completion opens at `{`, `[`, `,` and `=` with nothing typed. A family (`/demo`) inserts `/demo/` and opens again on its keys (`family_continue`). Hover shows the key's handler kind, its initial or default value, where it was defined and the comment next to it. A key written twice in one list says which value wins: keyval runs the keys in order, so the later one. Its view ("Edit keys…") lists the same keys. A choice writes one at the cursor.
 
 ## units
 
@@ -73,7 +75,7 @@ The picker (`view`) has a saturation and brightness square, a hue strip, the spe
 - the first argument of an xcolor command (`\color`, `\textcolor`, `\colorbox`): `\color[HTML]{1F77B4}`
 - anywhere else (a TikZ key, a command without a model argument, or without xcolor): a `\definecolor{mycolor}{…}{…}` before `\begin{document}` and its name in place. Without any color package it adds `\usepackage{xcolor}` too.
 
-The server sends what it would write as snapshots: the command, the name in its place, a new `\definecolor`. The picker fills their arguments and the snapshot printer writes them.
+The server sends what it would write as snapshots: the command, the name in its place, a new `\definecolor`. The picker fills their arguments and the [snapshot printer](#the-snapshot-printer) writes them.
 
 VS Code's own color picker goes through `textDocument/colorPresentation`, which writes the same.
 
@@ -100,7 +102,7 @@ Two rewrites are code actions and buttons in the dialog:
 - booktabs: `\toprule` first, `\midrule` between, `\bottomrule` last, `\cmidrule(lr)` for `\cline`, no vertical rules
 - siunitx: a column whose cells below the header are all numbers becomes `S[table-format=I.D]`, its header cell braced.
 
-The table, image and placement dialogs write through the snapshot printer of the page dialog (below). The server reads the table as it is written, takes the dialog's text of it and writes only what differs: a changed cell, a column letter, a renamed environment (`tabular` to `tabularx` adds `{\linewidth}`). Every other byte stays. The answer's `text` is the table as written then.
+The table, image and placement dialogs write through the [snapshot printer](#the-snapshot-printer). The server reads the table as it is written, takes the dialog's text of it and writes only what differs: a changed cell, a column letter, a renamed environment (`tabular` to `tabularx` adds `{\linewidth}`). Every other byte stays. The answer's `text` is the table as written then.
 
 A command or environment the edit adds that the run does not define loads its package before `\begin{document}`, and says so. The package is the installation's provider of the name (`\toprule` loads booktabs). A column letter the run lacks is one its `\@testpach` does not test and no `\newcolumntype` made. Its package is the dialog's (the type menu's `siunitx` for `S`), else the provider of `\@testpach` (array, for `m`, `b`, `>{…}`). A package another added one loads is left out: tabularx loads array.
 
@@ -113,7 +115,7 @@ A figure is a file `\includegraphics` read. Its code lens and hover link open a 
 - `trim=l b r t` in bp with `clip`, or `viewport=llx lly urx ury` where the figure had one
 - `angle` counterclockwise
 - graphicx reads the keys in order: `angle=90,width=3cm` makes the rotated figure 3cm wide, `width=3cm,angle=90` makes it 3cm high. The dialog's *size applies to* chooses the order.
-- `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference [§§ 8](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L316), [9](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L333), [5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131)). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
+- `decodearray` for a tint, an inversion, or an array of its own. A PDF image maps each sample of a raster channel from [0, 1] to [Dmin, Dmax] (PDF reference [§§ 8](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L316), [9](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L333), [5](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L268), [2](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L131)). pdftex.def, luatex.def, xetex.def and dvipdfmx.def write it for PNG and JPEG files, and drop it for PDF and EPS figures, which are drawn, not sampled. The dialog offers it only where it applies: the run's driver defines `\Gin@decode`, and the file is a gray or RGB raster (a palette PNG would remap its indices). Grayscale cannot be written: each channel maps on its own. The preview applies the same map.
 
 *Crop to content* trims the margins of the rendered figure that look like its corners' background. Its padding may be negative, cutting into the content, as long as some is left. *Replace…* puts a new PNG, JPEG, PDF or EPS next to the figure (next to the document when the figure is the installation's) and writes its name. *Download* saves the figure's file.
 
@@ -168,16 +170,56 @@ The page geometry the run computed: `\paperwidth`, `\textwidth`, `\oddsidemargin
 
 The dialog draws the page to scale, both pages when the class is two-sided: the text block, header, footer and margin notes, each margin labelled in the chosen unit.
 
-- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes. Apply sets geometry's keys of each group that changed and drops the other keys of that group: `left=3cm, right=2cm, top=2cm, bottom=2cm`. A key already written keeps its place, its spacing and the comments around it. A paper is written by the name geometry defines for it (`\Gm@a4paper`). The paper list is geometry's, read from the run. Without geometry, or in the browser where geometry.sty is not at hand, the class's own paper options name the papers (`\ds@letterpaper` sets `\paperwidth` and `\paperheight`), and the run's size picks the one it is (21.59 x 27.94 cm is `letterpaper`). Every length field takes any TeX unit as typed (`2cm`, `1.5in`, `12pt`, `0.5\textwidth`) and shows it as written. The unit menu only sets the unit of a bare number and of the run's values. The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
+- Margins: paper, margins (inner and outer when two-sided), text size, header, footer and margin notes.
+  - Apply sets geometry's keys of each group that changed and drops the other keys of that group: `left=3cm, right=2cm, top=2cm, bottom=2cm`.
+  - A key already written keeps its place, its spacing and the comments around it.
+  - A paper is written by the name geometry defines for it (`\Gm@a4paper`).
+  - The paper list is geometry's, read from the run.
+  - Without geometry, or in the browser where geometry.sty is not at hand, the class's own paper options name the papers (`\ds@letterpaper` sets `\paperwidth` and `\paperheight`), and the run's size picks the one it is (21.59 x 27.94 cm is `letterpaper`).
+  - Every length field takes any TeX unit as typed (`2cm`, `1.5in`, `12pt`, `0.5\textwidth`) and shows it as written.
+  - The unit menu only sets the unit of a bare number and of the run's values.
+  - The keys go into the last `\geometry{…}` of the preamble, else into `\usepackage[…]{geometry}`, else a new `\usepackage` before `\begin{document}`.
 - typearea: when the run loaded it (the KOMA classes do), `DIV` and `BCOR` are the default and go into the class's options. The text keeps one stripe inside and two outside (one-sided: the rest split evenly), one above and two below. Exact margins through geometry are the other choice.
 - Part of it: from the cursor or a sectioning command up to a later one or the end, it writes `\newgeometry{…}` and `\restoregeometry`. Both start a new page. The places are in the source: their page numbers are known only by typesetting. Without geometry it adds `\usepackage[pass]{geometry}`, which keeps the layout elsewhere.
 - Class families, from the run: KOMA-Script when typearea is loaded, memoir when the run defines `\checkandfixthelayout`, else a basic class. memoir's layout is read from the run and written with geometry, which memoir accepts. Outside KOMA-Script the dialog suggests geometry: a note says that Apply loads it.
-- Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`. It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept. The new block replaces the calls it read. Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`. The view also says what the page style in force prints: `\@oddhead`, `\@evenhead`, `\@oddfoot` and `\@evenfoot`, split into left, centre and right (plain: the page number in the foot's centre, fancyhdr: its fields). With `\DocumentMetadata` it gives the tagging status of each package its edits may load (geometry, typearea, fancyhdr, scrlayer-scrpage).
+- Header and footer: the fields of the package the run loaded. fancyhdr: left, center and right, odd and even pages when two-sided, and `\headrulewidth` and `\footrulewidth`.
+  - It writes `\fancyhf{}` and one `\fancyhead[LE,RO]{…}` per text. scrlayer-scrpage: `\ihead`, `\chead`, `\ohead`, `\ifoot`, `\cfoot`, `\ofoot`, the optional `plain` text kept.
+  - The new block replaces the calls it read.
+  - Without either, "Load fancyhdr" adds it with `\pagestyle{fancy}`.
+  - The view also says what the page style in force prints: `\@oddhead`, `\@evenhead`, `\@oddfoot` and `\@evenfoot`, split into left, centre and right (plain: the page number in the foot's centre, fancyhdr: its fields).
+  - With `\DocumentMetadata` it gives the tagging status of each package its edits may load (geometry, typearea, fancyhdr, scrlayer-scrpage).
 - Page: one or two columns (`twocolumn` in the class's options) and the page color, `\pagecolor{…}` in the preamble with a color the document defines. Without a color package, "Load xcolor" adds it. In geometry's mode the binding is `bindingoffset`: the text narrows, the outer margin stays.
-- Headings: chapter to subsubsection, each with family, series, shape, size, color and alignment, and the numbering depth (`secnumdepth`). The fields come from the font the run ends with. A change rewrites only that field's command in the level's last call and keeps every other command where it was. KOMA-Script: `\addtokomafont{…}{…}` and `\renewcommand*{\raggedsection}{…}` (shared by the section levels), `\raggedchapter` for chapters. Standard classes: `\titleformat*{\section}{…}` from the class's format, which loads titlesec. A level is refused with its reason when its call does not read as commands (`#1`), when titlesec would replace the class's whole chapter head, and for memoir and classes with their own headings. A sketch in the browser's fonts shows the change before Apply.
+- Headings: chapter to subsubsection, each with family, series, shape, size, color and alignment, and the numbering depth (`secnumdepth`).
+  - The fields come from the font the run ends with.
+  - A change rewrites only that field's command in the level's last call and keeps every other command where it was.
+  - KOMA-Script: `\addtokomafont{…}{…}` and `\renewcommand*{\raggedsection}{…}` (shared by the section levels), `\raggedchapter` for chapters.
+  - Standard classes: `\titleformat*{\section}{…}` from the class's format, which loads titlesec.
+  - A level is refused with its reason when its call does not read as commands (`#1`), when titlesec would replace the class's whole chapter head, and for memoir and classes with their own headings.
+  - A sketch in the browser's fonts shows the change before Apply.
 - Style sets: the headings, numbering and page color saved under a name in the browser. Switching to one fills the dialog in, Apply writes it as one undo step. What the document cannot take is skipped and listed: a level it lacks, a command or color it does not define, a numbering depth past its levels, a second alignment for levels that share KOMA's `\raggedsection`.
 
-The dialog edits snapshots and never writes LaTeX itself. The server reads each call it shows into a snapshot: its name, its arguments, its key lists with keys and values, its text and range. The dialog changes values and adds or drops calls. Apply sends the snapshots back (`satex/dialogApply`, kind `snapshot`). One printer writes them as minimal edits. An untouched call stays as it is. A key list keeps its order and separator style, a removed key goes with its comma, and an added key follows the list's style. An empty value is written `{}`. A new call is written in one canonical form. A command the run does not define loads its package. A snapshot of text that changed since is refused.
+## class
+
+The options of the class, as its own code declares them: `\DeclareOption`, and the keys of its own keyval, xkeyval or kvoptions family, read from the run. "Class options…" is a lens on `\documentclass`. A style the project ships beside the main file (`acl.sty`, `icml2026.sty`) gets "Style options…" on its `\usepackage`.
+
+- Each declared option is a box to tick, the ones the document passes ticked. The common choices of a provider template come first (`hint` in `src/data/templates.yaml`).
+- Options with a value, or ones the class takes without declaring them, go in a key list field: `natbib=false, screen`.
+- The header line is the call as the snapshot printer writes it, updated as boxes change. Copy puts it on the clipboard: what a submission system asks for. Write writes it.
+- The view says the version the class's file gives (`\ProvidesClass{acmart}[2025/08/27 v2.16 …]`) and the file the run read.
+
+## font
+
+The document's base size and main font, as the run set them: `\f@size` and the default family (`\familydefault`). "Font and size…" is a lens on `\documentclass`, and each choice is also a code action there.
+
+- Base size: one of `sizes`, as a class option. A size option already written changes in place and keeps its form. Otherwise a KOMA-Script class (the run defines `\KOMAClassName`) gets `fontsize=`, any other class the bare option (`11pt`).
+- Font: one of `fonts`. On pdfLaTeX it is a package: the load of another offered font becomes the new one in its place, and `\usepackage[T1]{fontenc}` is added while the run's encoding is not T1. On LuaLaTeX and XeLaTeX it is fontspec's `\setmainfont`: the last one is edited, else a new one loads fontspec. A sans face (`sans`) sets `\familydefault` to `\sfdefault` with a package, and that line goes again for any other font.
+- The current font is the offered one whose package the run loaded last, else the one whose fontspec name is the run's main family (`LibertinusSerif(0)`), else the one whose package's file sets that family (`lmodern.sty`'s `lmr`).
+
+## The snapshot printer
+
+Every dialog edits snapshots and never writes LaTeX itself. The server reads each call it shows into a snapshot: its name, its arguments, its key lists with keys and values, its text and range. The dialog changes values and adds or drops calls. Apply sends the snapshots back (`satex/dialogApply`, kind `snapshot`). One printer writes them as minimal edits. An untouched call stays as it is. A key list keeps its order and separator style, a removed key goes with its comma, and an added key follows the list's style. An empty value is written `{}`. A new call is written in one canonical form. A command the run does not define loads its package. A snapshot of text that changed since is refused.
+
+What the printer writes reads like the document's own LaTeX (`conventions.writing`). Text that is the whole body of a document command without arguments is written as that command where TeX reads text: `TinyNet` becomes `\model` after `\newcommand{\model}{TinyNet}`. A label, a file name, a key list and a TikZ name in parentheses keep the text. The argument's type comes from the run, as the type at the cursor does. A written call or key list of `repeat_min` characters or more that then stands twice gets a note: Extract to `\newcommand`, or a `\tikzset` style for options. Code actions write through the same step.
 
 ## Managers
 
@@ -202,6 +244,11 @@ Every term an index line carried (`\index{graph!directed}`), by its top level, s
 <picture><source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-dark.png"><img src="https://raw.githubusercontent.com/EagleoutIce/satex-analyzer/main/doc/site/showcase/img/theorem-light.png" alt="Theorems: the theorem plugin in the playground" width="640"></picture>
 
 Every environment a document call defined together with its number (`\the⟨env⟩`), with any package: the counter it owns, shares or is numbered within, and the commands its code has that the others lack (its style). Each instance shows its labels and the lines referencing them. Renaming rewrites the definition, both ends of each instance and the kinds that share its counter. Numbering writes the group the document's own calls of the same command use for a shared counter or a parent counter. A new kind copies the document's first call of its command. These forms send snapshots the view fills, and the snapshot printer writes them.
+A gutter icon stands on each kind's definition and each instance's `\begin`. It opens the manager on that kind and that instance. The counter a kind numbers by and the counter that resets it are two facets. The instances are a second list: each with its number as typeset, its note, its labels, where it stands and where it is referenced.
+
+### labels
+
+Every `\label` the run met, with what it points at: the environment, the number the build wrote and a caption or title. Each shows where it stands and where it is referenced. Search by label, number, caption or file. Completing a reference's key (`\ref`, `\cref`, `\autoref`, any command reading a label) offers "Browse all labels…" last. It opens this list, and choosing a label writes it into the reference.
 
 ## forest
 
@@ -221,15 +268,13 @@ On a blank line of the document body, "Insert forest tree" writes a small tree a
 
 An incremental plugin decides for one edit whether the last run still holds. It compares the text the run read with the new one, finds the one stretch they differ in, and asks the run's facts about it, never the text alone. Each mouth read of a line records where its comment began and which spaces it skipped (`Facts::lines`), merged over every read on every path. A plugin that says yes keeps the run: the rules run again, the diagnostics and their fixes, the outline, the lenses, inlays and colors are moved by the edit's offsets and published for the new version. Anything no plugin takes is analyzed again. `satex/caches` counts each reuse (`reused comment_edit 3`), the status bar shows it, and the server's log names it. The playground's Compile asks the same question (`satex/holds`): when the plugins keep the run for the text the PDF was built from and for the text now, pdfTeX reads neither edit, and the PDF shown stands without a build. A file the run opened past the mouth (`\openin`, which LaTeX's `\IfFileExists` does for each `\input` file, or `\pdfmdfivesum file`) is always built.
 
-- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
+- `comment_edit`: every read of the line had its comment begin before the edit, and the edit adds or removes no line end. TeX drops a comment's characters unread ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L7326)), so no read sees them. A `%` of category 12 (verbatim, `\catcode`) is no comment there and is not taken. A `%\satex@` directive and a magic comment (`% !TeX`) change a run, so an edit that makes, changes or removes one is not taken either. The rules read the new text, so a `satex-disable` comment or a comment marker counts at once.
 - `whitespace_edit`: copies of a space put into a run of it where every read skipped one in state N or S. The copies are read at the same moment under the same categories, so they are skipped too, and the line gets no new line end, so no `\par`. Or white space where no read got to: the line before it was never read to its end, and the run stopped at no limit. A user pattern (`lints.user-pattern`) may match spaces, so with one set only the second case is taken. A new line in the middle of the text is never taken: it moves every line after it.
 - `typing`: letters typed into a control word the run met undefined on every path, while the new name has no meaning or definition in the run. Its results stand, marked provisional, until typing pauses for `pause_ms`, then the run follows. This one is not claimed sound, only likely. The playground asks for its runs itself, so there it runs at once.
 
-Writing a plugin: [Writing a type plugin](writing-type-plugins.md).
-
 ## Where each plugin works
 
-A plugin works *fully* in an integration that renders all its features, *partially* when some are missing or degraded, and *none* when it renders none. TeXstudio reads the log only, so it shows findings and no plugin. In IntelliJ (through LSP4IJ) the plugin has no webview, and a code lens shows but its button does nothing, because `satex.openView` is a client command. A client without dialogs gets the code actions and hovers instead. Neovim and other clients vary: lenses, colors and inlay hints need client support. A `-` marks a plugin with no editor feature (`reuse`, `build`).
+The editors are [VS Code](vscode.md), [IntelliJ](intellij.md) and any client of the [language server](lsp.md). A plugin works *fully* in an integration that renders all its features, *partially* when some are missing or degraded, and *none* when it renders none. TeXstudio reads the log only, so it shows findings and no plugin. In IntelliJ (through LSP4IJ) the plugin has no webview, and a code lens shows but its button does nothing, because `satex.openView` is a client command. A client without dialogs gets the code actions and hovers instead. Neovim and other clients vary: lenses, colors and inlay hints need client support. A `-` marks a plugin with no editor feature (`reuse`, `build`).
 
 | Plugin | Features | Playground | satex gui | VS Code | IntelliJ | Neovim / LSP |
 |---|---|---|---|---|---|---|
@@ -249,11 +294,14 @@ A plugin works *fully* in an integration that renders all its features, *partial
 | `glossary` | complete, view, manage | full | full | full | partial | partial |
 | `bibliography` | view, manage, lens, hover | full | full | full | partial | partial |
 | `index` | view, manage, lens, hover | full | full | full | partial | partial |
-| `theorem` | view, manage | full | full | full | partial | partial |
+| `theorem` | view, manage, lens | full | full | full | partial | partial |
+| `labels` | view, complete | full | full | full | partial | partial |
 | `overlay` | hover, complete | full | full | full | full | full |
 | `frame` | actions, view, lens | full | full | full | partial | partial |
 | `page` | lens, hover, view | full | full | full | partial | partial |
+| `font` | lens, actions, view | full | full | full | partial | partial |
 | `tagging` | lens, manage | full | full | full | partial | partial |
+| `class` | lens, view | full | full | full | partial | partial |
 | `comment_edit` | reuse | - | - | - | - | - |
 | `whitespace_edit` | reuse | - | - | - | - | - |
 | `typing` | reuse | - | - | - | - | - |

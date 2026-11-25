@@ -1,0 +1,18 @@
+% Two pictures memoize has already compiled: their memos and externs lie in
+% main.memo.dir, named by the md5 sums of their codes, as pdflatex left them.
+\documentclass{article}
+\usepackage[extract=tex]{memoize}
+\usepackage{tikz}
+\begin{document}
+\setbox0\hbox{\begin{tikzpicture}
+  \draw (0,0) rectangle (2,1);
+\end{tikzpicture}}
+\xdef\FirstWidth{\the\wd0}
+\box0
+\setbox0\hbox{\begin{tikzpicture}
+  \draw (0,0) circle (1);
+\end{tikzpicture}}
+\xdef\SecondWidth{\the\wd0}
+\box0
+\gdef\SatexReachedEnd{}
+\end{document}

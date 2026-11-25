@@ -19,6 +19,7 @@ use regex::Regex;
 use serde_json::Value as Json;
 
 use crate::analysis::machine::Analysis;
+use crate::engine::tex::ArgType;
 use crate::linter::fix::Sources;
 use crate::queries::preview::Stroke;
 use crate::queries::query::{self, Filter, Query, Record};
@@ -1592,7 +1593,20 @@ pub fn workspace_symbols(analysis: &Analysis, query_text: &str) -> Vec<SymbolInf
 /// citations, graphics), or the key family its optional argument feeds.
 /// Elsewhere, the commands in scope, ranked for a document author.
 pub fn completion(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
-    completion_at(analysis, doc, path, position)
+    let mut out = completion_at(analysis, doc, path, position);
+    // an item that loads a library (`data.load`, an arrow tip's): its load joins this file's list
+    // ([`crate::linter::shared::preamble_load`]); a file without a preamble gets none
+    let (CompletionResponse::Array(items) | CompletionResponse::List(lsp_types::CompletionList { items, .. })) =
+        &mut out;
+    for it in items.iter_mut() {
+        let Some(load) = it.data.as_ref().and_then(|d| d["load"].as_str()).map(str::to_string) else { continue };
+        let Some((cmd, lib)) = crate::linter::shared::load_parts(&load) else { continue };
+        if let Ok(Some((at, new_text))) = crate::linter::shared::preamble_load(doc.body(), cmd, &[lib], "") {
+            let at = to_lsp(doc, doc.pos(at));
+            it.additional_text_edits = Some(vec![TextEdit { range: Range { start: at, end: at }, new_text }]);
+        }
+    }
+    out
 }
 
 fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position) -> CompletionResponse {
@@ -1673,8 +1687,10 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
         // a name of a known kind outside an argument (`\draw (`, `2.5c`): no `\` typed
         _ if !items.is_empty() => CompletionResponse::Array(items),
         _ => {
-            // the name typed, with the letters of that place (`_` and `:` under `\ExplSyntaxOn`)
-            let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+            // the name typed, with the letters of that place in that file (`_` and `:` under `\ExplSyntaxOn`, `@` in
+            // a package the root loads)
+            let file = super::type_at::file_of(analysis, path).unwrap_or(analysis.main_file);
+            let letters = analysis.facts.letters_at(file, pos.line, pos.col);
             // a command completes only where one is being typed: its `\` right before the letters, or a whole
             // control symbol (`\\`, `\,`: a `\` and one non-letter, tex.web §354) as the name typed
             let word = before.chars().rev().take_while(|c| c.is_alphabetic() || letters.contains(c)).count();
@@ -1690,7 +1706,7 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                     .unwrap_or("")
             });
             let math = in_math(doc, pos, &analysis.settings.conventions.completion.math_environments);
-            let (mut items, more) = command_items(analysis, pos, typed, math);
+            let (mut items, more) = command_items(analysis, file, pos, typed, math);
             // what a package not loaded yet would define, last (`\\tikz` before tikz is loaded)
             let unloaded = unloaded_items(analysis, doc, typed, false);
             items.extend(unloaded.into_iter().map(|(i, _)| i));
@@ -1706,6 +1722,9 @@ fn completion_at(analysis: &Analysis, doc: &Text, path: &str, position: Position
                         item.sort_text = item.sort_text.take().map(|s| format!("!{s}"));
                     }
                 }
+            }
+            if !math && symbol.is_none() && analysis.settings.conventions.completion.wrap_math {
+                wrap_math(analysis, doc, file, pos, typed, &mut items);
             }
             // a symbol's items replace it from the character after its `\` (an editor's word would not hold it)
             if symbol.is_some() {
@@ -1872,7 +1891,9 @@ fn typed_items(
                     }
                 });
                 searched = true;
-                super::search::found(labels.collect(), typed, shown, described)
+                let mut items = super::search::found(labels.collect(), typed, shown, described);
+                items.extend(super::plugins::label_browser(analysis, path, to_lsp(doc, pos), typed));
+                items
             }
             (Ty::Key(KeyKind::Cite), _) => {
                 searched = true;
@@ -2203,16 +2224,14 @@ fn drawn_items(analysis: &Analysis, path: &str, kinds: &[Stroke]) -> Vec<Complet
         // the tips a library of the installation declares, not loaded yet: picking one loads it
         if kind == Stroke::Arrows {
             let have: BTreeSet<String> = out.iter().map(|i| i.label.clone()).collect();
-            let start =
-                crate::linter::shared::document_start(analysis).map(|s| Position::new(s.line.saturating_sub(1), 0));
             for (tip, load) in crate::linter::shared::library_declared(analysis, "arrow") {
                 let label = if tip.contains(char::is_whitespace) { format!("-{{{tip}}}") } else { format!("-{tip}") };
                 if have.contains(&label) {
                     continue;
                 }
                 let mut it = item(label, CompletionItemKind::ENUM_MEMBER, Some(format!("arrow tip of {load}")), 60_000);
-                it.additional_text_edits = start
-                    .map(|at| vec![TextEdit { range: Range { start: at, end: at }, new_text: format!("{load}\n") }]);
+                // its edit is made over the document's text ([`completion`])
+                it.data = Some(serde_json::json!({ "load": load }));
                 out.push(it);
             }
         }
@@ -3021,11 +3040,15 @@ pub(super) fn material(analysis: &Analysis, name: &str) -> Option<usize> {
 
 /// Builds what completion reads of `analysis` once, ahead of the first request.
 pub fn warm(analysis: &Analysis) {
+    let mut laps = crate::util::progress::Laps::new(analysis.settings.verbose >= 2, "warm");
     takes(analysis);
+    laps.lap("takes");
     crate::util::progress::pause_now();
     crate::analysis::roles::roles(analysis, "documentclass");
+    laps.lap("roles");
     crate::util::progress::pause_now();
     query::scope_named(analysis, None, false, |_| false);
+    laps.lap("scope");
 }
 
 /// The fewest arguments each defined name takes, once per analysis.
@@ -3062,10 +3085,16 @@ fn written_by(analysis: &Analysis, record: &crate::queries::query::Record) -> Op
 /// the best `conventions.completion.shown` of them, and whether there were more.
 /// The project's own first, then documented names from packages and the
 /// kernel (no `@`, `_` or `:`), more used ones first, internals last.
-fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec<CompletionItem>, bool) {
+fn command_items(
+    analysis: &Analysis,
+    file: crate::engine::tex::FileId,
+    pos: Pos,
+    typed: &str,
+    math: bool,
+) -> (Vec<CompletionItem>, bool) {
     let takes = takes(analysis);
     let signature = signature_items(analysis, typed);
-    let typed = typed.to_lowercase();
+    let (cased, typed) = (typed, typed.to_lowercase());
     let mut used: crate::fixed::HashMap<crate::engine::tex::Sym, u32> = crate::fixed::HashMap::default();
     let mut document: crate::fixed::HashMap<crate::engine::tex::FileId, bool> = crate::fixed::HashMap::default();
     for e in &analysis.facts.expansions {
@@ -3075,13 +3104,13 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
         }
     }
     // a name with `@` only where `@` is a letter (`\makeatletter`, a package)
-    let letters = analysis.facts.letters_at(analysis.main_file, pos.line, pos.col);
+    let letters = analysis.facts.letters_at(file, pos.line, pos.col);
     let tiers = &analysis.settings.conventions.completion.tiers;
     let typeable =
         |label: &str| label.chars().count() < 2 || label.chars().all(|c| c.is_alphabetic() || letters.contains(&c));
     let rows = {
         let named = |name: &str| crate::engine::tex::bare_name(name).to_lowercase().contains(&typed);
-        query::scope_named(analysis, Some((analysis.main_file, pos.line, pos.col)), true, named)
+        query::scope_named(analysis, Some((file, pos.line, pos.col)), true, named)
     };
     // `\X` with a defined `\endX` is environment X's own code, run by `\begin{X}`
     // (latex.ltx `\begin`): typed as a command it is the kernel's internals.
@@ -3113,6 +3142,10 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
                 _ => tiers.package,
             };
             let count = analysis.interner.lookup(&label).and_then(|s| used.get(&s)).copied().unwrap_or(0);
+            // what ranks it whatever is typed: its tier, the document's uses, then the seed of common commands
+            let common = &analysis.settings.conventions.completion.common;
+            let seed = common.iter().position(|c| *c == label).unwrap_or(common.len());
+            let prior = format!("{tier}{:06}{seed:04}", 999_999u32.saturating_sub(count));
             // The argument is a name to pick: the editor asks again inside
             // the braces, and an environment brings its `\end`.
             let pick = analysis.settings.conventions.completion.pick.contains(&label);
@@ -3133,7 +3166,7 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
             // in math, math commands first: `!` sorts before the tiers' digits
             let lead = if math && is_math { "!" } else { "" };
             let it = CompletionItem {
-                sort_text: Some(format!("{lead}{tier}{:06}{label}", 999_999u32.saturating_sub(count))),
+                sort_text: Some(format!("{lead}{prior}{label}")),
                 label: label.clone(),
                 kind: Some(if tag == "primitive" { CompletionItemKind::KEYWORD } else { CompletionItemKind::FUNCTION }),
                 detail: Some(package.to_string()),
@@ -3144,22 +3177,23 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
                     command: "editor.action.triggerSuggest".into(),
                     arguments: None,
                 }),
-                data: Some(serde_json::json!({ "math": is_math, "args": args })),
+                data: Some(serde_json::json!({ "math": is_math, "args": args, "prior": prior })),
                 ..Default::default()
             };
             Some((it, row))
         })
         .collect();
-    // A name that starts with what is typed before one that only holds it, in math a math one first.
+    // A name that starts with what is typed before one that only holds it, in math a math one first,
+    // then the case typed (`\\Blind`: `Blinddocument` before `blinddocument`).
     items.sort_by_cached_key(|(i, _)| {
         let first = math && i.sort_text.as_deref().is_some_and(|s| s.starts_with('!'));
-        (!first, !i.label.to_lowercase().starts_with(&typed), i.sort_text.clone())
+        (!first, !i.label.to_lowercase().starts_with(&typed), !i.label.starts_with(cased), i.sort_text.clone())
     });
     let shown = analysis.settings.conventions.completion.shown;
     let more = items.len() > shown;
     items.truncate(shown);
     // the usage line of the shown ones, its arguments named, else the bare shape: only these get a full row
-    let mut items: Vec<(CompletionItem, String)> = (items.into_iter())
+    let mut items: Vec<CompletionItem> = (items.into_iter())
         .map(|(mut item, row)| {
             let full = row.full(analysis);
             let effective = full.get("usage").or_else(|| full.get("effective")).and_then(Json::as_str).unwrap_or("");
@@ -3168,55 +3202,45 @@ fn command_items(analysis: &Analysis, pos: Pos, typed: &str, math: bool) -> (Vec
             if let (Some(doc), Some(data)) = (full.get("doc"), item.data.as_mut()) {
                 data["doc"] = doc.clone();
             }
-            // the arguments a call reads: the effective usage after the name
-            let args =
-                effective.strip_prefix('\\').unwrap_or(effective).strip_prefix(item.label.as_str()).unwrap_or("");
-            (item, args.to_string())
+            item
         })
         .collect();
     let all = {
-        let names: Vec<&str> = items.iter().map(|(i, _)| i.label.as_str()).collect();
+        let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         crate::analysis::roles::roles_many(analysis, &names)
     };
     let probes = analysis.settings.conventions.completion.signatures;
-    for (i, ((item, effective), roles)) in items.iter_mut().zip(all).enumerate() {
-        // a listing gives a definition's own text: what a call reads comes from the probe
-        if i < probes
-            && !effective.contains(['{', '['])
-            && let Some(sym) = analysis.interner.lookup(&item.label)
-        {
-            let probed = query::effective_probed(analysis, sym);
-            *effective = probed
-                .strip_prefix('\\')
-                .unwrap_or(&probed)
-                .strip_prefix(item.label.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
+    for (i, (item, roles)) in items.iter_mut().zip(all).enumerate() {
         item.detail = item.detail.take().map(|d| typed_usage(&d, &roles));
-        // the signature beside the label, a tab stop per argument named by its type
-        if let Some((signature, snippet)) = signature_snippet(&item.label, effective, &roles) {
-            item.label_details = Some(lsp_types::CompletionItemLabelDetails {
-                detail: Some(signature),
-                description: item
-                    .detail
-                    .as_deref()
-                    .and_then(|d| d.rsplit_once("  ("))
-                    .map(|(_, by)| by.trim_end_matches(')').to_string()),
-            });
-            if item.command.is_none() {
-                item.insert_text = Some(snippet);
-                item.insert_text_format = Some(InsertTextFormat::SNIPPET);
-                // the first argument's help opens once the name is in
-                item.command = Some(lsp_types::Command {
-                    title: "signature".into(),
-                    command: "editor.action.triggerParameterHints".into(),
-                    arguments: None,
-                });
+        // what a call reads: the best few probed where they can be called, the rest from what the run knows
+        let Some(sym) = analysis.interner.lookup(&item.label) else { continue };
+        let meaning = analysis.env.meaning(sym);
+        let read = query::call_items(analysis, sym, meaning.as_macro().map(|m| &**m), i < probes);
+        // the signature beside the label, a tab stop per argument a call needs, named by its type
+        let Some((signature, snippet)) = read.and_then(|read| signature_snippet(&item.label, &read, &roles)) else {
+            continue;
+        };
+        let split =
+            item.detail.as_deref().and_then(|d| d.rsplit_once("  (")).map(|(u, by)| (u.to_string(), by.to_string()));
+        let by = split.map(|(usage, by)| {
+            // a usage line without its arguments (`\\section`, a listing's parameter text) takes the signature
+            if usage == format!("\\{}", item.label) {
+                item.detail = Some(format!("{usage}{signature}  ({by}"));
             }
+            by.trim_end_matches(')').to_string()
+        });
+        item.label_details = Some(lsp_types::CompletionItemLabelDetails { detail: Some(signature), description: by });
+        if item.command.is_none() {
+            item.insert_text = Some(snippet);
+            item.insert_text_format = Some(InsertTextFormat::SNIPPET);
+            // the first argument's help opens once the name is in
+            item.command = Some(lsp_types::Command {
+                title: "signature".into(),
+                command: "editor.action.triggerParameterHints".into(),
+                arguments: None,
+            });
         }
     }
-    let mut items: Vec<CompletionItem> = items.into_iter().map(|(i, _)| i).collect();
     items.extend(signature.into_iter().filter(|s| !items.iter().any(|i| i.label == s.label)).collect::<Vec<_>>());
     (items, more)
 }
@@ -3274,6 +3298,55 @@ fn unloaded_items(analysis: &Analysis, doc: &Text, typed: &str, env: bool) -> Ve
             Some((it, name))
         })
         .collect()
+}
+
+/// Math-only items (`data.math`, tex.web § 1046) typed at `pos` in text, as the run set the text around
+/// it, write their math's delimiters ([`crate::linter::shared::inline_math`]), the caret inside: their
+/// edit takes the `\\` and the name typed (`data.wrap`). Pins `\\sum` taken in a paragraph giving TeX's
+/// `Missing $ inserted`.
+fn wrap_math(
+    analysis: &Analysis,
+    doc: &Text,
+    file: crate::engine::tex::FileId,
+    pos: Pos,
+    typed: &str,
+    items: &mut [CompletionItem],
+) {
+    if !text_around(analysis, doc, file, pos) {
+        return;
+    }
+    let (open, close) = crate::linter::shared::inline_math(analysis, doc.body());
+    let start = Pos::new(pos.line, pos.col.saturating_sub(typed.chars().count() as u32 + 1));
+    let range = Range { start: to_lsp(doc, start), end: to_lsp(doc, pos) };
+    for it in items.iter_mut().filter(|i| i.data.as_ref().is_some_and(|d| d["math"] == true)) {
+        let body = it.insert_text.take().unwrap_or_else(|| it.label.clone());
+        let new_text = format!("{open}\\{body}$0{close}");
+        it.text_edit = Some(lsp_types::CompletionTextEdit::Edit(TextEdit { range, new_text }));
+        it.insert_text_format = Some(InsertTextFormat::SNIPPET);
+        it.filter_text = Some(format!("\\{}", it.label));
+        if let Some(data) = it.data.as_mut() {
+            data["wrap"] = serde_json::json!([open, close]);
+        }
+    }
+}
+
+/// Whether the run set the characters next to `pos` in `file` in text: the last one before and the first one
+/// after it in the same paragraph of `doc`, those it set at all, each in a known mode. None of them is text too.
+fn text_around(analysis: &Analysis, doc: &Text, file: crate::engine::tex::FileId, pos: Pos) -> bool {
+    use crate::engine::mode::Modes;
+    let at = |s: &crate::analysis::facts::Spot| (s.span.line, s.span.col);
+    let here = (pos.line, pos.col);
+    let ours = || analysis.facts.text.at.iter().filter(|s| s.span.file == file);
+    let before = ours().filter(|s| at(s) < here).max_by_key(|s| at(s));
+    let after = ours().filter(|s| at(s) >= here).min_by_key(|s| at(s));
+    // a blank line between ends the paragraph: what stands past it says nothing of this one
+    let near =
+        |line: u32| (line.min(pos.line)..=line.max(pos.line)).all(|l| l == pos.line || !doc.line(l).trim().is_empty());
+    [before, after]
+        .into_iter()
+        .flatten()
+        .filter(|s| near(s.span.line))
+        .all(|s| !s.modes.is_empty() && !s.modes.meets(Modes::ANY_MATH))
 }
 
 /// Whether `pos` of `doc` is in math: a `$`, `$$`, `\\(`, `\\[` or one of `environments` (starred
@@ -3362,39 +3435,60 @@ fn signature_items(analysis: &Analysis, typed: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// A command's signature from its effective usage (`\\usepackage[1]{2}[3]`) and the argument
-/// types its roles give: `[⟨options⟩]{⟨sty file⟩}[⟨date⟩]`, and the snippet with a tab stop per
-/// argument, an optional one with its brackets so that one key removes it. `None` for a usage
-/// with delimited arguments or none.
-fn signature_snippet(label: &str, args: &str, roles: &[crate::analysis::roles::Role]) -> Option<(String, String)> {
+/// A command's signature from what a call reads (`read`, [`query::call_items`]) and the argument types its
+/// roles give: `*[⟨options⟩]{⟨arg⟩}`, `[⟨options⟩]{⟨sty file⟩}[⟨date⟩]`, ltcmd's `(⟨arg⟩)` and `<⟨arg⟩>`, a
+/// `\\def`'s own delimiters (`(⟨arg⟩,⟨arg⟩)`). The snippet writes what a call needs: each mandatory argument
+/// with a tab stop, the first taking the caret, a required delimiter and a parameter text's literal text;
+/// what may be left out (a star, a flag, `[…]`, an optional `(…)`) the signature shows and the snippet leaves
+/// to the writer, so no default text stays behind. `None` for an item no snippet spells (a keyword, a
+/// quantity) or none at all.
+fn signature_snippet(
+    label: &str,
+    read: &[ArgType],
+    roles: &[crate::analysis::roles::Role],
+) -> Option<(String, String)> {
     let types = crate::analysis::roles::arg_types(roles);
-    let mut rest = args.trim_start_matches('*');
     let (mut signature, mut snippet, mut braced, mut stop) = (String::new(), label.to_string(), 0, 0);
-    while let Some(open) = rest.chars().next() {
-        let close = match open {
-            '{' => '}',
-            '[' => ']',
-            _ => return None,
-        };
-        let end = rest.find(close)?;
-        let name = match open {
-            '{' => {
-                let ty = types.iter().find(|(a, _)| *a == braced).map(|(_, t)| t.to_string());
-                braced += 1;
-                ty.unwrap_or_else(|| "arg".into())
-            }
-            _ => "options".into(),
-        };
-        let name = name.replace(['$', '}', '\\'], "");
+    let mut field = |name: &str| {
         stop += 1;
-        signature.push_str(&format!("{open}⟨{name}⟩{close}"));
-        snippet.push_str(&match open {
-            '{' => format!("{{${{{stop}:{name}}}}}"),
-            _ => format!("${{{stop}:[{name}]}}"),
-        });
-        rest = &rest[end + 1..];
+        format!("${{{stop}:{}}}", name.replace(['$', '}', '\\'], ""))
+    };
+    for item in read {
+        match item {
+            ArgType::Star => signature.push('*'),
+            ArgType::TokenFlag(c) => signature.push(*c),
+            ArgType::Optional(_) => signature.push_str("[⟨options⟩]"),
+            ArgType::Mandatory => {
+                let name =
+                    types.iter().find(|(a, _)| *a == braced).map_or_else(|| "arg".into(), |(_, t)| t.to_string());
+                braced += 1;
+                signature.push_str(&format!("{{⟨{name}⟩}}"));
+                snippet.push_str(&format!("{{{}}}", field(&name)));
+            }
+            ArgType::Delimited { open, close, required, .. } => {
+                signature.push_str(&format!("{open}⟨arg⟩{close}"));
+                if *required {
+                    snippet.push_str(&format!("{open}{}{close}", field("arg")));
+                }
+            }
+            ArgType::Embellishment(e) => e.chars().for_each(|c| signature.push_str(&format!("{c}{{⟨arg⟩}}"))),
+            ArgType::Literal(text) => {
+                signature.push_str(text);
+                snippet.push_str(text);
+            }
+            // `#{`: the `{` stays, what follows reads it
+            ArgType::Until(d) if d == "{" => {
+                signature.push_str("⟨arg⟩");
+                snippet.push_str(&field("arg"));
+            }
+            ArgType::Until(d) => {
+                signature.push_str(&format!("⟨arg⟩{d}"));
+                snippet.push_str(&format!("{}{d}", field("arg")));
+            }
+            ArgType::Keyword { .. } | ArgType::Quantity(_) => return None,
+        }
     }
-    (stop > 0).then(|| (signature, snippet + "$0"))
+    (!signature.is_empty()).then(|| (signature, snippet + "$0"))
 }
 
 /// A usage line with each braced argument's type after its number
@@ -3424,49 +3518,78 @@ fn typed_usage(usage: &str, roles: &[crate::analysis::roles::Role]) -> String {
 /// paragraph kept with what follows) carries the sectioning command of its
 /// line as `heading`, else `heading`.
 pub fn typeset(analysis: &Analysis) -> Vec<Json> {
+    let mut rows = Vec::new();
+    typeset_each(analysis, |row| rows.push(row));
+    rows
+}
+
+/// [`typeset`]'s rows, each handed to `sink` as soon as it is whole: a sender in parts or of one
+/// paragraph never holds the document's rows.
+pub fn typeset_each(analysis: &Analysis, mut sink: impl FnMut(Json)) {
     let at = |r: &query::Record| {
         (r.get("path").and_then(Json::as_str).map(str::to_owned), r.get("line").and_then(Json::as_u64))
     };
-    let headings: std::collections::HashMap<_, _> = query::run(analysis, Query::Occurrences, &Filter::Always)
+    let headings: std::collections::HashMap<_, _> = query::occurrences_of(analysis, |k| k.as_str() == "section")
         .into_iter()
-        .filter(|r| r.get("kind").and_then(Json::as_str) == Some("section"))
         .filter_map(|r| Some((at(&r), r.get("detail")?.clone())))
         .collect();
-    query::run(analysis, Query::Typeset, &Filter::Always)
-        .into_iter()
-        .filter(|r| {
-            r.get("origin").is_none_or(|o| o == "document")
-                && r.get("kind").and_then(Json::as_str) != Some("assumption")
-        })
-        .map(|mut r| {
-            if r.remove("kept").is_some() {
-                r.insert("heading".into(), headings.get(&at(&r)).cloned().unwrap_or_else(|| Json::from("heading")));
-            }
-            Json::Object(r)
-        })
-        .collect()
+    query::typeset_each(analysis, &mut |mut r| {
+        if r.get("origin").is_some_and(|o| o != "document")
+            || r.get("kind").and_then(Json::as_str) == Some("assumption")
+        {
+            return;
+        }
+        if r.remove("kept").is_some() {
+            r.insert("heading".into(), headings.get(&at(&r)).cloned().unwrap_or_else(|| Json::from("heading")));
+        }
+        sink(Json::Object(r));
+    });
 }
 
-/// [`typeset`] of `old` with the rows of `path`'s lines `lo..=hi` taken from `new`, a run up
-/// to that paragraph's end. A paragraph not shipped yet has no place on a page: it keeps the
-/// place of the row it replaces.
-pub fn typeset_preview(old: &[Json], new: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<Json> {
-    let within = |r: &Json| {
-        r.get("path").and_then(Json::as_str) == Some(path)
-            && r.get("line").and_then(Json::as_u64).is_some_and(|l| (u64::from(lo)..=u64::from(hi)).contains(&l))
-    };
-    let mut fresh: Vec<Json> = typeset(new).into_iter().filter(|r| within(r)).collect();
-    let Some(at) = old.iter().position(within) else { return old.to_vec() };
-    let gone: Vec<&Json> = old.iter().filter(|r| within(r)).collect();
-    for (row, was) in fresh.iter_mut().zip(&gone) {
-        if let (Some(row), Some(placed)) = (row.as_object_mut(), was.get("placed")) {
+/// What a later message needs of a row sent before: where it stands and its place on a page (a
+/// preview's patch), and its hash (rows the next run sets alike are not sent again).
+pub struct RowAt {
+    path: Option<String>,
+    line: Option<u64>,
+    placed: Option<Json>,
+    pub hash: u64,
+}
+
+impl RowAt {
+    pub fn of(row: &Json) -> RowAt {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        row.hash(&mut hasher);
+        RowAt {
+            path: row.get("path").and_then(Json::as_str).map(str::to_owned),
+            line: row.get("line").and_then(Json::as_u64),
+            placed: row.get("placed").cloned(),
+            hash: hasher.finish(),
+        }
+    }
+}
+
+/// What turns the rows `old` into those with `path`'s lines `lo..=hi` taken from `new`, a run up
+/// to that paragraph's end: `rows` go in at row `at`, the rows `drop` of `old` go. A paragraph
+/// not shipped yet has no place on a page: it keeps the place of the row it replaces. None where
+/// `old` has no row there.
+pub fn typeset_patch(old: &[RowAt], new: &Analysis, path: &str, lo: u32, hi: u32) -> Option<Json> {
+    let lines = u64::from(lo)..=u64::from(hi);
+    let within = |p: Option<&str>, l: Option<u64>| p == Some(path) && l.is_some_and(|l| lines.contains(&l));
+    let drop: Vec<usize> = (0..old.len()).filter(|&k| within(old[k].path.as_deref(), old[k].line)).collect();
+    let at = *drop.first()?;
+    let mut fresh = Vec::new();
+    typeset_each(new, |row| {
+        if within(row.get("path").and_then(Json::as_str), row.get("line").and_then(Json::as_u64)) {
+            fresh.push(row);
+        }
+    });
+    for (row, &was) in fresh.iter_mut().zip(&drop) {
+        if let (Some(row), Some(placed)) = (row.as_object_mut(), &old[was].placed) {
             row.entry("placed").or_insert_with(|| placed.clone());
         }
     }
-    let mut out: Vec<Json> = old[..at].to_vec();
-    out.append(&mut fresh);
-    out.extend(old[at..].iter().filter(|r| !within(r)).cloned());
-    out
+    Some(serde_json::json!({"at": at, "drop": drop, "rows": fresh}))
 }
 
 /// `textDocument/documentSymbol`: sections, labels and environments from
@@ -3512,6 +3635,16 @@ pub fn document_symbols(analysis: &Analysis, path: &str, doc: &Text) -> Option<V
 /// analysis's, not the document's: an editor hides them.
 pub fn findings(analysis: &Analysis) -> Vec<Record> {
     of_document(crate::linter::lint_document(analysis))
+}
+
+/// [`findings`], keeping what the lint of the run before found where it stands
+/// ([`crate::linter::Kept`]); with what this lint leaves for the next.
+pub fn findings_keeping(
+    analysis: &Analysis,
+    prior: Option<(&Analysis, &crate::linter::Kept)>,
+) -> (Vec<Record>, crate::linter::Kept) {
+    let (records, kept) = crate::linter::lint_document_keeping(analysis, prior);
+    (of_document(records), kept)
 }
 
 /// [`findings`] that no later pass and no more precision changes.

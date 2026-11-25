@@ -35,6 +35,7 @@ node doc/site/e2e/run.mjs --port 8472 --tier quick
 | `CHROME` | the browser binary, else `chromium`, `google-chrome` or rod's download |
 | `E2E_SERVER` | the server binary for `scripts/e2e.sh`, default `target/playground/satex-playground` |
 | `E2E_SETTLE=1` | typing scenarios wait for the first run to end before the click |
+| `E2E_SITE_SRC` | serve the page's own scripts and style from this `doc/site` (a work copy's), the rest from the server |
 | `E2E_WARM_MS` | how long to wait for a fresh server to build its TeX caches, default 30 min |
 | `E2E_DUMPFRAMES=1` | typing scenarios write their frames, boxes and words as JSON |
 
@@ -44,7 +45,7 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 
 - `quick`: the behaviors a push must not break, one scenario each, within about five minutes.
 - `full`: every scenario. Timing bounds are reported beside a pass but fail nothing.
-- `perf`: the typing scenarios whose timing bounds fail there: echo draw p95 ≤ 8 ms, the last key in the source ≤ 200 ms. Machine load moves these, so they are their own tier and never a correctness failure.
+- `perf`: the typing scenarios whose timing bounds fail there: echo draw p95 ≤ 8 ms, the last key in the source ≤ 200 ms. The book (`book-300-pages`): a key ≤ 100 ms and a frame ≤ 250 ms while it is analyzed, built and scrolled. Machine load moves these, so they are their own tier and never a correctness failure.
 
 ## Results
 
@@ -63,8 +64,11 @@ Each run writes `results.md`, `results.json`, a screenshot per failure and, when
 | file | what |
 |---|---|
 | `lib.mjs` | the browser over the DevTools protocol, a page per scenario, the in-page frame sampler and draw recorders |
+| `page.mjs` | the drivers' one step vocabulary (also `showcase/capture.mjs`): mouse, keys, drags, uploads as a person makes them; targets, conditions and actions as data |
+| `probe.js` | the page side of `page.mjs`, injected before the page's scripts, never shipped: the only thing the page is asked is `satexTest.run(<JSON>)`; words come from one index per build (playground.js `satexPdfWordIndex`) |
 | `engine.mjs` | the scenario kinds of the PDF and Typeset views: `type` (default), `click`, `tint`, `ts`, `select`, `col`, `forest`, `shift`, `complete`, `dbl`, `bare` |
-| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash` |
+| `crash.mjs` | no browser: the crash shapes of `tests/it/crash.rs` on the wasm build under node (`SATEX_CRASH_SHAPES=DIR scripts/t.sh crash::hostile`, then `node doc/site/e2e/crash.mjs target/site/play DIR`). Exit 1 on a stack overflow, an abort or a panic |
+| `kinds/*.mjs` | `foot`, `echo`, `paper`, `follow`, `tikz`, `crash`, `user` (a person's actions as a list, invariants after each: scenarios/user.mjs), `big` (a generated book of hundreds of pages: keys while it is analyzed, the build landing, layers and images only near the view, a scroll, a dropped build that frees the server: scenarios/big.mjs), `offline` (every example analyzed and built by the browser's pdfTeX, the compile server blocked: no request leaves the site: scenarios/cold-start.mjs), `swap` (a build's pages replacing the shown ones under the keys, every frame sampled: no page blank, dimmed or made anew, no older build after a newer one, no scroll, no layer gone or dimmed, also across a build that gives no PDF: scenarios/swap.mjs) |
 | `scenarios/<area>.mjs` | the scenarios of one area; `sources.mjs` the documents they share |
 | `scenarios/index.mjs` | all areas, the tiers, unique names |
 | `fixtures/titles/` | title pages of ten classes |
@@ -75,12 +79,16 @@ A typing scenario names the word to click, where the caret must land in the sour
 
 ## Robustness rules
 
+- No code goes to the page: a step names a target (`{ word: 'fast.', fx: .95 }`, `{ sel, starts: 'Insert' }`, `{ src: '\\begin{table}', k: 2 }`), a condition (`'quiet'`, `{ srcMatch }`, `{ word }`) or an action (`{ press }`, `{ replace: [from, to] }`) as data, and `probe.js` answers it. A scenario's word is a word target too (`is('here.')`, `{ word: 'n', after: 'of' }`). A new need is a new verb in `probe.js`, listed in its head comment.
+- `p.eval` stays only for the frame sampler's and the measuring kinds' in-page probes not yet moved to `probe.js` (land-02 report lists them by file).
+
 - Wait on readiness, never on time alone: `#play-status[data-done=ready]`, `satexHealth()` (busy, running, due, queued, recovering, as `../quiet.mjs`), a new build's image, a page word. A fixed sleep only lets a frame or a transition pass after such a wait.
 - Typing delays come from a seeded generator reset per scenario, so a scenario types the same keys at the same pace whatever ran before it.
 - `/__dev/events` is blocked: an edit to the sources by someone else never reloads a running scenario. The sources are still read live, so a run tests the working tree as it is at that moment.
 - A fresh browser context per scenario: no caret, cache, edited file or stopped server leaks into the next one.
 - Bounds tolerate load: waits are long (a cold kernel cache takes minutes), timing bounds live in the perf tier.
 - Every frame of every scenario checks that no overlay shows over a page whose image is not drawn.
+- The `swap` scenarios sample every frame while builds land under typed keys (`kinds/swap.mjs` `judge`); `E2E_DUMPFRAMES=1` writes their frames and a screenshot every 100 ms.
 - A failure says what was expected, what was seen and where (source offsets with context, client px), with a screenshot.
 
 ## Adding a scenario

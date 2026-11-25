@@ -38,14 +38,17 @@ pub mod knowledge;
 mod labels;
 pub(crate) mod plugins;
 mod search;
-mod snapshot;
+pub(crate) mod snapshot;
+pub mod templates;
 pub use plugins::{INTEGRATIONS, plugin_features, works_in};
 mod tabular;
+mod tblr;
 mod type_at;
 mod typeset_stream;
 mod unreached;
 #[cfg(target_os = "emscripten")]
 mod wasm;
+mod writing;
 
 use crate::fixed::HashMap;
 use crate::plugins::discovery;
@@ -78,6 +81,10 @@ const EXECUTE_COMMAND: &str = "satex/query";
 /// The answer to a style prompt, `{code, answer}` with `answer` `off` or
 /// `keep`, recorded in the project's `satex.yaml`.
 const STYLE_COMMAND: &str = "satex/style";
+
+/// A new project (`src/lsp/templates.rs` `request`): `{template, options}` or `{from}`, written
+/// into `dir` when given, else answered with its files. `satex/templates` lists the templates.
+const NEW_COMMAND: &str = "satex/newDocument";
 
 /// The prompt's answers, as `window/showMessageRequest` offers them.
 const STYLE_ANSWERS: [(&str, Option<crate::project::config::StyleChoice>); 4] = [
@@ -152,8 +159,11 @@ pub fn serve(cfg: Config, root: PathBuf, main: Option<PathBuf>) -> Result<(), St
     let weak = std::sync::Arc::downgrade(&hovers);
     crate::plugins::docs::index(&cfg.docs).subscribe(Box::new(move |names| {
         let names: std::collections::HashSet<&String> = names.iter().collect();
+        // also a hover that took or tried a mined name's documentation (an alias: "of `\\xspace`")
+        let names_one =
+            |m: &Option<String>| m.as_ref().is_some_and(|m| names.iter().any(|n| m.contains(&format!("`\\{n}`"))));
         if let Some(Ok(mut hovers)) = weak.upgrade().as_ref().map(|h| h.lock()) {
-            hovers.retain(|(_, n), _| !names.contains(n));
+            hovers.retain(|(_, n), m| !names.contains(n) && !names_one(m));
         }
     }));
     // The stack the command line's main thread has: deep expansion nests that far.
@@ -213,7 +223,7 @@ fn server_capabilities() -> ServerCapabilities {
         code_lens_provider: Some(lsp_types::CodeLensOptions { resolve_provider: Some(false) }),
         inlay_hint_provider: Some(OneOf::Left(true)),
         execute_command_provider: Some(ExecuteCommandOptions {
-            commands: vec![EXECUTE_COMMAND.to_string(), STYLE_COMMAND.to_string()],
+            commands: vec![EXECUTE_COMMAND.to_string(), STYLE_COMMAND.to_string(), NEW_COMMAND.to_string()],
             ..Default::default()
         }),
         ..Default::default()
@@ -414,6 +424,48 @@ fn style_prompt(id: lsp_server::RequestId, candidate: &Json) -> Request {
     Request::new(id, "window/showMessageRequest".into(), params)
 }
 
+/// The two ways out of every finding: "ignore here" writes the magic comment
+/// `% satex-disable-next-line CODE` above its line, "ignore rule" turns the
+/// rule off in the project's `satex.yaml` ([`STYLE_COMMAND`], `off`).
+fn ignore_actions(uri: &Uri, diagnostics: &[lsp_types::Diagnostic]) -> Vec<Json> {
+    let mut seen = Vec::new();
+    let mut out = Vec::new();
+    for d in diagnostics {
+        // the rule's name, which reads in a comment (`hand-set-quantity`), else its number
+        let rule = d.data.as_ref().and_then(|x| x["rule"].as_str()).map(str::to_string);
+        let Some(code) = rule.or_else(|| match &d.code {
+            Some(lsp_types::NumberOrString::String(c)) => Some(c.clone()),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let code = &code;
+        if seen.contains(&(code.clone(), d.range.start.line)) {
+            continue;
+        }
+        seen.push((code.clone(), d.range.start.line));
+        let at = lsp_types::Position { line: d.range.start.line, character: 0 };
+        let edit = serde_json::json!({ "range": { "start": at, "end": at }, "newText": format!("% satex-disable-next-line {code}\n") });
+        out.push(serde_json::json!({
+            "title": format!("Ignore {code} here"),
+            "kind": "quickfix",
+            "diagnostics": [d],
+            "data": { "ignore": true },
+            "edit": { "changes": { uri.as_str(): [edit] } },
+        }));
+        if !out.iter().any(|a| a["command"]["arguments"][0]["code"] == code.as_str()) {
+            out.push(serde_json::json!({
+                "title": format!("Ignore rule {code} in this project"),
+                "kind": "quickfix",
+                "diagnostics": [d],
+                "data": { "ignore": true },
+                "command": { "title": "Ignore rule", "command": STYLE_COMMAND, "arguments": [{ "code": code, "answer": "off" }] },
+            }));
+        }
+    }
+    out
+}
+
 /// What a client's answer to [`style_prompt`] records, `None` for no.
 fn style_choice(answer: &Response) -> Option<crate::project::config::StyleChoice> {
     let title = answer_title(answer)?;
@@ -513,7 +565,8 @@ fn respond(send: Send<'_>, req: Request) -> Response {
     let id = req.id.clone();
     let method = req.method.clone();
     match dispatch(send, req) {
-        Ok(value) => Response::new_ok(id, value),
+        // the answer moves in: `new_ok` would build a second tree of it
+        Ok(value) => Response { id, response_result: Ok(value) },
         Err(message) => Response::new_err(id, ErrorCode::InternalError as i32, format!("{method}: {message}")),
     }
 }
@@ -542,7 +595,7 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             Ok(Json::Array(ask(engine_tx, |reply| EngineMsg::Typeset(uri, reply))?))
         }
         // The typesetting plugins (`crate::plugins::typeset`), from the last finished run: never wait for a run.
-        "satex/hyphenate" | "satex/break" => {
+        "satex/hyphenate" | "satex/break" | "satex/mathwidths" | "satex/commandText" | "satex/fontAt" => {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             let method = req.method.clone();
             Ok(ask(engine_tx, |reply| EngineMsg::Typesetting(uri, method, params, reply))?)
@@ -693,8 +746,14 @@ fn dispatch(engine_tx: Send<'_>, req: Request) -> Result<Json, String> {
             let uri: Uri = serde_json::from_value(params["textDocument"]["uri"].clone()).map_err(|e| e.to_string())?;
             ask(engine_tx, |reply| EngineMsg::Dialog(Ask::Apply(uri, params), reply))?
         }
+        "satex/templates" => Ok(crate::lsp::templates::listing()),
+        NEW_COMMAND => ask(engine_tx, |reply| EngineMsg::NewDocument(params, reply))?,
         "workspace/executeCommand" => {
             let p: ExecuteCommandParams = serde_json::from_value(params).map_err(|e| e.to_string())?;
+            if p.command == NEW_COMMAND {
+                let arg = p.arguments.into_iter().next().unwrap_or_default();
+                return ask(engine_tx, |reply| EngineMsg::NewDocument(arg, reply))?;
+            }
             if p.command == STYLE_COMMAND {
                 let arg = p.arguments.first().cloned().unwrap_or_default();
                 let code = arg["code"].as_str().ok_or("expected `{code, answer}`")?.to_string();
@@ -802,6 +861,8 @@ enum EngineMsg {
     ExecuteCommand(Json, Sender<Result<Vec<Json>, String>>),
     /// A style prompt's answer for a rule: the path of the `satex.yaml` written.
     Style(String, crate::project::config::StyleChoice, Sender<Result<Json, String>>),
+    /// `satex/newDocument`'s params: the project, written when they name a folder.
+    NewDocument(Json, Sender<Result<Json, String>>),
     Typeset(Uri, Sender<Vec<Json>>),
     /// A typesetting plugin's request and its params: `null` before a first run.
     Typesetting(Uri, String, Json, Sender<Json>),
@@ -907,6 +968,9 @@ struct Run {
     texts: u64,
     analysis: Rc<Analysis>,
     reads: HashSet<PathBuf>,
+    /// What it read outside the open texts ([`crate::caches::document::reads_of`]),
+    /// `None` when unlogged: it stands only while each still holds.
+    outside: Option<Vec<crate::project::overlay::Read>>,
 }
 
 /// The workspace folders the client named, else its root.
@@ -969,7 +1033,10 @@ struct Engine {
     checkpoints: HashMap<PathBuf, crate::analysis::machine::Checkpoints<'static>>,
     /// Where messages arrive while a run goes on, and those that wait for its end.
     inbox: Option<Receiver<EngineMsg>>,
-    deferred: std::collections::VecDeque<EngineMsg>,
+    /// Runs replaced by newer ones, dropped once the newer one's results went out ([`Engine::rest`]):
+    /// freeing a whole analysis took a twentieth of an edit in the browser.
+    buried: Vec<Rc<Analysis>>,
+    deferred: Rc<std::cell::RefCell<std::collections::VecDeque<EngineMsg>>>,
     /// Texts opened or changed that the engine took ([`Kept::edits`]).
     taken: u64,
     /// The last run stopped for a newer text.
@@ -986,6 +1053,17 @@ struct Engine {
     edited: HashMap<Uri, std::time::Instant>,
     /// When the engine last took a message: the hovers computed ahead wait for a pause after it.
     heard: Option<std::time::Instant>,
+    /// The line the editor's caret was last asked about (a code action, a highlight, a
+    /// completion): the next edit is likely there, so its checkpoints are placed while the
+    /// engine is idle ([`Engine::place_ahead`]).
+    caret: Option<(Uri, u32)>,
+    /// The caret line last placed for, and the run it was placed in.
+    placed: Option<(Uri, u32, std::rc::Weak<Analysis>)>,
+    /// The run whose findings went out last: what requests read of the whole of it is built
+    /// while the engine is idle ([`Engine::settle`]).
+    settle: Option<Rc<Analysis>>,
+    /// Per root, the run linted last and what its lint leaves for the next ([`crate::linter::Kept`]).
+    lints: HashMap<PathBuf, (Rc<Analysis>, crate::linter::Kept)>,
 }
 
 impl EngineMsg {
@@ -1014,6 +1092,7 @@ impl Engine {
         // Completion reads the key family an argument feeds off the calls.
         cfg.record_arguments = true;
         crate::util::progress::pause_every(cfg.lsp.pause_ms);
+        let part = cfg.lsp.rows_per_message;
         // One spelling per file: a run cached under a canonical key keeps the
         // name it was started with, so a relative `-f` would leave the open
         // document's own file unmatched by every per-file feature.
@@ -1040,14 +1119,19 @@ impl Engine {
             stores: HashMap::default(),
             checkpoints: HashMap::default(),
             inbox: None,
+            buried: Vec::new(),
             deferred: Default::default(),
             taken: 0,
             cancelled: false,
-            typeset: Default::default(),
+            typeset: typeset_stream::TypesetStream::new(part),
             blank: None,
             published: HashMap::default(),
             edited: HashMap::default(),
             heard: None,
+            caret: None,
+            placed: None,
+            settle: None,
+            lints: HashMap::default(),
         }
     }
 
@@ -1081,15 +1165,20 @@ impl Engine {
             crate::project::overlay::set(&doc.path, doc.text.clone());
         }
         self.cancelled = false;
+        // -vv: what each part of serving the edit took, the run aside.
+        let mut phases = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "served");
         self.send_early(&path, &text);
+        phases.lap("early findings");
         let mut hooks = self.typeset.hooks(uri, version_of(&versions, uri), &self.outbox);
         let started = std::time::Instant::now();
         let (analysis, fresh) = self.run_for(&path, &text, &mut hooks);
+        phases.lap("run");
         // How incremental the run was, for the status line: where it resumed, the steps it took itself.
         if fresh && let Some(c) = self.checkpoints.get(&path).or_else(|| self.checkpoints.values().next()) {
             let info = serde_json::json!({
                 "uri": uri, "version": version_of(&versions, uri), "ms": started.elapsed().as_millis() as u64,
                 "resumedLine": c.resumed.as_ref().map(|r| r.1), "ranSteps": c.ran.0, "steps": c.ran.1,
+                "placedSteps": c.placed,
             });
             self.notify_now(Notification::new("satex/runInfo".into(), info));
         }
@@ -1107,8 +1196,9 @@ impl Engine {
         let preamble = text.split("\\begin{document}").next().unwrap_or_default().to_string();
         let same = self.preamble_texts.insert(uri.clone(), preamble.clone()).is_some_and(|p| p == preamble);
         if changed
-            && same
             && let Some(old) = &doc.analysis
+            && !analysis.carry(old)
+            && same
         {
             carry_probes(old, &analysis);
         }
@@ -1118,18 +1208,70 @@ impl Engine {
         if fresh && kept {
             self.typeset.finished(uri, version_of(&versions, uri), &analysis, &self.outbox);
         }
+        phases.lap("rows");
         if fresh {
-            // Findings before the completion data: they are what the user waits for. The names
-            // carried over from the last run follow: until then a completion answers from the last run. The playground's server answers only
-            // once a message is done: there the first completion builds the rest.
-            // what a hover shows of the new run (its roles, what a name typesets) before the findings
-            if !cfg!(target_os = "emscripten") {
-                self.serving(|_| handlers::warm(&analysis));
-            }
+            // Findings first: they are what the user waits for. What a completion and a hover
+            // read of the whole run ([`handlers::warm`]) is built once the engine is idle
+            // ([`Engine::settle`]), or by the first request that reads it.
+            // the run whose findings `uri` showed until now
+            let before = self.published.get(uri).and_then(|(run, _)| run.upgrade());
             self.install(uri, &analysis, &text, changed);
-            self.publish_run(&analysis, &path, &versions, None);
-            if let Some(prior) = &prior {
+            phases.lap("install");
+            // A newer text ends the rules at the next one: its run never waits for findings no
+            // editor shows any more. The run stays installed, its findings follow with the newer text's.
+            let stale = self.newer_text();
+            let published = crate::analysis::probe::abandonable(stale, || {
+                self.publish_run(&analysis, &path, &versions, None);
+            });
+            phases.lap("findings");
+            if published.is_none() {
+                crate::util::progress::note!("satex: findings stopped for a newer text");
+                self.cancelled = true;
+                if !self.dirty.contains(uri) {
+                    self.dirty.push(uri.clone());
+                }
+                return;
+            }
+            if !cfg!(target_os = "emscripten") {
+                self.settle = Some(analysis.clone());
+            }
+            if self.cfg.verbose >= 2 {
+                let slow: Vec<String> = (analysis.timings.rules().iter().take(SLOW_RULES))
+                    .map(|(code, took, _)| format!("{code} {:.2}s", took.as_secs_f64()))
+                    .collect();
+                crate::util::progress::note!("satex: slowest rules: {}", slow.join(", "));
+            }
+            // An open file that run read and this one no longer does keeps its findings:
+            // it runs again, through another root or as no root's.
+            // A run cut short read only part of the document: what it did not read says nothing.
+            if let Some(before) = before.filter(|b| !Rc::ptr_eq(b, &analysis) && !analysis.stopped()) {
+                let unread: Vec<Uri> = (self.published.iter())
+                    .filter(|(u, (run, _))| *u != uri && run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &before)))
+                    .map(|(u, _)| u.clone())
+                    .filter(|u| self.docs.contains_key(u) && !self.dirty.contains(u))
+                    .collect();
+                self.dirty.extend(unread);
+            }
+            // The playground's server builds a completion's rows with the first one: from the last run's where it can.
+            if cfg!(target_os = "emscripten")
+                && let Some(prior) = &prior
+            {
                 self.serving(|_| crate::queries::query::carry_scope(prior, &analysis));
+            }
+            // a server between messages frees the replaced run after this one's results went out
+            if self.inbox.is_none() {
+                self.buried.extend(prior);
+            }
+        } else if !self
+            .published
+            .get(uri)
+            .is_some_and(|(run, _)| run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &analysis)))
+        {
+            // a kept run the document has no diagnostics of (it was closed and opened again): lint it,
+            // unless a run cut short gave way to the last whole one
+            self.install(uri, &analysis, &text, changed);
+            if self.docs.get(uri).and_then(|d| d.analysis.as_ref()).is_some_and(|a| Rc::ptr_eq(a, &analysis)) {
+                self.publish_run(&analysis, &path, &versions, None);
             }
         } else {
             self.install(uri, &analysis, &text, changed);
@@ -1147,6 +1289,23 @@ impl Engine {
             self.send_diagnostics(again);
         }
         crate::util::progress::idle();
+    }
+
+    /// Publishes `uri`'s installed run where its findings never went out: a run installed and then
+    /// stopped before its rules ended (the page's shared counter moved for a widget's question
+    /// while the rules ran) left the page waiting for findings no later run sends, as the
+    /// texts it would run for are that run's (slides.tex in the playground, user 2026-11-21).
+    pub(super) fn publish_installed(&mut self, uri: &Uri) {
+        let Some(doc) = self.docs.get(uri) else { return };
+        let Some(analysis) = doc.analysis.clone() else { return };
+        let out =
+            self.published.get(uri).is_some_and(|(run, _)| run.upgrade().is_some_and(|r| Rc::ptr_eq(&r, &analysis)));
+        if out || self.dirty.contains(uri) {
+            return;
+        }
+        let path = doc.path.clone();
+        let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
+        self.publish_run(&analysis, &path, &versions, None);
     }
 
     /// `analysis` of `text`, the one `uri`'s requests are answered from.
@@ -1175,13 +1334,28 @@ impl Engine {
         shift: Option<plugins::incremental::Shift>,
     ) {
         // Requests that only read are answered while the rules run.
-        let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
-        let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
         let orphan = self.orphans.contains(&canonical(path));
+        // A file no root reads runs inside a root's preamble: the other open files it reads
+        // there are context, their findings are their own root's run's.
+        let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).filter(|_| !orphan).collect();
+        let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
+        // the lint of the run this one may be apart from an edit: its findings stand where the edit left them
+        let root = canonical(Path::new(analysis.file_name(analysis.main_file)));
         let (mut published, candidates) = self.serving(|engine| {
-            let records = unsilenced(&engine.silenced, handlers::findings(analysis));
+            let mut laps = crate::util::progress::Laps::new(engine.cfg.verbose >= 2, "findings");
+            let last = engine.lints.get(&root).map(|(run, kept)| (&**run, kept));
+            let (records, kept) = handlers::findings_keeping(analysis, last);
+            if engine.cfg.verbose >= 2 {
+                crate::util::progress::note!("satex: findings kept from the last run: {}", kept.stood.join(", "));
+            }
+            engine.lints.insert(root, (analysis.clone(), kept));
+            let records = unsilenced(&engine.silenced, records);
+            laps.lap("rules");
             let candidates = crate::linter::style_candidates(&records, &analysis.settings.lints.style_prompt);
-            (publish(&mut engine.actions, analysis, &records, path, &open), candidates)
+            laps.lap("style");
+            let published = publish(&mut engine.actions, analysis, &records, path, &open);
+            laps.lap("diagnostics");
+            (published, candidates)
         });
         let own = handlers::path_uri(&path.display().to_string());
         if let Some(own) = published.iter_mut().find(|p| orphan && p.uri == own) {
@@ -1270,16 +1444,62 @@ impl Engine {
         true
     }
 
-    /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]).
+    /// Drops the runs replaced since the last rest ([`Engine::buried`], [`Checkpoints::rest`]): between
+    /// messages, once the results they were replaced by went out.
+    fn rest_buried(&mut self) {
+        self.buried.clear();
+        self.checkpoints.values_mut().for_each(crate::analysis::machine::Checkpoints::rest);
+    }
+
+    /// Whether a newer text, of any open file, came since the one taken last: it makes a run or a
+    /// question about the older one stale.
+    fn newer_text(&self) -> Box<dyn Fn() -> bool> {
+        #[cfg(not(target_os = "emscripten"))]
+        {
+            let (kept, taken) = (self.hovers.clone(), self.taken);
+            Box::new(move || kept.edits.load(std::sync::atomic::Ordering::Relaxed) > taken)
+        }
+        #[cfg(target_os = "emscripten")]
+        Box::new(wasm::cancelled)
+    }
+
+    /// What a build tells the editor between its runs ([`SETTLED_NOTIFICATION`]): the findings no
+    /// later run changes, and with `lsp.provisional`, after a run of `lsp.provisional_after_ms`,
+    /// all of them, `run` and `runs` said. Every finding of a rule that reads more than the text
+    /// is marked provisional: this run read build files the next one reads changed (else no run
+    /// follows), and a rule's facts are of the whole run, so none of them is known to stand.
     fn between_runs(&self, root: &Path) -> crate::analysis::machine::BetweenRuns {
         let (outbox, silenced, root) = (self.outbox.clone(), self.silenced.clone(), root.to_path_buf());
         let open: Vec<PathBuf> = self.docs.values().map(|d| d.path.clone()).collect();
+        let versions: Vec<(PathBuf, i32)> = self.docs.values().map(|d| (d.path.clone(), d.version)).collect();
+        let (lsp, runs) = (&self.cfg.lsp, self.cfg.limits.build_runs);
+        let (wanted, after) = (lsp.provisional, std::time::Duration::from_millis(lsp.provisional_after_ms));
+        let since = std::cell::Cell::new(std::time::Instant::now());
         Box::new(move |analysis| {
-            let records = unsilenced(&silenced, handlers::settled_findings(analysis));
+            let all = wanted && since.get().elapsed() >= after;
+            let records = if all {
+                let mut records = handlers::findings(analysis);
+                for r in records.iter_mut() {
+                    if !r.get("code").and_then(Json::as_str).is_some_and(crate::linter::settled) {
+                        r.insert("provisional".into(), Json::Bool(true));
+                    }
+                }
+                records
+            } else {
+                handlers::settled_findings(analysis)
+            };
+            let records = unsilenced(&silenced, records);
             let open: Vec<&Path> = open.iter().map(PathBuf::as_path).collect();
-            for params in publish(&mut HashMap::default(), analysis, &records, &root, &open) {
-                let _ = outbox.send(Notification::new(SETTLED_NOTIFICATION.into(), params));
+            for mut params in publish(&mut HashMap::default(), analysis, &records, &root, &open) {
+                params.version = version_of(&versions, &params.uri);
+                let mut params = serde_json::to_value(params).unwrap_or_default();
+                if all {
+                    params["run"] = analysis.build_runs.into();
+                    params["runs"] = runs.into();
+                }
+                notify_to(&outbox, Notification::new(SETTLED_NOTIFICATION.into(), params));
             }
+            since.set(std::time::Instant::now());
         })
     }
 
@@ -1400,7 +1620,11 @@ impl Engine {
             if self.cancelled {
                 return run;
             }
-            if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key)) {
+            // A root that read the file before and stopped at a budget this time
+            // stays its owner: run alone, the file's references are all undefined.
+            let stopped = |a: &Analysis| a.exhausted || a.limits.iter().any(|h| matches!(h.key, "seconds" | "memory"));
+            let owner = self.owners.get(&key).is_some_and(|o| canonical(o) == root_key);
+            if self.runs.get(&root_key).is_some_and(|r| r.reads.contains(&key) || owner && stopped(&r.analysis)) {
                 self.orphans.remove(&key);
                 self.owners.insert(key, root);
                 return run;
@@ -1464,18 +1688,18 @@ impl Engine {
             hasher.finish()
         };
         let key = canonical(root);
-        if let Some(run) = self.runs.get(&key).filter(|run| run.texts == texts) {
+        let stands = |run: &&Run| {
+            run.texts == texts
+                && run.outside.as_ref().is_some_and(|o| o.iter().all(crate::project::overlay::Read::holds))
+        };
+        if let Some(run) = self.runs.get(&key).filter(stands) {
             return (run.analysis.clone(), false);
         }
+        let mut phases = crate::util::progress::Laps::new(self.cfg.verbose >= 2, "served");
+        // The files not open are read from disk: logged, as the document cache does.
+        let recording = crate::project::overlay::record();
         let source = crate::project::overlay::read_to_string(root).unwrap_or_default();
-        // A newer text, of any open file, makes this run stale: it stops, the next one starts.
-        #[cfg(not(target_os = "emscripten"))]
-        let stale: Box<dyn Fn() -> bool> = {
-            let (kept, taken) = (self.hovers.clone(), self.taken);
-            Box::new(move || kept.edits.load(std::sync::atomic::Ordering::Relaxed) > taken)
-        };
-        #[cfg(target_os = "emscripten")]
-        let stale: Box<dyn Fn() -> bool> = Box::new(wasm::cancelled);
+        let stale = self.newer_text();
         let between_runs = self.between_runs(root);
         let (analysis, cancelled) = crate::analysis::probe::cancellable(stale, || {
             self.serving(|engine| {
@@ -1486,6 +1710,7 @@ impl Engine {
                         let checkpoints = (engine.checkpoints.entry(key.clone()))
                             .or_insert_with(|| crate::analysis::machine::Checkpoints::new(cfg));
                         checkpoints.between_runs = Some(between_runs);
+                        checkpoints.defer_drops = engine.inbox.is_none();
                         checkpoints.hooks = std::mem::take(hooks);
                         let analysis = Machine::build(checkpoints, &source, root, cfg, true);
                         *hooks = std::mem::take(&mut checkpoints.hooks);
@@ -1495,6 +1720,10 @@ impl Engine {
                 }
             })
         });
+        phases.lap("build");
+        let outside =
+            recording.then(|| crate::caches::document::reads_of(&analysis, crate::project::overlay::recorded()));
+        phases.lap("reads");
         let analysis = Rc::new(analysis);
         if cancelled {
             self.cancelled = true;
@@ -1511,9 +1740,11 @@ impl Engine {
                 self.owners.entry(file.clone()).or_insert_with(|| root.to_path_buf());
             }
         }
-        self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads });
+        phases.lap("owners");
+        self.runs.insert(key, Run { texts, analysis: analysis.clone(), reads, outside });
         let runs = &self.runs;
         self.checkpoints.retain(|root, _| runs.contains_key(root));
+        self.lints.retain(|root, _| runs.contains_key(root));
         (analysis, true)
     }
 
@@ -1527,27 +1758,33 @@ impl Engine {
             let (docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
             let pause = Box::new(move || {
                 while let Some(req) = wasm::mail() {
-                    if !matches!(req.method.as_str(), "satex/hyphenate" | "satex/break" | "satex/holds") {
-                        wasm::reply(&Response::new_err(
-                            req.id,
-                            ErrorCode::RequestCanceled as i32,
-                            "not during a run".into(),
-                        ));
-                        continue;
-                    }
+                    let id = req.id.clone();
+                    // As a native server's pause: whatever only reads is answered from the analyses there are.
                     let mut send = |msg| {
-                        crate::analysis::probe::apart(|| answer(&docs, &hovers, blank.as_deref(), msg));
+                        crate::analysis::probe::apart(|| match msg {
+                            EngineMsg::ExecuteCommand(body, reply) => {
+                                if let Some(found) = held_query(&docs, &body) {
+                                    let _ = reply.send(Ok(found));
+                                }
+                            }
+                            msg => drop(answer(&docs, &hovers, blank.as_deref(), msg)),
+                        });
                         true
                     };
-                    wasm::reply(&respond(&mut send, req));
+                    let out = respond(&mut send, req);
+                    // What needs the engine itself is asked again in the worker's order.
+                    wasm::reply(&match out.response_result {
+                        Ok(_) => out,
+                        Err(_) => Response::new_err(id, ErrorCode::RequestCanceled as i32, "not during a run".into()),
+                    });
                 }
             });
             return crate::util::progress::pausing(pause, || f(self));
         }
         let Some(inbox) = self.inbox.clone() else { return f(self) };
         let (mut docs, hovers, blank) = (self.docs.clone(), self.hovers.clone(), self.blank.clone());
-        let deferred = Rc::new(std::cell::RefCell::new(Vec::new()));
-        let waiting = deferred.clone();
+        // shared with the pause: work that unwinds for a newer text ([`probe::abandonable`]) loses none
+        let waiting = self.deferred.clone();
         let pause = Box::new(move || {
             while let Ok(msg) = inbox.try_recv() {
                 match msg {
@@ -1555,20 +1792,19 @@ impl Engine {
                         if let Some(doc) = docs.get_mut(uri) {
                             doc.text = text.clone();
                         }
-                        waiting.borrow_mut().push(msg);
+                        waiting.borrow_mut().push_back(msg);
                     }
                     msg => {
                         let answered = crate::analysis::probe::apart(|| answer(&docs, &hovers, blank.as_deref(), msg));
                         if let Some(msg) = answered {
-                            waiting.borrow_mut().push(msg);
+                            waiting.borrow_mut().push_back(msg);
                         }
                     }
                 }
             }
+            crate::analysis::probe::abandon_if_stale();
         });
-        let out = crate::util::progress::pausing(pause, || f(self));
-        self.deferred.extend(deferred.take());
-        out
+        crate::util::progress::pausing(pause, || f(self))
     }
 
     /// After `uri` was analyzed: its hovers of names the document defines
@@ -1607,7 +1843,10 @@ impl Engine {
         // a called name's hover says what this document's calls typeset: asked again each run
         let called: std::collections::HashSet<String> = used.iter().map(|(_, n)| n.clone()).collect();
         used.sort_by(|a, b| b.cmp(a));
-        let store = hover_store(self.cfg, analysis, &dir);
+        // A run that is the last one apart from an edit read the installation's files as that
+        // one did ([`crate::analysis::machine::Since`]): the store named after them stands.
+        let known = self.stores.get(uri).filter(|_| same && analysis.since.is_some()).map(|(path, _)| path.clone());
+        let store = known.or_else(|| hover_store(self.cfg, analysis, &dir));
         let docs = crate::plugins::docs::index(&self.cfg.docs);
         let mut dirs = std::collections::HashSet::new();
         for file in analysis.file_names().iter().map(Path::new).filter(|_| self.cfg.plugins.docs) {
@@ -1622,9 +1861,10 @@ impl Engine {
             let kept: HashMap<String, Option<String>> =
                 std::fs::read(path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
             // A name a manual mined since documents may have been kept without it.
-            for (name, markdown) in
-                kept.into_iter().filter(|(name, _)| !own.contains(name) && !called.contains(name) && !docs.knows(name))
-            {
+            for (name, markdown) in kept.into_iter().filter(|(name, markdown)| {
+                let none = markdown.as_ref().is_some_and(|m| m.contains(crate::queries::said::NONE));
+                !own.contains(name) && !called.contains(name) && !docs.knows(name) && !none
+            }) {
                 hovers.entry((uri.clone(), name)).or_insert(markdown);
             }
         }
@@ -1645,8 +1885,12 @@ impl Engine {
     fn store_hovers(&self, uri: &Uri) {
         let Some((path, own)) = self.stores.get(uri) else { return };
         let Ok(hovers) = self.hovers.lock() else { return };
-        let kept: std::collections::BTreeMap<&String, &Option<String>> =
-            hovers.iter().filter(|((u, n), _)| u == uri && !own.contains(n)).map(|((_, n), m)| (n, m)).collect();
+        let kept: std::collections::BTreeMap<&String, &Option<String>> = (hovers.iter())
+            .filter(|((u, n), _)| u == uri && !own.contains(n))
+            // one that found no documentation may find it once a manual is mined: not kept for later
+            .filter(|(_, m)| !m.as_ref().is_some_and(|m| m.contains(crate::queries::said::NONE)))
+            .map(|((_, n), m)| (n, m))
+            .collect();
         if let Ok(bytes) = serde_json::to_vec(&kept) {
             let temporary = path.with_extension("tmp");
             if std::fs::write(&temporary, bytes).is_ok() {
@@ -1661,6 +1905,65 @@ impl Engine {
         let pause = Duration::from_millis(self.cfg.type_plugins.typing.pause_ms);
         let rest = pause.checked_sub(self.heard?.elapsed())?;
         (!self.prefill.is_empty() && !rest.is_zero()).then_some(rest)
+    }
+
+    /// Idle work after a run's findings went out: what a completion and a hover read of the
+    /// whole run ([`handlers::warm`]). Stops at its next pause for a message the engine must
+    /// take itself (one that only reads is answered in the pause), and is then tried again; a
+    /// part it finished stays. A run replaced meanwhile is not built for.
+    fn settle(&mut self) {
+        let Some(analysis) = self.settle.take() else { return };
+        if !self.docs.values().any(|d| d.analysis.as_ref().is_some_and(|a| Rc::ptr_eq(a, &analysis))) {
+            return;
+        }
+        let (queue, had) = (self.deferred.clone(), self.deferred.borrow().len());
+        let waits = move || queue.borrow().len() > had;
+        let done = crate::analysis::probe::abandonable(Box::new(waits), || {
+            self.serving(|_| handlers::warm(&analysis));
+        });
+        if done.is_none() {
+            self.settle = Some(analysis);
+        }
+    }
+
+    /// Idle work for the next edit: places the checkpoints an edit on the caret's line resumes
+    /// from and meets the last run at ([`crate::analysis::machine::Checkpoints::place_at`]),
+    /// so the first word typed at a place runs its paragraph, not the text from the last
+    /// checkpoint before it. Stops for any message, and is then tried again.
+    fn place_ahead(&mut self) {
+        let Some((uri, line)) = self.caret.take() else { return };
+        let Some(doc) = self.docs.get(&uri) else { return };
+        let Some(analysis) = doc.analysis.clone().filter(|_| doc.analyzed.as_ref() == Some(&doc.text)) else { return };
+        let same = |p: &(Uri, u32, std::rc::Weak<Analysis>)| {
+            p.0 == uri && p.1 == line && p.2.upgrade().is_some_and(|a| Rc::ptr_eq(&a, &analysis))
+        };
+        if self.placed.as_ref().is_some_and(same) || !self.dirty.is_empty() {
+            return;
+        }
+        let file = doc.path.clone();
+        let key = canonical(&file);
+        let root = match self.checkpoints.contains_key(&key) {
+            true => Some(key),
+            false => self.owners.get(&key).map(|root| canonical(root)).filter(|r| self.checkpoints.contains_key(r)),
+        };
+        let Some(root) = root else { return };
+        for doc in self.docs.values() {
+            crate::project::overlay::set(&doc.path, doc.text.clone());
+        }
+        let source = crate::project::overlay::read_to_string(&root).unwrap_or_default();
+        let done = self.serving(|engine| {
+            let checkpoints = engine.checkpoints.get_mut(&root)?;
+            crate::analysis::probe::background(|| {
+                crate::util::progress::because("checkpoints placed at the caret", || {
+                    checkpoints.place_at(&source, &file, line)
+                })
+            })
+        });
+        match done {
+            Some(_) => self.placed = Some((uri, line, Rc::downgrade(&analysis))),
+            // A message came first: placed once the engine is idle again.
+            None => self.caret = self.caret.take().or(Some((uri, line))),
+        }
     }
 
     /// One queued hover, computed and kept; once the queue of a document is
@@ -1751,8 +2054,28 @@ impl Engine {
         self.analyze(uri);
     }
 
+    /// One message. A panic in it ends that message, not the server: it is
+    /// reported, the asker gets an error (its reply channel is dropped), and
+    /// the next message is served from the state the engine has.
     fn step(&mut self, msg: EngineMsg) {
+        let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.serve(msg)));
+        if let Err(payload) = run {
+            let payload = crate::analysis::probe::pass_abandoned(payload);
+            let what = payload.downcast_ref::<&str>().map(|s| s.to_string());
+            let what = what.or_else(|| payload.downcast_ref::<String>().cloned()).unwrap_or_default();
+            eprintln!("satex hit a bug serving a message and goes on ({what}). Please report it");
+        }
+    }
+
+    fn serve(&mut self, msg: EngineMsg) {
         self.heard = Some(std::time::Instant::now());
+        if let EngineMsg::CodeAction(uri, at, _)
+        | EngineMsg::Highlight(uri, at, _)
+        | EngineMsg::Completion(uri, at, _)
+        | EngineMsg::SignatureHelp(uri, at, _) = &msg
+        {
+            self.caret = Some((uri.clone(), at.line + 1));
+        }
         if matches!(msg, EngineMsg::Open(..) | EngineMsg::Change(..)) {
             self.taken += 1;
         }
@@ -1773,6 +2096,12 @@ impl Engine {
                 // so a request never waits out a whole run.
                 if let Some(doc) = self.docs.get_mut(&uri) {
                     self.edited.insert(uri.clone(), std::time::Instant::now());
+                    // A document is its own root: one that was no document a while (emptied, then
+                    // written or pasted again) is no orphan any more, whichever way its findings
+                    // come next (a run, or the last run reused for the edit).
+                    if discovery::is_document(&text) {
+                        self.orphans.remove(&canonical(&doc.path));
+                    }
                     doc.text = text;
                     doc.version = version.unwrap_or(doc.version);
                     self.first(&uri);
@@ -1783,7 +2112,7 @@ impl Engine {
                 self.edited.remove(&uri);
                 self.store_hovers(&uri);
                 self.stores.remove(&uri);
-                self.docs.remove(&uri);
+                let closed = self.docs.remove(&uri).map(|d| d.path);
                 self.actions.remove(&uri);
                 self.dirty.retain(|d| d != &uri);
                 self.preambles.remove(&uri);
@@ -1791,6 +2120,16 @@ impl Engine {
                 self.prefill.retain(|(u, _)| u != &uri);
                 if let Ok(mut hovers) = self.hovers.lock() {
                     hovers.retain(|(u, _), _| u != &uri);
+                }
+                // A closed buffer is read from disk again: discarded unsaved text
+                // changes what the other documents' runs read.
+                if let Some(path) = closed {
+                    let unsaved = crate::project::overlay::text(&path)
+                        .is_some_and(|text| std::fs::read_to_string(&path).ok().as_deref() != Some(text.as_str()));
+                    crate::project::overlay::remove(&path);
+                    if unsaved {
+                        self.outside_changed();
+                    }
                 }
             }
             msg @ (EngineMsg::Hover(..)
@@ -1859,14 +2198,20 @@ impl Engine {
                 self.fresh(&uri);
                 let mut out = self.actions.get(&uri).cloned().unwrap_or_default();
                 let path = self.docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-                let typed = with_doc(&self.docs, &uri, |analysis, text| {
-                    plugins::actions(analysis, text, &path, handlers::to_pos(text, pos))
+                let docs = &self.docs;
+                let typed = with_doc(docs, &uri, |analysis, text| {
+                    snapshot::with_open(root_open(docs, analysis, &path), || {
+                        plugins::actions(analysis, text, &path, handlers::to_pos(text, pos))
+                    })
                 });
                 out.extend(typed.into_iter().flatten().map(|a| serde_json::to_value(a).unwrap_or_default()));
                 let _ = reply.send(out);
             }
             EngineMsg::Style(code, choice, reply) => {
                 let _ = reply.send(self.answer_style(code, choice));
+            }
+            EngineMsg::NewDocument(params, reply) => {
+                let _ = reply.send(crate::lsp::templates::request(&params, &self.cfg.templates));
             }
             EngineMsg::ExecuteCommand(body, reply) => {
                 // An open document's own analysis answers; another file is run.
@@ -1906,6 +2251,15 @@ impl Engine {
             }
         }
     }
+}
+
+/// A `satex/query` about an open document, from the analysis it has: the last finished run's
+/// while another goes on. `None` where no open document's analysis answers it.
+#[cfg(target_os = "emscripten")]
+fn held_query(docs: &HashMap<Uri, Doc>, body: &Json) -> Option<Vec<Json>> {
+    let file = body.get("file").and_then(Json::as_str).map(PathBuf::from);
+    let (uri, _) = docs.iter().find(|(_, d)| file.as_ref().is_none_or(|f| *f == d.path))?;
+    with_doc(docs, uri, |a, text| crate::cli::query::answer_request(body, a, text.body()))?
 }
 
 /// Answers `msg` from the analyses in `docs` when it only reads one; any
@@ -2124,16 +2478,30 @@ fn answer(docs: &HashMap<Uri, Doc>, hovers: &Hovers, blank: Option<&Analysis>, m
                 Ask::Actions(u, _) | Ask::Open(u, _) | Ask::Apply(u, _) => u.clone(),
             };
             let path = docs.get(&uri).map(|d| d.path.display().to_string()).unwrap_or_default();
-            let result = with_doc(docs, &uri, |analysis, text| match ask {
-                Ask::Actions(_, range) => Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range))),
-                Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
-                Ask::Apply(_, p) if p["kind"] == "snapshot" => snapshot::apply(analysis, text, &p),
-                Ask::Apply(_, p) if p["kind"] == "columns" => Ok(dialogs::widths(analysis, text, &path)),
-                Ask::Apply(_, p) => {
-                    let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
-                    let kind = p["kind"].as_str().unwrap_or_default();
-                    dialogs::apply(analysis, text, kind, range, &p["state"], p["op"].as_str())
-                }
+            let result = with_doc(docs, &uri, |analysis, text| {
+                snapshot::with_open(root_open(docs, analysis, &path), || match ask {
+                    Ask::Actions(_, range) => {
+                        Ok(Json::Array(dialogs::actions(analysis, text, &path, uri.as_str(), range)))
+                    }
+                    Ask::Open(_, pos) => Ok(dialogs::dialog(analysis, text, &path, pos).unwrap_or(Json::Null)),
+                    Ask::Apply(_, p) if p["kind"] == "snapshot" => {
+                        snapshot::apply(analysis, text, type_at::file_of(analysis, &path), &p)
+                    }
+                    Ask::Apply(_, p) if p["kind"] == "columns" => Ok(dialogs::widths(analysis, text, &path)),
+                    Ask::Apply(_, p) => {
+                        let range = serde_json::from_value(p["range"].clone()).map_err(|e| e.to_string())?;
+                        let kind = p["kind"].as_str().unwrap_or_default();
+                        dialogs::apply(
+                            analysis,
+                            text,
+                            type_at::file_of(analysis, &path),
+                            kind,
+                            range,
+                            &p["state"],
+                            p["op"].as_str(),
+                        )
+                    }
+                })
             });
             let _ = reply.send(result.unwrap_or(Ok(Json::Null)));
         }
@@ -2187,11 +2555,31 @@ fn with_link(markdown: Option<String>, link: Option<String>) -> Option<String> {
 
 fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) {
     loop {
-        let received = if let Some(msg) = engine.deferred.pop_front() {
+        let deferred = engine.deferred.borrow_mut().pop_front();
+        let received = if let Some(msg) = deferred {
             Ok(msg)
         } else if !engine.dirty.is_empty() {
             // Only the rest of the window since the last run: typing after a pause runs at once.
             rx.recv_timeout(debounce.saturating_sub(engine.flushed.map_or(debounce, |t| t.elapsed())))
+        } else if engine.caret.is_some() || engine.settle.is_some() {
+            // Idle: the last run's data for requests, then the caret's checkpoints, unless a
+            // message waits. No pause first: both stop for the next message, and the first key
+            // may come soon.
+            crate::analysis::probe::WANTED.store(false, std::sync::atomic::Ordering::Relaxed);
+            match rx.try_recv() {
+                Ok(msg) => Ok(msg),
+                Err(TryRecvError::Empty) => {
+                    match engine.settle.is_some() {
+                        true => engine.settle(),
+                        false => engine.place_ahead(),
+                    }
+                    if engine.prefill.is_empty() {
+                        crate::util::progress::idle();
+                    }
+                    continue;
+                }
+                Err(TryRecvError::Disconnected) => Err(RecvTimeoutError::Disconnected),
+            }
         } else if let Some(rest) = engine.prefill_waits() {
             // Typing or asking: a hover computed ahead would hold the next request.
             match rx.recv_timeout(rest) {
@@ -2223,6 +2611,9 @@ fn engine_loop(rx: Receiver<EngineMsg>, mut engine: Engine, debounce: Duration) 
         engine.rest();
     }
 }
+
+/// How many rules the `-vv` note after a run names, slowest first.
+const SLOW_RULES: usize = 8;
 
 /// [`Engine::notify_now`] through `outbox`.
 fn notify_to(outbox: &Sender<Notification>, note: Notification) {
@@ -2300,13 +2691,25 @@ fn publish(
         let Some(group_uri) = group.get("uri").and_then(Json::as_str).and_then(|s| s.parse::<Uri>().ok()) else {
             continue;
         };
-        let diagnostics =
+        let diagnostics: Vec<lsp_types::Diagnostic> =
             group.get("diagnostics").cloned().and_then(|d| serde_json::from_value(d).ok()).unwrap_or_default();
-        let code_actions = group.get("codeActions").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+        let mut code_actions = group.get("codeActions").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+        code_actions.extend(ignore_actions(&group_uri, &diagnostics));
         actions.insert(group_uri.clone(), code_actions);
         published.push(PublishDiagnosticsParams { uri: group_uri, diagnostics, version: None });
     }
     published
+}
+
+/// The root's open buffer when `path` is another file of its run (an `\\input` one), by the run's path: a write's root
+/// loads read it ([`snapshot::with_open`]), not the disk's older text.
+fn root_open(docs: &HashMap<Uri, Doc>, analysis: &Analysis, path: &str) -> Vec<(String, String)> {
+    let Some(begin) = crate::linter::shared::document_start(analysis) else { return Vec::new() };
+    let root = analysis.file_name(begin.file);
+    if Path::new(root) == Path::new(path) {
+        return Vec::new();
+    }
+    docs.values().filter(|d| d.path == Path::new(root)).take(1).map(|d| (root.to_string(), d.text.clone())).collect()
 }
 
 /// Runs `f` against `uri`'s [`Analysis`] and a [`Text`] of its current

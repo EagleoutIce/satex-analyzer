@@ -11,24 +11,12 @@ use crate::engine::env::{Binding, Env};
 use crate::engine::tex::{Interner, Meaning, Span, Sym};
 use crate::engine::value::Value;
 
-/// Cache version: different encodings get different files.
-const ENCODING_VERSION: u32 = 9;
-/// The encoding of the package caches, versioned apart from the kernel's.
-pub(crate) const PACKAGE_ENCODING_VERSION: u32 = 14;
-
-/// What a cache means, bumped by hand whenever the interpreter would
-/// analyse a cached file differently. Caches are keyed on it, not on the
-/// source, so builds of one version share them across machines.
-/// `tests/it/cache_semantics.rs` fails when the analysis changes without a bump.
-pub const SEMANTIC_VERSION: u32 = 2;
-
-/// The key every cache file name carries: `s⟨SEMANTIC_VERSION⟩`. A build
-/// outside the `release` profile appends its source digest (build.rs), so a
-/// developer's edits between bumps never replay a stale local cache.
+/// The key every cache file name carries: the digest build.rs takes of the
+/// interpreter's source. An edit to what a cache holds or how it is encoded
+/// changes it, so no version is bumped by hand. Builds of one source share
+/// their caches across machines.
 pub fn cache_key() -> &'static str {
-    static KEY: std::sync::LazyLock<String> =
-        std::sync::LazyLock::new(|| format!("s{SEMANTIC_VERSION}{}", env!("SATEX_CACHE_GUARD")));
-    &KEY
+    env!("SATEX_CACHE_GUARD")
 }
 
 /// [`Severity`] by index, so a cache stores a byte and not a name.
@@ -44,7 +32,6 @@ type CachedDiagnostic = (u8, String, String, Span, u32);
 /// interpreter reads and writes it while it starts a run.
 #[derive(Serialize, Deserialize)]
 pub struct Format {
-    version: u32,
     /// The kernel file, as [`Roots::encode`] writes it.
     source: String,
     names: Vec<String>,
@@ -59,7 +46,7 @@ pub struct Format {
     hashes: Vec<Option<u64>>,
     /// Where the kernel defined each name, so that `explain` can point at
     /// `latex.ltx:1234` for a name the cache brought in.
-    sites: Vec<(u32, u16, u32)>,
+    sites: Vec<(u32, u16, u32, u32)>,
     /// [`Env::aliases`]: which primitive each copy the kernel made is.
     aliases: Vec<(u32, u32)>,
     /// The patterns of names the kernel may have defined from unknown text.
@@ -308,7 +295,7 @@ pub(crate) fn digest(bytes: &[u8]) -> u64 {
     hash.0
 }
 
-/// Cache file per installation, engine, semantic version and preload. The
+/// Cache file per installation, engine, interpreter and preload. The
 /// kernel source is keyed as its root writes it ([`Roots::encode`]), so a
 /// copied tree finds the same cache; outside every root it is canonicalized
 /// first, so one `latex.ltx` reached by two paths is one cache.
@@ -322,7 +309,7 @@ pub(crate) fn cache_file(dir: &Path, source: &Path, engine: &str, preload: u64, 
     let mut hash = digest(named.as_bytes());
     hash ^= digest(engine.as_bytes());
     hash ^= preload;
-    dir.join(format!("{}{}-{hash:08x}.postcard", family(source, engine), cache_key()))
+    dir.join(format!("{}-{}-{hash:08x}.postcard", family(source, engine), cache_key()))
 }
 
 /// What a kernel cache the run wanted and did not find can be told from the
@@ -355,9 +342,8 @@ engine or the preloaded format differs"
     }
 }
 
-/// A cache file name as `(family, key, hash)`: `⟨family⟩-⟨key⟩-⟨hash⟩.postcard`,
-/// the family ending in `-v⟨encoding⟩`.  The key is the whole segment, so
-/// `s1` is not the key of `s1d0123…`.
+/// A cache file name as `(family, key, hash)`: `⟨family⟩-⟨key⟩-⟨hash⟩.postcard`.
+/// The key is the whole segment, so `d01` is not the key of `d0123…`.
 fn split_cache_name(name: &str) -> Option<(&str, &str, &str)> {
     let (rest, hash) = name.strip_suffix(".postcard")?.rsplit_once('-')?;
     let (family, key) = rest.rsplit_once('-')?;
@@ -367,20 +353,18 @@ fn split_cache_name(name: &str) -> Option<(&str, &str, &str)> {
 /// The package or class a cache file holds, `None` for a kernel or an index.
 pub(crate) fn cache_holds(name: &str) -> Option<&str> {
     let (family, ..) = split_cache_name(name)?;
-    family.strip_prefix("package-")?.rsplit_once("-v").map(|(held, _)| held)
+    family.strip_prefix("package-")
 }
 
-/// Whether a cache file name is one this build can use: its key and encoding.
+/// Whether a cache file name is one this build can use: its key.
 pub(crate) fn is_current_cache(name: &str) -> bool {
-    let version = if name.starts_with("package-") { PACKAGE_ENCODING_VERSION } else { ENCODING_VERSION };
     (name.starts_with("format-") || name.starts_with("package-"))
-        && split_cache_name(name)
-            .is_some_and(|(family, key, _)| key == cache_key() && family.ends_with(&format!("-v{version}")))
+        && split_cache_name(name).is_some_and(|(_, key, _)| key == cache_key())
 }
 
 /// The part of a cache name every interpreter version shares.
 fn family(source: &Path, engine: &str) -> String {
-    format!("format-{engine}-{}-v{ENCODING_VERSION}-", release_name(source))
+    format!("format-{engine}-{}", release_name(source))
 }
 
 /// How many caches of other interpreter versions a family keeps whatever
@@ -390,21 +374,11 @@ fn family(source: &Path, engine: &str) -> String {
 pub(crate) const KEEP_OTHER_VERSIONS: usize = 4;
 
 /// Remove the caches other interpreter versions left for this family, once
-/// they no longer fit within `bound` bytes, and everything of an older
-/// encoding.  A kernel cache costs minutes to build, so the rule is the
-/// configured size and not a count: a count evicts caches a run would have
-/// reused while the cache directory is nearly empty.
+/// they no longer fit within `bound` bytes.  A kernel cache costs minutes to
+/// build, so the rule is the configured size and not a count: a count evicts
+/// caches a run would have reused while the cache directory is nearly empty.
 fn prune(dir: &Path, source: &Path, engine: &str, bound: u64) {
-    let family = family(source, engine);
-    prune_family(dir, &family, cache_key(), bound);
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if name.starts_with("format-") && cache_name_parts(name).is_some_and(|(_, v, _)| older(v, ENCODING_VERSION)) {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    prune_family(dir, &family(source, engine), cache_key(), bound);
 }
 
 /// Delete `path` and the lock beside it: a lock left behind outlives every
@@ -423,18 +397,16 @@ fn remove_with_lock(path: &Path) -> bool {
     removed
 }
 
-/// Keep the caches whose name starts with `family` and were written by this
-/// interpreter, the [`KEEP_OTHER_VERSIONS`] most recent other ones, and any
-/// further ones that still fit within `bound` bytes (0: no bound).
+/// Keep the caches of `family` written by this interpreter, the
+/// [`KEEP_OTHER_VERSIONS`] most recent other ones, and any further ones that
+/// still fit within `bound` bytes (0: no bound).
 pub(crate) fn prune_family(dir: &Path, family: &str, interpreter: &str, bound: u64) {
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     let mut others: Vec<(std::time::SystemTime, u64, PathBuf)> = entries
         .flatten()
         .filter(|entry| {
             let name = entry.file_name();
-            let name = name.to_string_lossy();
-            name.ends_with(".postcard")
-                && name.strip_prefix(family).is_some_and(|rest| rest.split('-').next() != Some(interpreter))
+            split_cache_name(&name.to_string_lossy()).is_some_and(|(f, key, _)| f == family && key != interpreter)
         })
         .filter_map(|entry| {
             let meta = entry.metadata().ok()?;
@@ -451,12 +423,6 @@ pub(crate) fn prune_family(dir: &Path, family: &str, interpreter: &str, bound: u
     }
 }
 
-/// Whether a cache's encoding `version` is older than `ours`.  A newer one
-/// belongs to a newer satex sharing the directory and is left to it.
-fn older(version: &str, ours: u32) -> bool {
-    version.parse::<u32>().map_or(true, |v| v < ours)
-}
-
 /// What [`prune_caches`] removed.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct Pruned {
@@ -464,24 +430,13 @@ pub struct Pruned {
     pub bytes: u64,
 }
 
-/// The encoding version and interpreter digest a cache file name carries:
-/// `…-v⟨encoding⟩-⟨interpreter⟩-⟨key⟩.postcard`.
-fn cache_name_parts(name: &str) -> Option<(&str, &str, &str)> {
-    let stem = name.strip_suffix(".postcard")?;
-    let mut parts = stem.rsplitn(3, '-');
-    let (_, interpreter, rest) = (parts.next()?, parts.next()?, parts.next()?);
-    let (family, version) = rest.rsplit_once("-v")?;
-    Some((family, version, interpreter))
-}
-
-/// Delete the caches no build can use any more: kernel caches of another
-/// encoding or beyond the [`KEEP_OTHER_VERSIONS`] newest of other
-/// interpreters, package caches of another encoding (`package_encoding` is
-/// current) or of an interpreter that has no kernel cache left, lock files
-/// no cache and no process holds, and then the least recently used caches
-/// beyond `bound` bytes over the whole directory (0: no bound).  This
-/// build's own kernel cache is never dropped for size.
-pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
+/// Delete the caches no build can use any more: kernel caches beyond the
+/// [`KEEP_OTHER_VERSIONS`] newest of other interpreters, package caches of
+/// an interpreter that has no kernel cache left, lock files no cache and no
+/// process holds, and then the least recently used caches beyond `bound`
+/// bytes over the whole directory (0: no bound).  This build's own kernel
+/// cache is never dropped for size.
+pub fn prune_caches(dir: &Path, bound: u64) -> Pruned {
     let mut pruned = Pruned::default();
     let Ok(entries) = std::fs::read_dir(dir) else { return pruned };
     let mut kernels = Vec::new();
@@ -501,7 +456,7 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
             let _ = std::fs::remove_file(entry.path());
             continue;
         }
-        let Some((family, version, interpreter)) = cache_name_parts(&name) else {
+        let Some((family, interpreter, _)) = split_cache_name(&name) else {
             if name.ends_with(".postcard") {
                 others.push((stamp, meta.len(), entry.path()));
             }
@@ -509,9 +464,9 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
         };
         let item = (stamp, meta.len(), entry.path(), interpreter.to_string());
         if family.starts_with("format-") {
-            kernels.push((!older(version, ENCODING_VERSION), item));
+            kernels.push(item);
         } else if family.starts_with("package-") {
-            packages.push((!older(version, package_encoding), item));
+            packages.push(item);
         } else {
             others.push((stamp, meta.len(), entry.path()));
         }
@@ -523,15 +478,11 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
         }
     };
     let mut live: crate::fixed::HashSet<String> = [cache_key().to_string()].into_iter().collect();
-    let mut current = Vec::new();
-    for (ok, item) in kernels {
-        if ok { current.push(item) } else { remove(&item.2, item.1) }
-    }
-    current.sort_by_key(|(stamp, ..)| std::cmp::Reverse(*stamp));
+    kernels.sort_by_key(|(stamp, ..)| std::cmp::Reverse(*stamp));
     let mut foreign = 0;
     // (stamp, bytes, path, may be dropped for size)
     let mut kept: Vec<(std::time::SystemTime, u64, PathBuf, bool)> = Vec::new();
-    for (stamp, bytes, path, interpreter) in current {
+    for (stamp, bytes, path, interpreter) in kernels {
         if interpreter == cache_key() {
             kept.push((stamp, bytes, path, false));
         } else if foreign < KEEP_OTHER_VERSIONS {
@@ -542,8 +493,8 @@ pub fn prune_caches(dir: &Path, package_encoding: u32, bound: u64) -> Pruned {
             remove(&path, bytes);
         }
     }
-    for (ok, (stamp, bytes, path, interpreter)) in packages {
-        if ok && live.contains(&interpreter) {
+    for (stamp, bytes, path, interpreter) in packages {
+        if live.contains(&interpreter) {
             kept.push((stamp, bytes, path, true));
         } else {
             remove(&path, bytes);
@@ -741,7 +692,7 @@ impl Format {
         interner: &Interner,
         env: &Env,
         files: Vec<(String, LoadKind)>,
-        sites: Vec<(u32, u16, u32)>,
+        sites: Vec<(u32, u16, u32, u32)>,
         wild: &crate::analysis::machine::Wild,
         roots: &Roots,
     ) -> Option<Format> {
@@ -760,7 +711,6 @@ impl Format {
             })
             .collect();
         Some(Format {
-            version: ENCODING_VERSION,
             source: roots.encode(&source.display().to_string()),
             names: (0..interner.len()).map(|i| interner.name(Sym(i as u32)).to_string()).collect(),
             bindings,
@@ -893,7 +843,7 @@ impl Format {
         self
     }
 
-    pub fn sites(&self) -> &[(u32, u16, u32)] {
+    pub fn sites(&self) -> &[(u32, u16, u32, u32)] {
         &self.sites
     }
 
@@ -1008,7 +958,6 @@ mod tests {
         env.set(name, Binding::builtin(Meaning::Macro(Rc::new(mac))), true);
         env.set_value(name, Value::Dimen(65536), true);
         Format {
-            version: ENCODING_VERSION,
             source: "latex.ltx".into(),
             names: (0..interner.len()).map(|i| interner.name(Sym(i as u32)).to_string()).collect(),
             bindings: (0..interner.len() as u32)
@@ -1072,10 +1021,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("satex-locks-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let family = "format-pdftex-2026-v9-";
+        let family = "format-pdftex-2026";
         let make = |interpreter: &str, key: &str, bytes: u64| {
             for extension in ["postcard", "lock"] {
-                let path = dir.join(format!("{family}{interpreter}-{key}.{extension}"));
+                let path = dir.join(format!("{family}-{interpreter}-{key}.{extension}"));
                 let file = std::fs::File::create(&path).unwrap();
                 if extension == "postcard" {
                     file.set_len(bytes).unwrap();
@@ -1104,8 +1053,8 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("satex-held-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let family = "format-pdftex-2026-v9-";
-        let path = |interpreter: &str| dir.join(format!("{family}{interpreter}-1.postcard"));
+        let family = "format-pdftex-2026";
+        let path = |interpreter: &str| dir.join(format!("{family}-{interpreter}-1.postcard"));
         // Six other builds, newest first: the four most recent are kept
         // whatever the bound says, so `held` and `also` are the two the
         // bound would evict.
@@ -1134,13 +1083,14 @@ mod tests {
     #[test]
     fn a_cache_key_is_a_whole_name_segment() {
         let key = cache_key();
-        let name = |key: &str| format!("format-pdftex-2026-v{ENCODING_VERSION}-{key}-0123.postcard");
+        let name = |key: &str| format!("format-pdftex-2026-{key}-0123.postcard");
         assert!(is_current_cache(&name(key)));
         assert!(!is_current_cache(&name(&format!("{key}d0123456789abcdef"))));
         assert!(!is_current_cache(&name(&key[..key.len() - 1])));
-        let package = PACKAGE_ENCODING_VERSION;
-        assert!(is_current_cache(&format!("package-a-v{package}-{key}-0123.postcard")));
-        assert!(!is_current_cache(&format!("package-a-v{}-{key}-0123.postcard", package + 1)));
+        assert!(is_current_cache(&format!("package-a-{key}-0123.postcard")));
+        assert_eq!(cache_holds(&format!("package-koma-script-{key}-0123.postcard")), Some("koma-script"));
+        // A name from before keys replaced encoding versions is another build's.
+        assert!(!is_current_cache(&format!("format-pdftex-2026-v9-s2{key}-0123.postcard")));
         // A build whose key extends this one's is another build to `miss_reason`.
         let dir = std::env::temp_dir().join(format!("satex-miss-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -1166,30 +1116,34 @@ mod tests {
             f.set_len(bytes).unwrap();
             f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age)).unwrap();
         };
-        let other = "0123456789abcdef";
-        file(&format!("format-pdftex-2026-v{ENCODING_VERSION}-{key}-1.postcard"), 10, 0);
-        file(&format!("format-pdftex-2026-v{}-{key}-1.postcard", ENCODING_VERSION - 1), 10, 0);
-        // A newer satex's kernel is its own to prune.
-        let newer = format!("format-pdftex-2026-v{}-fedcba9876543210-1.postcard", ENCODING_VERSION + 1);
-        file(&newer, 10, 0);
-        // Current encoding, live interpreter: kept while the bound allows.
-        file(&format!("package-a-v5-{key}-1.postcard"), 100, 0);
-        file(&format!("package-b-v5-{key}-1.postcard"), 100, 50);
-        file(&format!("package-c-v5-{key}-1.postcard"), 100, 100);
-        // Another encoding, or an interpreter without a kernel cache: dead.
-        file(&format!("package-a-v4-{key}-1.postcard"), 100, 0);
-        file(&format!("package-a-v5-{other}-1.postcard"), 100, 0);
-        let pruned = prune_caches(&dir, 5, 250);
+        file(&format!("format-pdftex-2026-{key}-1.postcard"), 10, 0);
+        // Other builds' kernels: the newest KEEP_OTHER_VERSIONS stay, older ones go.
+        let others: Vec<String> = (0..=KEEP_OTHER_VERSIONS).map(|i| format!("d{i:016x}")).collect();
+        for (age, other) in others.iter().enumerate() {
+            file(&format!("format-pdftex-2026-{other}-1.postcard"), 10, age as u64 + 1);
+        }
+        let dropped = others.last().unwrap();
+        // This build's packages: kept while the bound allows.
+        file(&format!("package-a-{key}-1.postcard"), 100, 0);
+        file(&format!("package-b-{key}-1.postcard"), 100, 50);
+        file(&format!("package-c-{key}-1.postcard"), 100, 100);
+        // An interpreter without a kernel cache, or a name no build writes: dead or bounded.
+        file(&format!("package-a-{dropped}-1.postcard"), 100, 0);
+        file("package-a-v16-s2d0-1.postcard", 100, 200);
+        let pruned = prune_caches(&dir, 250 + 10 * KEEP_OTHER_VERSIONS as u64);
         let mut left: Vec<String> =
             std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
         left.sort();
         assert_eq!(pruned.files, 4, "{left:?}");
-        let mut kept = [
-            format!("format-pdftex-2026-v{ENCODING_VERSION}-{key}-1.postcard"),
-            newer,
-            format!("package-a-v5-{key}-1.postcard"),
-            format!("package-b-v5-{key}-1.postcard"),
-        ];
+        let mut kept: Vec<String> = others[..KEEP_OTHER_VERSIONS]
+            .iter()
+            .map(|o| format!("format-pdftex-2026-{o}-1.postcard"))
+            .chain([
+                format!("format-pdftex-2026-{key}-1.postcard"),
+                format!("package-a-{key}-1.postcard"),
+                format!("package-b-{key}-1.postcard"),
+            ])
+            .collect();
         kept.sort();
         assert_eq!(left, kept);
         let _ = std::fs::remove_dir_all(&dir);

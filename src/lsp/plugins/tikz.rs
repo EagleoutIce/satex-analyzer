@@ -1,10 +1,10 @@
 //! Drawings: in a `tikzpicture` the run met, "Edit drawing…" opens a canvas (`views.js`
 //! `drawing`). The run gives the nodes it made, with the shape, center and size pgf stored for
 //! each (`pgf@sh@ns@`, `pgf@sh@np@`, `pgf@sh@nt@`); the dialog parses the picture's text, edits
-//! nodes and arrows and writes back the text it did not touch as it was. On a blank line of the
-//! document body, "New drawing…" and "Insert tikzpicture".
+//! nodes and arrows and writes back the text it did not touch as it was. In a picture, "Strut every
+//! node"; on a blank line of the document body, "New drawing…" and "Insert tikzpicture".
 
-use super::{Cx, Hit, TypePlugin, rewrite};
+use super::{Cx, Hit, TypePlugin, rewrite_rooted};
 use crate::analysis::machine::Analysis;
 use crate::analysis::roles::{Ty, braced_groups};
 use crate::lsp::handlers::to_pos;
@@ -42,13 +42,18 @@ impl TypePlugin for Tikz {
         cfg.tikz.enabled
     }
 
-    /// Outside a picture, on a blank line of the body: a picture to start from.
+    /// In a picture: its nodes strutted. Outside, on a blank line of the body: a picture to start from.
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
+        if let Some(p) = super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
+            return strut(cx, &p).into_iter().collect();
+        }
         let Some(new) = super::blank(cx, ENV, "tikz") else { return Vec::new() };
         let node = Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, "tikz") };
-        let Ok((edits, notes)) = snapshot::printed(cx.analysis, cx.doc, &[node]) else { return Vec::new() };
+        let Ok((edits, notes, roots)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else {
+            return Vec::new();
+        };
         let note: String = notes.iter().map(|n| format!(" ({n})")).collect();
-        vec![rewrite(cx, format!("Insert tikzpicture{note}"), snapshot::lsp_edits(cx.doc, edits))]
+        vec![rewrite_rooted(cx, format!("Insert tikzpicture{note}"), snapshot::lsp_edits(cx.doc, edits), roots)]
     }
 
     fn view(&self, cx: &Cx, _hit: &Hit) -> Option<Json> {
@@ -86,9 +91,32 @@ impl TypePlugin for Tikz {
     }
 }
 
+/// TikZ's key setting `\strut` first in a node's text, so every node of a line has its height and
+/// depth: offered when the run defines both the key and `\strut`.
+pub(super) fn strut_key(a: &Analysis) -> Option<&'static str> {
+    let key = "execute at begin node";
+    (a.defined("strut") && a.defined(&format!("pgfk@/tikz/{key}/.@cmd"))).then_some("execute at begin node=\\strut")
+}
+
+/// "Strut every node": the strut key in the picture's `every node` style, unless its options strut already.
+fn strut(cx: &Cx, p: &super::Body) -> Option<CodeAction> {
+    let key = strut_key(cx.analysis)?;
+    let doc = cx.doc;
+    let body = doc.offset(to_pos(doc, p.range.start))?..doc.offset(to_pos(doc, p.range.end))?;
+    let mut node = snapshot::env(doc, doc.body()[..body.start].rfind(&format!("\\begin{{{ENV}}}"))?, body, true)?;
+    let keys = node.args.first_mut()?.keys.as_mut()?;
+    if keys.iter().any(|k| k.value.as_deref().is_some_and(|v| v.contains("\\strut"))) {
+        return None;
+    }
+    keys.push(snapshot::Key { key: "every node/.append style".into(), value: Some(format!("{{{key}}}")) });
+    let (edits, ..) = snapshot::printed(cx.analysis, doc, cx.file(), &[node]).ok()?;
+    Some(super::rewrite(cx, "Strut every node".into(), snapshot::lsp_edits(doc, edits)))
+}
+
 /// What the run declared that a canvas offers: arrow tips (each with TeX's picture once drawn),
 /// colors, node shapes, layers in their order, the keys that put a scope on a layer, the TikZ
-/// libraries loaded and where `\usetikzlibrary` goes for one more. `own`: the picture's bytes.
+/// libraries loaded and where `\usetikzlibrary` goes for one more, the document's text macros.
+/// `own`: the picture's bytes.
 fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
     let a = cx.analysis;
     use crate::queries::preview::{Stroke, arrow_specs, drawn};
@@ -137,7 +165,10 @@ fn facts(cx: &Cx, own: std::ops::Range<usize>) -> Json {
         .map(|s| lsp_types::Position::new(s.line.saturating_sub(1), 0));
     let (keys_of, defs) = tikz_keys(cx, file, own);
     let sample = [crate::queries::preview::SAMPLE_W, crate::queries::preview::SAMPLE_H];
-    json!({ "tips": tips, "colors": colors, "shapes": shapes, "sample": sample, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs })
+    // the document's text macros (`\net` for `Größe-Net`): the canvas shows a label `{\net}` as TeX sets it
+    let macros: serde_json::Map<String, Json> =
+        super::super::writing::own_macros(a).into_iter().map(|(name, body, _)| (name, json!(body))).collect();
+    json!({ "tips": tips, "colors": colors, "shapes": shapes, "sample": sample, "libraries": libraries, "load_at": load_at, "layers": { "declared": declared, "order": order }, "layer_keys": keys, "keys": keys_of, "defs": defs, "macros": macros })
 }
 
 /// Every node shape: the run's (`pgf@sh@s@⟨name⟩`) with the `/pgf/` keys its code reads that

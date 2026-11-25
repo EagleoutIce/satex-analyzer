@@ -43,7 +43,7 @@ pub struct View<'a> {
     /// The mode each of the document's command sites was read in.  Built
     /// the first time a rule asks.
     modes_at: OnceCell<HashMap<Span, Modes>>,
-    expansions: &'a [crate::analysis::facts::Expansion],
+    expansions: &'a crate::fixed::Chunked<crate::analysis::facts::Expansion>,
     /// Which character the run set at a source position, the first one
     /// where several share it.  Built the first time a rule asks.
     at_span: OnceCell<HashMap<Span, usize>>,
@@ -183,11 +183,14 @@ impl<'a> View<'a> {
         self.span(index).is_some_and(|span| self.document(span.file))
     }
 
-    /// [`View::is_ours`], and no [`View::code`]: what a rule that measures
-    /// the font (an italic correction, an accent) may report, in any font
-    /// and mode.
+    /// [`View::is_ours`], [`View::certain`] and no [`View::code`]: what a
+    /// rule that measures the font (an italic correction, an accent) may
+    /// report, in any font and mode.  A character only an undecided path
+    /// sets may be code the analysis lost track of (TikZ path text a
+    /// `\newcommand` body holds, where pgf's parser gave up), so no rule
+    /// reports it.
     pub fn is_prose(&self, index: usize) -> bool {
-        self.is_ours(index) && !self.code(index)
+        self.is_ours(index) && self.certain(index) && !self.code(index)
     }
 
     /// Whether the character is set in the typewriter family, where a
@@ -203,10 +206,10 @@ impl<'a> View<'a> {
         !self.math(index) && !self.code(index) && !self.typewriter(index)
     }
 
-    /// The document's own prose: [`View::is_ours`] and [`View::is_text`].
+    /// The document's own prose: [`View::is_prose`] and [`View::is_text`].
     /// The characters a prose rule may report.
     pub fn is_word_prose(&self, index: usize) -> bool {
-        self.is_ours(index) && self.is_text(index)
+        self.is_prose(index) && self.is_text(index)
     }
 
     /// The document's own formula: what a rule that reads math may report.
@@ -223,6 +226,26 @@ impl<'a> View<'a> {
     /// The character at `index` when it [`View::is_text`].
     pub fn text_char(&self, index: usize) -> Option<char> {
         self.char_at(index).filter(|_| self.is_text(index))
+    }
+
+    /// Whether what the run set at `span` stands in a cell of an alignment (`\\halign`, a
+    /// `tabular`'s): between an alignment's begin and its end, by the run's marks.
+    pub fn in_alignment(&self, span: Span) -> bool {
+        use crate::analysis::facts::Align;
+        // A call's own characters may carry no place (`\\ref`'s number): the first character the
+        // run set from the same line at or after it stands in the same cell.
+        let near =
+            || (span.col..span.col.saturating_add(200)).find_map(|c| self.at_span(Span::new(span.file, span.line, c)));
+        let Some(at) = self.at_span(span).or_else(near) else { return false };
+        let mut depth = 0i32;
+        for (_, mark) in self.text.align.iter().take_while(|(before, _)| *before as usize <= at) {
+            match mark {
+                Align::Begin => depth += 1,
+                Align::End => depth -= 1,
+                _ => {}
+            }
+        }
+        depth > 0
     }
 
     /// Whether the document wrote prose at a source position: no code, and

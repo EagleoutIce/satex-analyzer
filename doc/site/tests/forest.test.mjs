@@ -130,3 +130,75 @@ test('move: before or after the root refused, nothing lost', () => {
   F.settle(t);
   assert.equal(F.emit(t), '\n[A [B][C]]\n');
 });
+
+// Intuition: the edge editor's keys sit on the right node (`parent anchor` on the parent, `child anchor` and the label
+// on the child) and read back as set; a cleared label leaves no key. Pins a label written where forest ignores it.
+test('edges: anchors and labels on the right node, read back', () => {
+  const t = F.parse('\n  [S [NP] [VP]]\n'), [np] = t.root.children;
+  F.setKey(t.root, 'parent anchor', 'east');
+  F.setKey(np, 'child anchor', 'north west');
+  F.setEdgeLabel(np, 'subj', 'left');
+  F.settle(t);
+  const back = F.parse(F.emit(t)), [np2] = back.root.children;
+  assert.equal(F.valOf(back.root, 'parent anchor'), 'east');
+  assert.equal(F.valOf(np2, 'child anchor'), 'north west');
+  assert.deepEqual(F.edgeLabel(np2), { text: 'subj', side: 'left' });
+  F.setEdgeLabel(np2, '', 'left');
+  assert.equal(F.valOf(np2, 'edge label'), null);
+});
+
+// Intuition: a line between two nodes names both (from their text, never a name taken) and is drawn after the tree,
+// where forest runs TikZ code; removing it leaves the text after the tree as it was.
+test('lines: named ends, drawn after the tree, removed cleanly', () => {
+  const text = '\n  [S [NP, name=np] [S]]\n';
+  const t = F.parse(text), [np, s2] = t.root.children;
+  F.link(t, s2, np, ['s']);
+  assert.equal(F.valOf(s2, 'name'), 's2');
+  assert.deepEqual(F.linksOf(t).map((l) => [l.a, l.b, l.opts]), [['s2', 'np', '->']]);
+  F.settle(t);
+  assert.match(F.emit(t), /\]\n  \\draw\[->\] \(s2\) -- \(np\);\n$/);
+  F.unlink(t, 0);
+  assert.equal(t.post, '\n');
+});
+
+// Intuition: level styles and the strut key edit the preamble's key list in place: one `where level=N` per level,
+// emptied keys drop it, the other keys stay. Pins a second `where level=1` added instead of the first changed.
+test('preamble: level styles and for tree keys', () => {
+  const t = F.parse('\n  for tree={draw}\n  [S [NP]]\n');
+  F.setWhereLevel(t, 1, 'fill=red');
+  F.setWhereLevel(t, 1, 'fill=blue');
+  assert.equal(t.pre, '\n  for tree={draw}, where level=1{fill=blue}{}');
+  F.forTreeToggle(t, 'execute at begin node=\\strut', true);
+  assert.deepEqual(F.forTreeKeys(t), ['draw', 'execute at begin node=\\strut']);
+  F.setWhereLevel(t, 1, '');
+  assert.equal(t.pre, '\n  for tree={draw, execute at begin node=\\strut}');
+  const bare = F.parse('\n  [S [NP]]\n');
+  F.setWhereLevel(bare, 0, 'draw');
+  assert.equal(F.emit(bare), '\n  where level=0{draw}{}\n  [S [NP]]\n');
+});
+
+// Intuition: the feature toggles flip a pair's style on the node (abstract ↔ concrete, mandatory ↔ optional, and → or →
+// alternative) with the styles the run named, never two of one pair, and a role without a style is the bare default.
+// Pins a toggle that adds `optional` beside `mandatory`, or offers a group toggle on a leaf.
+test('feature toggles: one style per pair, the run\'s names', () => {
+  const feats = { abstract: 'fm abstract', mandatory: 'fm mandatory', optional: 'optional', or: 'or', alternative: 'fm alternative' };
+  const t = F.parse('\n  [Car, fm abstract [Body, fm mandatory] [Extras, draw [Radio] [Nav]]]\n'), [body, extras] = t.root.children;
+  assert.deepEqual(F.featureToggles(t.root, undefined, feats).map((x) => x.pair), ['kind', 'group']);
+  assert.deepEqual(F.featureToggles(body, t.root, feats).map((x) => x.pair), ['kind', 'edge']);
+  // no concrete style: abstract toggles off and on
+  assert.equal(F.nextFeature(t.root, feats, 'kind'), '');
+  F.setFeature(t.root, feats, 'kind', '');
+  assert.deepEqual(t.root.opts, []);
+  F.setFeature(body, feats, 'edge', F.nextFeature(body, feats, 'edge'));
+  assert.deepEqual(body.opts, ['optional']);
+  const cycle = [];
+  for (let k = 0; k < 3; k++) { F.setFeature(extras, feats, 'group', F.nextFeature(extras, feats, 'group')); cycle.push(F.featureOf(extras, feats, 'group')); }
+  assert.deepEqual(cycle, ['or', 'alternative', '']);
+  assert.deepEqual(extras.opts, ['draw']);
+  assert.equal(F.featureMark('group', ''), '∧');
+  F.settle(t);
+  assert.match(F.emit(t), /\[Car \[Body, optional\] \[Extras, draw/);
+  // a tree using none of the styles (a syntax tree in the same document) gets no toggles
+  assert.equal(F.featuresIn(F.parse('\n  [S [NP] [VP]]\n'), feats), null);
+  assert.equal(F.featuresIn(F.parse('\n  [Car [Body, fm mandatory]]\n'), feats), feats);
+});

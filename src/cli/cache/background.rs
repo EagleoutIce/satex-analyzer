@@ -159,7 +159,7 @@ fn file(dir: &Path, ext: &str) -> PathBuf {
 
 /// An exclusive lock on `path`, held while the file lives. `Ok(None)` when
 /// another process holds it; `Err` when it cannot be opened at all.
-fn try_lock(path: &Path) -> std::io::Result<Option<std::fs::File>> {
+pub(crate) fn try_lock(path: &Path) -> std::io::Result<Option<std::fs::File>> {
     let file = std::fs::File::options().read(true).write(true).create(true).truncate(false).open(path)?;
     match file.try_lock() {
         Ok(()) => Ok(Some(file)),
@@ -249,6 +249,11 @@ fn home(dir: &Path) -> &Path {
     dir.ancestors().last().unwrap_or(dir)
 }
 
+/// `nice`, where this machine has it.
+pub(crate) fn nice() -> Option<PathBuf> {
+    nice_of(&NICE)
+}
+
 /// The first of `candidates` that is an absolute path to a file.
 fn nice_of(candidates: &[&str]) -> Option<PathBuf> {
     candidates.iter().map(PathBuf::from).find(|p| p.is_absolute() && p.is_file())
@@ -272,7 +277,7 @@ fn creation_flags(breakaway: bool) -> u32 {
 /// under `nice -n 19` where there is one, Windows' idle class.
 // Unix reads `nice`, Windows `breakaway`.
 #[allow(unused_variables)]
-fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std::process::Command {
+pub(crate) fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std::process::Command {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -285,6 +290,9 @@ fn detached(exe: &Path, nice: Option<&Path>, breakaway: bool) -> std::process::C
             None => std::process::Command::new(exe),
         };
         command.process_group(0);
+        // the browser build has no process groups (cli::group is native only)
+        #[cfg(not(target_os = "emscripten"))]
+        crate::cli::group::alone(&mut command);
         command
     }
     #[cfg(windows)]
@@ -317,7 +325,7 @@ pub fn run(
     let dir = cfg.cache.dir.clone().or_else(crate::caches::format::default_cache_dir).ok_or("no cache directory")?;
     let dir = std::path::absolute(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let Some(_lock) = try_lock(&file(&dir, "run")).map_err(|e| e.to_string())? else {
+    let Some(lock) = try_lock(&file(&dir, "run")).map_err(|e| e.to_string())? else {
         let _ = writeln!(out, "a background build runs already");
         return Ok(());
     };
@@ -352,6 +360,9 @@ pub fn run(
         true => "full",
     };
     set_state(&dir, end);
+    // Unlocked before the file closes: a child another thread forks meanwhile shares the open file
+    // until it execs, and would hold the lock past this return (`status` would say "running").
+    let _ = lock.unlock();
     let _ = writeln!(out, "{end}: {built} built of {} item(s)", prepared.len());
     Ok(())
 }

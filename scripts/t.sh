@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Edit-compile-test loop: builds under the build lock, runs the tests without it.
 #   scripts/t.sh [libtest args: filter, --skip x, --exact, ...]
+# PROFILE=edit rebuilds an edit in a sixth of the CPU time; its tests run half as long again.
 # Env: PROFILE (fast), THREADS (12), JOBS (12), BUILD_LOCK ($CARGO_TARGET_DIR/.build.lock),
 #      CARGO_TARGET_DIR, CAP=0 to skip the systemd-run memory/CPU cap,
 #      BUILD_ONLY=1 to only build and print the test binaries (BUILD_ONLY=it: the integration one only),
-#      TIMES=1 to print every test's seconds (libtest --report-time).
+#      TIMES=1 to print every test's seconds (libtest --report-time),
+#      TEXLIVE=<year|dir> to run against that TeX Live (tests/texlive.yaml; its skips apply).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/texlive.sh
+texlive_use
 # The binary runs without cargo, so it takes cargo's [env] itself: test threads
 # with less stack give up deep nesting (xint) that the CLI follows.
 export RUST_MIN_STACK=${RUST_MIN_STACK:-$(sed -n 's/^RUST_MIN_STACK *= *"\([0-9]*\)"/\1/p' .cargo/config.toml)}
@@ -27,4 +31,6 @@ bin=$(grep '/it-' <<<"$bins" | tail -1)
 [ -z "${BUILD_ONLY:-}" ] || { echo "$bins"; exit; }
 # The bootstrap variable would rebuild everything, so only the binary sees it.
 [ -z "${TIMES:-}" ] || set -- -Z unstable-options --report-time "$@"
+# Tests that do not apply to this TeX Live (tests/texlive.yaml).
+while IFS=$'\t' read -r t why; do echo "not on TeX Live $(texlive_year): $t ($why)" >&2; set -- "$@" --skip "$t"; done < <(texlive_skips "$(texlive_year)")
 exec "${cap[@]}" env ${TIMES:+RUSTC_BOOTSTRAP=1} "$bin" "$@"

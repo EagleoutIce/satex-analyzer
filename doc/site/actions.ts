@@ -6,7 +6,11 @@
 export {};
 declare global {
   /** A menu row: a choice (`run`), a submenu (`items`), radio state `on`, a color `swatch`, a picture `img` (SVG), a rule and caption `head` above it. */
-  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; head?: string; title?: string };
+  type PaItem = { label: string; run?: () => void; items?: PaItem[]; on?: boolean; swatch?: string; hint?: string; img?: string | null; sample?: PaSample; head?: string; title?: string; disabled?: boolean; bar?: PaBar };
+  /** Text set in a face the page loaded (`font`, a CSS family list): a font or math alphabet's sample. */
+  type PaSample = { text: string; font: string };
+  /** A toolbar row (the selection menu's first): toggles on or off, dropdowns at their current value. */
+  type PaBar = { color?: { css: string | null; title: string; run: () => void }; toggles: { label: string; title: string; on: boolean; run: () => void }[]; selects: { title: string; value: string; options: [string, string, PaSample?][]; pick: (v: string) => void }[] };
   /** A group of rows: a submenu row by its title, or its rows inline. */
   type PaGroup = { title: string; items: PaItem[]; inline?: boolean };
   type PaEdit = { from: number; to: number; now: string };
@@ -14,14 +18,25 @@ declare global {
   interface PaCtx {
     text: string; all: string; x: number; y: number; facts: Rec | null;
     write(edits: (PaEdit | null)[]): Promise<boolean> | void; toast(msg: string): void; caret?(at: number): void;
-    pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string, w?: string, h?: string): void;
+    pick(prompt: string, done: (n: TikzNode) => void): void;
+    /** A line from forest node target `f` to the node clicked next, drawn after its tree. */
+    forestLink?(f: Rec): void; colAlign(t: number, k: number, a: string, w?: string, h?: string): void; tableOp?(t: number, op: { what: string; act: string; at: number; to?: number }): void;
     scratch?(b: ScBlock): void;
     /** Writes Insert's `kind` (refactor.ts `inserts`) at target `t`'s place and opens its widget. */
     insert?(kind: string, t: PaTarget): void;
+    /** Math at the Type caret (`inline`, `display`, `align`), and how inline math is written there (`\\(…\\)`, `$…$`). */
+    math?(kind: string): void;
+    mathInline?: string;
+    /** The LaTeX kernel's release (`2024-11-01`), when known: newer commands (`\\mathcolor`, 2022-06) only where it has them. */
+    kernel?: string;
     /** The open file's name, for where a style is defined. */
     file?: string;
     /** Whether the grid of the picture at offset `at` shows; with `on` it is switched (this session). */
     grid?(at: number, on?: boolean): boolean;
+    /** The fonts the engine can set (the font widget's offers, src/lsp/plugins/font.rs): name, what it writes
+     * (`\\usepackage{…}` on pdfLaTeX, `\\setmainfont{…}` with fontspec), TeX's sample, and `main()` making it the main
+     * font; with `math` the math fonts (`\\usepackage{newtxmath}`, `\\setmathfont{…}` with unicode-math) instead. */
+    fonts?(math?: boolean): Promise<{ title: string; detail: string; svg?: string | null; main(): void }[]>;
     /** TeX's pictures by `kind:name` (`arrow:-Stealth`), previews.json. */
     previews?: Record<string, string> | null;
   }
@@ -36,12 +51,17 @@ declare global {
   /** `category`: the Settings → Plugins group it is listed in (`page actions` when none). */
   interface PaPlugin { name: string; title: string; about: string; type: string; category?: string; targets: string[]; groups(t: PaTarget, ctx: PaCtx): PaGroup[] }
   interface Window {
+    /** Loads the samples' face, Latin Modern Math (playground.js pdfLmLoad). */
+    satexLmLoad?: () => void;
     satexPageActions: {
       register(p: PaPlugin): void; plugins: PaPlugin[]; on(name: string, cfg?: Record<string, unknown>): boolean; setOn(name: string, on: boolean): void;
       groups(t: PaTarget, ctx: PaCtx, cfg?: Record<string, unknown>): PaGroup[]; open(x: number, y: number, title: string, groups: PaGroup[]): HTMLElement | null; close(): void;
-      ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always?: boolean): void;
+      ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always?: boolean, suggest?: Promise<PaItem[]>): void;
+      bar(b: PaBar, done: () => void): HTMLElement; face(r: PaItem): string;
       libEdit(text: string, all: string, loaded: string[], lib: string): { have: true } | { edit: PaEdit } | { line: string };
       colors(all: string, facts: Rec | null): { doc: [string, string][]; base: [string, string][]; more: [string, string][] };
+      /** One color menu for every place that picks a color: none, the document's, xcolor's, More, Mix…, Custom…. */
+      colorRows(ctx: PaCtx, now: string | null, pick: (c: string | null) => void, none?: string): PaItem[];
       mix(expr: string, known: Map<string, number[]>): number[] | null; fontSet(font: string | undefined, size: string | null): string | null;
       cut(text: string, from: number, to: number): PaEdit;
       styles(text: string): { name: string; body: string; line: number; note: string }[];
@@ -70,8 +90,14 @@ declare global {
     self.satexStore?.set(OFF, s.size ? [...s] : null);
   }
   /** The groups of the plugins on for target `t`; groups of one title (Refactor from several plugins) are one. */
+  /** The editor's and the pages' menus share one order: a widget's own groups first, then these (Insert ▸, the
+   * selection's Format ▸ … Size ▸, Refactor ▸, Scratch ▸), each where it applies. */
+  const ORDER = ['Insert', 'Format', 'Color', 'Font', 'Size', 'Refactor', 'Scratch'];
+  const rank = (g: PaGroup) => g.inline ? 0 : ORDER.indexOf(g.title) + 1;
   const groups = (t: PaTarget, ctx: PaCtx, cfg: Record<string, unknown> = {}) => plugins.filter((p) => p.targets.includes(t.kind) && on(p.name, cfg)).flatMap((p) => p.groups(t, ctx))
-    .reduce<PaGroup[]>((out, g) => { const o = out.find((x) => x.title === g.title && !x.inline && !g.inline); if (o) o.items = [...o.items, ...g.items]; else out.push(g); return out; }, []);
+    .reduce<PaGroup[]>((out, g) => { const o = out.find((x) => x.title === g.title && !x.inline && !g.inline); if (o) o.items = [...o.items, ...g.items]; else out.push(g); return out; }, [])
+    // a widget's group named like a shared one (a node's Color ▸) keeps its place: only source and block targets sort
+    .map((g, i) => ({ g, i })).sort((a, b) => (/^(source|block|place|caret)$/.test(t.kind) ? rank(a.g) - rank(b.g) : 0) || a.i - b.i).map(({ g }) => g);
 
   // ---------------------------------------------------------------- the menu
   const POPS = '.pa-menu, .tikz-input, .pa-mix';
@@ -91,12 +117,14 @@ declare global {
     m.innerHTML = rows.map((r, k) => {
       if (r === 'hr') return '<hr>';
       if (typeof r === 'string') return `<b>${esc(r)}</b>`;
+      if (r.bar) return `<div class="pa-bar-at" data-k="${k}"></div>`;
       acts.push(r);
       const head = r.head ? `${k ? '<hr>' : ''}<b>${esc(r.head)}</b>` : '';
       const role = r.items ? 'menuitem' : r.on == null ? 'menuitem' : 'menuitemradio';
-      return `${head}<button type="button" role="${role}"${r.title ? ` title="${esc(r.title)}"` : ''}${r.on == null ? '' : ` aria-checked="${r.on}"`}${r.items ? ' aria-haspopup="menu" aria-expanded="false"' : ''} data-i="${acts.length - 1}">` +
-        `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}${r.img ? `<img class="pa-img" alt="" src="data:image/svg+xml;charset=utf-8,${esc(encodeURIComponent(r.img))}">` : ''}<span>${esc(r.label)}</span>${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}</button>`;
+      return `${head}<button type="button" role="${role}"${r.disabled ? ' aria-disabled="true" class="pa-wait"' : ''}${r.title ? ` title="${esc(r.title)}"` : ''}${r.on == null ? '' : ` aria-checked="${r.on}"`}${r.items ? ' aria-haspopup="menu" aria-expanded="false"' : ''} data-i="${acts.length - 1}">` +
+        `${face(r)}</button>`;
     }).join('');
+    for (const at of [...m.querySelectorAll('.pa-bar-at')] as HTMLElement[]) at.replaceWith(toolbar((rows[+at.dataset.k!] as PaItem).bar!, close));
     document.body.append(m);
     const w = m.offsetWidth, h = m.offsetHeight;
     m.style.left = `${Math.max(4, x + w > innerWidth - 4 ? (parent ? parent.getBoundingClientRect().left - w - 2 : innerWidth - w - 8) : x)}px`;
@@ -105,6 +133,28 @@ declare global {
     (m as any).up = parent;
     return m;
   }
+  /** Toolbar `b` as one row of a menu, the editor's (playground.js showMenu) and the pages' alike: a toggle or a pick
+   * closes the menu (`done`), then writes. */
+  function toolbar(b: PaBar, done: () => void): HTMLElement {
+    const el = Object.assign(document.createElement('div'), { className: 'pa-bar' });
+    el.setAttribute('role', 'toolbar');
+    el.innerHTML = b.toggles.map((t, k) => `<button type="button" class="pa-tog pa-${esc(t.label.toLowerCase())}" data-k="${k}" aria-pressed="${t.on}" title="${esc(t.title)}">${esc(t.label)}</button>`).join('') +
+      (b.color ? `<button type="button" class="pa-tog pa-col" title="${esc(b.color.title)}" aria-label="${esc(b.color.title)}"><i class="pa-sw"${b.color.css ? ` style="background:${esc(b.color.css)}"` : ''}></i></button>` : '') +
+      // a dropdown is a button opening a menu of its choices, each with its sample (a native select shows text only)
+      b.selects.map((s, k) => `<button type="button" class="pa-dd" data-s="${k}" data-value="${esc(s.value)}" data-labels="${esc(s.options.map(([l]) => l).join('\n'))}" title="${esc(s.title)}" aria-label="${esc(s.title)}" aria-haspopup="menu">${esc(s.options.find(([, v]) => v === s.value)?.[0] ?? s.title)}</button>`).join('');
+    el.addEventListener('click', (e) => {
+      const x = (e.target as HTMLElement).closest?.('.pa-tog, .pa-dd') as HTMLElement | null;
+      if (!x) return;
+      e.stopPropagation();
+      const r = x.getBoundingClientRect();
+      done();
+      if (x.classList.contains('pa-dd')) { const s = b.selects[+x.dataset.s!]!; open(r.left, r.bottom + 2, s.title, [{ title: s.title, inline: true, items: s.options.map(([label, v, sample]) => ({ label, sample, on: v === s.value, run: () => s.pick(v) })) }]); }
+      else if (x.classList.contains('pa-col')) b.color!.run(); else b.toggles[+x.dataset.k!]!.run();
+    });
+    return el;
+  }
+  /** A row's face, in the pages' menu and the editor's alike (playground.js showMenu): swatch, picture, label, hint or ▸. */
+  const face = (r: PaItem) => `${r.swatch ? `<i class="pa-sw" style="background:${esc(r.swatch)}"></i>` : ''}${r.img ? `<img class="pa-img" alt="" src="data:image/svg+xml;charset=utf-8,${esc(encodeURIComponent(r.img))}">` : ''}<span>${esc(r.label)}</span>${r.sample ? (self.satexLmLoad?.(), `<span class="pa-sample" style="font-family:${esc(r.sample.font)}">${esc(r.sample.text)}</span>`) : ''}${r.items ? '<span class="pa-more">▸</span>' : r.hint ? `<small>${esc(r.hint)}</small>` : ''}`;
   /** Opens the submenu of row `b`, its first row focused when `focus`. */
   function sub(b: HTMLElement, focus: boolean) {
     const m = b.closest('.pa-menu') as any, it: PaItem = m.acts[+b.dataset.i!];
@@ -138,6 +188,7 @@ declare global {
     const run = (b: HTMLElement) => {
       const it: PaItem = (b.closest('.pa-menu') as any).acts[+b.dataset.i!];
       if (it.items) return sub(b, true);
+      if (it.disabled) return;
       close();
       it.run?.();
     };
@@ -171,8 +222,9 @@ declare global {
     (m.querySelector('button') as HTMLElement | null)?.focus();
     return m;
   }
-  /** A one-line input at (x, y): Enter writes `done(value)` (a value unchanged only when `always`), Escape leaves it. */
-  function ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always = false) {
+  /** A one-line input at (x, y): Enter writes `done(value)` (a value unchanged only when `always`), Escape leaves it.
+   * `suggest`: rows listed under it as they come, those matching the typed text; a click or Down and Enter takes one. */
+  function ask(x: number, y: number, value: string, what: string, done: (v: string) => void, always = false, suggest?: Promise<PaItem[]>) {
     hold();
     close();
     const b = Object.assign(document.createElement('div'), { className: 'tikz-input' });
@@ -183,10 +235,24 @@ declare global {
     const input = b.querySelector('input')!;
     input.value = value;
     input.focus(); input.select();
+    let rows: PaItem[] = [], shown: PaItem[] = [], at = -1;
+    const list = Object.assign(document.createElement('div'), { className: 'pa-suggest' });
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      shown = rows.filter((r) => !q || `${r.label} ${r.hint ?? ''}`.toLowerCase().includes(q)).slice(0, 40);
+      at = Math.min(at, shown.length - 1);
+      list.innerHTML = shown.map((r, k) => `<button type="button" data-k="${k}"${k === at ? ' class="on"' : ''}>${face(r)}</button>`).join('');
+      list.hidden = !shown.length;
+    };
+    const take = (r: PaItem) => { close(); r.run?.(); };
+    if (suggest) { b.querySelector('small')!.before(list); list.hidden = true; suggest.then((r) => { rows = r; if (b.isConnected) draw(); }).catch(() => {}); }
+    input.oninput = () => { at = -1; draw(); };
+    list.onclick = (e) => { const r = shown[+((e.target as HTMLElement).closest('button') as HTMLElement | null)?.dataset.k!]; if (r) take(r); };
     input.onkeydown = (k) => {
       k.stopPropagation();
       if (k.key === 'Escape') { k.preventDefault(); close(); }
-      if (k.key === 'Enter') { k.preventDefault(); const t = input.value; close(); if (always || t !== value) done(t); }
+      if ((k.key === 'ArrowDown' || k.key === 'ArrowUp') && shown.length) { k.preventDefault(); at = (at + (k.key === 'ArrowDown' ? 1 : shown.length - 1)) % shown.length; draw(); list.querySelector('.on')?.scrollIntoView({ block: 'nearest' }); }
+      if (k.key === 'Enter') { k.preventDefault(); if (shown[at]) return take(shown[at]!); const t = input.value; close(); if (always || t !== value) done(t); }
     };
     const away = (e: PointerEvent) => { if (!(e.target as HTMLElement).closest?.('.tikz-input')) { b.remove(); removeEventListener('pointerdown', away, true); } };
     addEventListener('pointerdown', away, true);
@@ -236,12 +302,19 @@ declare global {
     const more = [...known].filter(([n]) => !doc.some(([d]) => d === n) && !base.some(([b]) => b === n)).map(([n, c]): [string, string] => [n, hex(c)]).sort((a, b) => a[0].localeCompare(b[0]));
     return { doc, base, more };
   }
-  /** How to have TikZ library `lib`: loaded (by the run or a `\usetikzlibrary` of the files), else its load after the last
-   * `\usetikzlibrary` or the tikz `\usepackage` of this file, else the line to add by hand. */
+  /** How to have TikZ library `lib`: loaded (by the run or a `\usetikzlibrary` of the files), else joined to this file's
+   * last `\usetikzlibrary` list (`{calc}` -> `{calc,lib}`, the list's own separator), else its load after the tikz
+   * `\usepackage`, else the line to add by hand. The printer's rule (src/linter/shared.rs `preamble_load`). */
   function libEdit(text: string, all: string, loaded: string[], lib: string): { have: true } | { edit: PaEdit } | { line: string } {
     const name = lib.replace(/\./g, '\\.');
     if (loaded.includes(lib) || new RegExp(`\\\\usetikzlibrary\\s*\\{[^}]*(?<![\\w.])${name}(?![\\w.])`).test(all.replace(/(?<!\\)%.*$/gm, ''))) return { have: true };
     const line = `\\usetikzlibrary{${lib}}`, end = /\\begin\s*\{document\}/.exec(text)?.index ?? text.length;
+    const code = text.slice(0, end).replace(/(?<!\\)%.*$/gm, (c) => ' '.repeat(c.length));
+    const list = [...code.matchAll(/\\usetikzlibrary\s*\{([^}]*)\}/g)].at(-1);
+    if (list) {
+      const close = list.index! + list[0].length - 1, items = list[1]!, sep = items.includes(', ') ? ', ' : ',';
+      return { edit: { from: close, to: close, now: `${items.trim() ? sep : ''}${lib}` } };
+    }
     const anchor = [...text.slice(0, end).matchAll(/^[^%\n]*\\(?:usetikzlibrary\s*\{[^}]*\}|usepackage\s*(?:\[[^\]]*\])?\s*\{[^}]*\btikz\b[^}]*\})[^\n]*\n/gm)].at(-1);
     return anchor ? { edit: { from: anchor.index! + anchor[0].length, to: anchor.index! + anchor[0].length, now: `${line}\n` } } : { line };
   }
@@ -257,7 +330,7 @@ declare global {
     const a = text.lastIndexOf('\n', from - 1) + 1, e = text.indexOf('\n', to), b = e < 0 ? text.length : e + 1;
     return text.slice(a, from).trim() || text.slice(to, b).trim() ? { from, to, now: '' } : { from: a, to: b, now: '' };
   }
-  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, libEdit, colors, mix, fontSet, cut, styles };
+  self.satexPageActions = { register: (p) => { plugins.push(p); }, plugins, on, setOn, groups, open, close, ask, pops: POPS, bar: toolbar, face, libEdit, colors, colorRows, mix, fontSet, cut, styles };
 
   // ---------------------------------------------------------------- the plugins
   const TM = () => self.satexTikzMove;
@@ -466,7 +539,7 @@ declare global {
         ? { label, on: now === k, items: [...['3', '4', '5', '6', '8'].map((v) => ({ label: `${v} sides`, on: now === k && (sides ?? '5') === v, run: () => shapeTo(k, label, v === '5' ? [] : [`regular polygon sides=${v}`]) })),
           custom(ctx, 'Sides…', 'the number of sides', sides ?? '5', (v) => { if (+v >= 3) shapeTo(k, label, +v === 5 ? [] : [`regular polygon sides=${+v}`]); })] }
         : k === 'star' ? { label, on: now === k, items: ['4', '5', '6', '8'].map((v) => ({ label: `${v} points`, on: now === k && (points ?? '5') === v, run: () => shapeTo(k, label, v === '5' ? [] : [`star points=${v}`]) })) }
-        : { label, on: now === k, run: () => shapeTo(k, label) });
+        : { label, on: now === k, run: () => shapeTo(k, label) }).map((r, i) => ({ ...r, img: shapeImg(ctx, T.SHAPES[i]![0]) }));
       const deg = String(T.angle(stmt, n.i));
       const place: PaItem[] = [...(t.rel ? [{ label: `Relative to ${t.rel.label.replace(/^.* of /, '')}`, hint: t.rel.label, run: () => put(t.rel.text, t.rel.pre) }] : []),
         ...(t.fixed ? [{ label: 'Fixed position', hint: 'at (x,y)', run: () => put(t.fixed) }] : [])];
@@ -510,6 +583,11 @@ declare global {
   const META = /^[A-Z]/, OPENS = /^(Stealth|Latex|Kite|Triangle|Circle|Square|Diamond|Ellipse|Rectangle|Turned Square)$/;
   /** The start tip of end tip `t` as written: the classic `>` starts as `<`. */
   const startOf = (t: string) => (t === '>' ? '<' : t), endOf = (t: string) => (t === '<' ? '>' : t);
+  /** TeX's picture of node shape `k` from previews.json (`rounded`: shapes.misc's rounded rectangle), else null. */
+  function shapeImg(ctx: PaCtx, k: string) {
+    const P = ctx.previews ?? {};
+    return (k === 'rounded' ? P['shape:rounded rectangle'] : P[`shape:${k}`]) ?? null;
+  }
   /** TeX's picture of one end (`-Stealth`, `Stealth-`) from previews.json or the run's tips, `open` drawn unfilled. */
   function tipImg(ctx: PaCtx, name: string, start: boolean, opts: string[]) {
     const T = TM(), spec = start ? T.tipSpec(startOf(name), '') : T.tipSpec('', name);
@@ -608,16 +686,39 @@ declare global {
       const write = (change: () => unknown) => { if (change() === false) return; n.dirty = true; FOREST.settle(tree); ctx.write([{ from: t.f.from, to: t.f.to, now: FOREST.emit(tree) }]); };
       const shape = SH.find(([k]) => k && has(k))?.[0] ?? '', parent = FOREST.parentOf(tree, n);
       return [
-        { title: 'Shape', inline: true, items: SH.map(([k, l]) => ({ label: l, on: shape === k, run: () => write(() => { n.opts = n.opts.filter((o: string) => !SH.some(([s]) => s && key(o) === s)); if (k) n.opts.push(k); }) })) },
+        { title: 'Shape', inline: true, items: SH.map(([k, l]) => ({ label: l, on: shape === k, img: shapeImg(ctx, k === 'rounded corners' ? 'rounded' : k || 'rectangle'), run: () => write(() => { n.opts = n.opts.filter((o: string) => !SH.some(([s]) => s && key(o) === s)); if (k) n.opts.push(k); }) })) },
         { title: 'Style', inline: true, items: [{ label: 'Frame', on: has('draw'), run: () => write(() => { n.opts = has('draw') ? n.opts.filter((o: string) => key(o) !== 'draw') : [...n.opts, 'draw']; }) }] },
         { title: 'Tree', inline: true, items: [{ label: 'Add child', run: () => write(() => { FOREST.addChild(n); }) },
           ...(parent ? [{ label: 'Add sibling', run: () => write(() => { FOREST.addSibling(tree, n); }) }, { label: n.children.length ? 'Delete with its subtree' : 'Delete', run: () => write(() => { FOREST.remove(tree, n); }) }] : [])] },
-        { title: 'Text', inline: true, items: [{ label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.content, 'the text of the node', (v) => write(() => { n.content = v; })) }] },
+        { title: 'Text', inline: true, items: [{ label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.content, 'the text of the node', (v) => write(() => { n.content = v; })) },
+          ...(ctx.forestLink ? [{ label: 'Draw a line to…', hint: 'click the other node', run: () => ctx.forestLink!(t.f) }] : [])] },
+        ...(parent ? [{ title: 'Edge from parent', items: edgeRows(ctx, parent, n, write) }] : []),
+        { title: 'Every node', items: [
+          // the run's strut key (forest plugin), toggled in `for tree`
+          ...(ctx.facts?.strut ? [{ label: 'Strut every node', on: FOREST.forTreeKeys(tree).includes(ctx.facts.strut), run: () => write(() => { FOREST.forTreeToggle(tree, ctx.facts!.strut, !FOREST.forTreeKeys(tree).includes(ctx.facts!.strut)); }) }] : []),
+          ((lvl: number) => { const w = FOREST.whereLevel(tree.pre, lvl), now = w ? tree.pre.slice(...w.keys) : '';
+            return { label: `Style level ${lvl}…`, hint: now || 'where level', run: () => ask(ctx.x, ctx.y, now, `the keys of every node on level ${lvl} (draw, fill=…)`, (v) => write(() => { FOREST.setWhereLevel(tree, lvl, v); }), true) }; })(depth(tree.root, n)),
+        ] },
         ...(FOREST.presetOf(tree) ? [] : [{ title: 'Preset', inline: true, items: [{ label: 'Transform to feature model', run: () => toPreset(ctx, t.f, 'feature model') }] }]),
         ...(FOREST.presetOf(tree) === 'feature model' && styleBody(ctx.all, 'fm feature') ? [{ title: 'Feature model look', items: fmLookRows(ctx) }] : []),
       ];
     },
   });
+  /** A forest node's depth below `root` (its `level`), -1 when not under it. */
+  const depth = (root: Rec, n: Rec): number => root === n ? 0 : root.children.reduce((d: number, c: Rec) => d >= 0 ? d : ((k) => k < 0 ? -1 : k + 1)(depth(c, n)), -1);
+  /** The edge into forest node `n` from `parent`: where it leaves the parent (all its edges) and arrives, the anchors of the
+   * run's shapes (forest plugin `anchors`), and its label (`edge label`) with its side. */
+  function edgeRows(ctx: PaCtx, parent: Rec, n: Rec, write: (change: () => unknown) => void): PaItem[] {
+    const FOREST = self.satexViews.forest, list: string[] = ctx.facts?.anchors ?? [], lab = FOREST.edgeLabel(n);
+    const anchorRows = (x: Rec, key: string): PaItem[] => [{ label: 'default', on: FOREST.valOf(x, key) == null, run: () => write(() => { FOREST.setKey(x, key, null); }) },
+      ...list.map((a) => ({ label: a, on: FOREST.valOf(x, key) === a, run: () => write(() => { FOREST.setKey(x, key, a); }) })),
+      custom(ctx, 'Angle or other…', 'an anchor name or an angle in degrees', FOREST.valOf(x, key) ?? '', (v) => write(() => { FOREST.setKey(x, key, v.trim() || null); }))];
+    return [{ label: `Leaves ${parent.content || 'the parent'} at`, hint: 'parent anchor', items: anchorRows(parent, 'parent anchor') },
+      { label: `Arrives at ${n.content || 'the node'} at`, hint: 'child anchor', items: anchorRows(n, 'child anchor') },
+      { label: lab ? 'Edit label…' : 'Add label…', run: () => ask(ctx.x, ctx.y, lab?.text ?? '', 'the label on the edge', (v) => write(() => { FOREST.setEdgeLabel(n, v, lab?.side || 'left'); })) },
+      ...(lab ? [{ label: 'Label side', items: ['left', 'right', 'above', 'below', 'auto'].map((sd) => ({ label: sd, on: lab.side === sd, run: () => write(() => { FOREST.setEdgeLabel(n, lab.text, sd); }) })) },
+        { label: 'Remove label', run: () => write(() => { FOREST.setEdgeLabel(n, '', ''); }) }] : [])];
+  }
   /** The body of style `name`'s definition in `text` (`name/.style={…}`): its range inside the braces, null when not there. */
   function styleBody(text: string, name: string): [number, number] | null {
     const m = new RegExp(`(^|[,{\\s])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*/\\.style\\s*=\\s*\\{`).exec(text);
@@ -678,7 +779,13 @@ declare global {
     name: 'table-column', title: 'Table columns', about: 'A column\'s alignment and width, rewritten in the column spec, and the table\'s column spacing', type: 'table', targets: ['table-column'],
     groups(t, ctx) {
       const col = t.col, kin = col?.spec && ['lcr', 'pmb', 'X'].find((s) => s.includes(col.align));
-      if (!kin) return [];
+      // the table's structure: the column's and, on a cell, its row's insert, delete and move (pdfedit.ts tableOp)
+      const op = (what: string, act: string, at: number, to?: number) => () => ctx.tableOp?.(t.t, { what, act, at, to });
+      const struct = !ctx.tableOp ? [] : [{ title: 'Column', items: [{ label: 'Insert left', run: op('col', 'insert', t.k) }, { label: 'Insert right', run: op('col', 'insert', t.k + 1) },
+        { label: 'Move left', run: op('col', 'move', t.k, t.k - 1) }, { label: 'Move right', run: op('col', 'move', t.k, t.k + 1) }, { label: 'Delete column', run: op('col', 'delete', t.k) }] },
+      ...(t.r == null ? [] : [{ title: 'Row', items: [{ label: 'Insert above', run: op('row', 'insert', t.r) }, { label: 'Insert below', run: op('row', 'insert', t.r + 1) },
+        { label: 'Move up', run: op('row', 'move', t.r, t.r - 1) }, { label: 'Move down', run: op('row', 'move', t.r, t.r + 1) }, { label: 'Delete row', run: op('row', 'delete', t.r) }] }])];
+      if (!kin) return struct;
       // a paragraph's alignment as its `>{…}` sets it; an l, c or r column given a width keeps its own (pdfedit.ts respec)
       const h = self.satexPdfEdit.halign(col.spec.text ?? ''), para = kin !== 'lcr';
       const horiz = { title: 'Paragraph', inline: true, items: HALIGNS.map(([a, label]) => ({ label, on: para && a === h, run: () => ctx.colAlign(t.t, t.k, col.align, col.width, a) })) };
@@ -687,13 +794,13 @@ declare global {
       const pad = at >= 0 ? self.satexPdfEdit.padding(ctx.text, at, t.env) : null, doc = pad && t.seps?.[pad.name];
       const space = pad ? [{ title: 'Spacing', items: [{ label: `default (${doc == null ? 'the document\'s' : `${+doc.toFixed(2)}pt`})`, on: pad.now == null, run: () => ctx.write(pad.edits(null)) },
         ...['0pt', '2pt', '4pt', '6pt', '8pt', '12pt'].map((v) => ({ label: `\\${pad.name} ${v}`, on: pad.now === v, run: () => ctx.write(pad.edits(v)) }))] }] : [];
-      if (kin === 'X') return [horiz, ...space];
+      if (kin === 'X') return [horiz, ...space, ...struct];
       const widths = ['2cm', '3cm', '4cm', '0.25\\linewidth', '0.33\\linewidth', '0.5\\linewidth'];
       const natural = para ? HALIGNS.find(([a]) => a === h)![2] : col.align;
       return [{ title: 'Align', inline: true, items: [...kin].map((a) => ({ label: `${a}: ${ALIGNS[a]}`, on: a === col.align, run: () => ctx.colAlign(t.t, t.k, a) })) },
         ...(para ? [horiz] : []),
         { title: 'Width', items: [{ label: 'natural (as wide as its text)', on: !para, run: () => ctx.colAlign(t.t, t.k, natural, '') },
-          ...widths.map((w) => ({ label: w, on: col.width === w, run: () => ctx.colAlign(t.t, t.k, col.align, w) }))] }, ...space];
+          ...widths.map((w) => ({ label: w, on: col.width === w, run: () => ctx.colAlign(t.t, t.k, col.align, w) }))] }, ...space, ...struct];
     },
   });
 

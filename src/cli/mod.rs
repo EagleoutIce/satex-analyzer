@@ -4,15 +4,19 @@ pub mod cache;
 pub mod compile;
 mod graph;
 #[cfg(not(target_os = "emscripten"))]
+pub mod group;
+#[cfg(not(target_os = "emscripten"))]
 pub mod gui;
 mod inspect;
 pub mod install;
 mod lint;
 pub mod lsp;
+pub mod new;
 pub mod query;
 pub mod render;
 mod summary;
 mod tokens;
+pub mod updates;
 #[cfg(target_os = "linux")]
 pub mod warm;
 
@@ -279,6 +283,9 @@ pub enum Command {
         #[arg(long)]
         usermode: bool,
     },
+    /// Whether each package the document loads is its newest release (`updates.index`), and
+    /// with `updates.changes` what the newest defines differently, from running both.
+    Updates,
     /// The token stream the mouth produces.
     Tokens,
     /// Print the shell completion script: bash, zsh, fish, elvish or
@@ -335,6 +342,37 @@ pub enum Command {
         /// Serve the page's sources from this checkout's `doc/site`.
         #[arg(long, hide = true)]
         dev: bool,
+    },
+    /// A new project in DIR: a provider template (`--list` names them) or another project's
+    /// files (`--from`). The template's class comes from the TeX installation, or from its
+    /// provider over HTTPS into the cache (`templates:` in satex.yaml). Then a run reads the new
+    /// main file and reports the class or style and its version. Nothing in an archive runs.
+    New {
+        /// The folder of the new project.
+        #[arg(value_name = "DIR")]
+        dir: Option<std::path::PathBuf>,
+        /// The provider template, as `acm-sigconf` or `ieee-conference`.
+        #[arg(long, short = 't', value_name = "ID")]
+        #[cfg_attr(not(target_os = "emscripten"), arg(add = clap_complete::ArgValueCandidates::new(|| {
+            crate::lsp::templates::catalog().iter().map(|t| clap_complete::CompletionCandidate::new(&t.id)).collect::<Vec<_>>()
+        })))]
+        template: Option<String>,
+        /// Another project: a GitHub repository URL (a `/tree/BRANCH/FOLDER` too), the HTTPS URL
+        /// of a zip, a local zip or a folder.
+        #[arg(long, value_name = "URL|PATH")]
+        from: Option<String>,
+        /// The class options (or the style's) instead of the template's, as `-o sigconf,review`.
+        #[arg(long = "option", short = 'o', value_name = "OPTION", value_delimiter = ',')]
+        options: Vec<String>,
+        /// List the templates instead.
+        #[arg(long)]
+        list: bool,
+        /// Write over files that exist.
+        #[arg(long)]
+        force: bool,
+        /// Only write the files, without the run that reads them.
+        #[arg(long)]
+        no_check: bool,
     },
 }
 
@@ -397,7 +435,7 @@ pub enum CacheAction {
     /// variant (what keys it), its segments, and the bytes they take.
     /// Then the documents an analysis is stored of, with size and age.
     Show {
-        /// Packages or classes (`scrbook.cls`) to show, or `document`; none lists every cache.
+        /// Packages or classes (`scrbook.cls`) to show, or `document`. Without one, every cache is listed.
         packages: Vec<String>,
     },
 }
@@ -414,6 +452,7 @@ impl Command {
                 | Command::Lsp { .. }
                 | Command::Gui { .. }
                 | Command::Completions { .. }
+                | Command::New { list: true, .. }
         ) && !matches!(self, Command::Cache { action: Some(a) } if !matches!(a, CacheAction::Status))
     }
 
@@ -574,12 +613,17 @@ impl Command {
             // `Query { request: Some(_) }`.
             Command::Cache { action: Some(_) } => Ok(Output::Done),
             Command::Lsp { .. } | Command::Gui { .. } | Command::Completions { .. } => Ok(Output::Done),
+            // `main.rs` writes the project and lists the templates: the run read the new main file
+            Command::New { list: true, .. } => Ok(Output::Records(new::list())),
+            Command::New { .. } => new::report(context),
             Command::Compile { system, view } => compile::run(context, system.as_deref(), *view),
             Command::Install { packages, yes, dry_run, usermode } => {
                 let options = install::Options { yes: *yes, dry_run: *dry_run, usermode: *usermode };
                 install::run(context, packages, options, out)
             }
             Command::Tokens => tokens::run(context),
+            // `main.rs` runs it with the config
+            Command::Updates => Ok(Output::Done),
         }
     }
 }
@@ -601,8 +645,9 @@ pub fn known_fields(filter: &crate::queries::query::Filter, found: &[Record], wh
     Err(format!("no {what} has the field `{field}`. They have: {}", fields.join(", ")))
 }
 
+/// `LINE:COL`, or a bare `LINE`: its first column.
 pub fn parse_position(text: &str) -> Result<(u32, u32), String> {
-    let (line, col) = text.split_once(':').ok_or("expected LINE:COL")?;
+    let (line, col) = text.split_once(':').unwrap_or((text, "1"));
     Ok((
         line.trim().parse().map_err(|_| "line must be a number")?,
         col.trim().parse().map_err(|_| "column must be a number")?,
@@ -693,4 +738,15 @@ pub fn trace_file(specs: &[Option<&str>]) -> Result<Option<String>, String> {
         }
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod position_tests {
+    /// `slice --at 40` names line 40 from its first column; it said "expected LINE:COL".
+    #[test]
+    fn a_bare_line_is_its_first_column() {
+        assert_eq!(super::parse_position("40"), Ok((40, 1)));
+        assert_eq!(super::parse_position("40:7"), Ok((40, 7)));
+        assert!(super::parse_position("x").is_err());
+    }
 }

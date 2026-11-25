@@ -49,7 +49,7 @@ fn found(name: &str, preamble: &str, files: &[(&str, &str)]) -> Vec<(String, Vec
 /// wrapfig in a list of packages: named, and only its name is replaced.
 #[test]
 fn wrapfig_is_continued_by_wrapfig2() {
-    if !installed() {
+    if !crate::support::installed_file_has("wrapfig2.sty", "") {
         return;
     }
     let found = found("wrapfig", "\\usepackage{graphicx, wrapfig}\n", &[]);
@@ -164,6 +164,25 @@ fn a_load_a_package_made_already_is_redundant() {
     assert_eq!(kinds(&twice), ["duplicate-package"], "{twice:?}");
     let draft = lint("draft", &codes, "\\usepackage{graphicx}\n\\usepackage[draft]{graphics}\n", "x", &[]);
     assert!(draft.is_empty(), "{draft:?}");
+}
+
+/// A package that stores a request in a macro and calls it later (amsart.cls
+/// `\def`s `\@tempa` to `\RequirePackage{amsmath}`, then runs `\@tempa`)
+/// loads at that call in its own file. The load stood at the kernel's
+/// `\@@input` inside `\RequirePackage`, as the call's own text names no file.
+#[test]
+fn a_load_a_package_stored_in_a_macro_stands_at_the_call() {
+    if !installed() {
+        return;
+    }
+    // A line after each request: the look for `[date]` stays in the file.
+    let pkgb = "\\ProvidesPackage{pkgb}\n\\def\\loadit{\\RequirePackage{pkgc}}\n\\loadit\n\\relax\n";
+    let files =
+        [("pkgb.sty", pkgb), ("pkgc.sty", "\\ProvidesPackage{pkgc}\n"), ("pre.tex", "\\usepackage{pkgc}\n\\relax\n")];
+    // Loaded from an input file, the second request is no `redundant-package-load`.
+    let found = lint("stored", &["duplicate-package"], "\\usepackage{pkgb}\n\\input{pre}\n", "x", &files);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].1, "pkgc is already loaded by pkgb at pkgb.sty:3:1", "{found:?}");
 }
 
 /// `graphix` is one letter from the installed `graphicx`: reported as a typo

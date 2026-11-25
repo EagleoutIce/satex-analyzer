@@ -78,6 +78,26 @@ fn beamer() {
     assert_eq!(body(&a, "depth"), "0");
 }
 
+/// beamer typesets a frame once per slide by replaying its text. A rounded
+/// shadow box sizes its shadow picture by pgf's bounding-box `\ifdim`s, met
+/// again on slide 2 in the replayed copy. Bug pinned: those meetings counted
+/// as passes of a loop, the box size was summarized to anything, and the
+/// run raised false errors (`extra-else` in beamerbasecolor.sty). pdflatex
+/// compiles it clean.
+#[test]
+fn a_rounded_shadow_box_on_a_second_slide_is_sized_as_on_the_first() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{beamer}\\setbeamercolor{title}{bg=blue}\n\\begin{document}\n\
+                  \\begin{frame}\\only<2>{}\\begin{beamercolorbox}[rounded=true,shadow=true]{title}x\\end{beamercolorbox}\\end{frame}\n\
+                  \\end{document}\n";
+    let a = analyze_latex(source);
+    let codes = ["extra-else", "runaway-argument", "recursion-widened", "site-forks-widened"];
+    let found: Vec<&str> = a.facts.diagnostics.iter().map(|d| d.code).filter(|c| codes.contains(c)).collect();
+    assert!(found.is_empty(), "{found:?}");
+}
+
 /// A scan library code opened that reads on through the rest of the
 /// document (here a library `\iffalse` the document never closes) ran past
 /// `\end{document}` without running it: the run says it ended early, at the

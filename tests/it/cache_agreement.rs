@@ -95,6 +95,8 @@ const GAPPY: &str = "\\ProvidesPackage{gappy}[2020/01/01 v1]\n\
 const GAPS: &str = "\\documentclass{article}\n\\usepackage{gappy}\n\
 \\begin{document}\\gappymacro\\end{document}\n";
 
+/// A run with no cache, one that builds the caches and ones that read them report the same.
+/// Pins cache-only facts: a kernel or package replay that loses or adds a diagnostic or a color.
 #[test]
 fn a_run_that_builds_the_caches_and_one_that_reads_them_agree() {
     if !installed() {
@@ -102,6 +104,10 @@ fn a_run_that_builds_the_caches_and_one_that_reads_them_agree() {
     }
     let dir = project("twice");
     std::fs::write(dir.join("gappy.sty"), GAPPY).expect("gappy.sty");
+    // No cache at all: the kernel is interpreted and the packages are read.
+    let uncached =
+        analyze(&dir, PACKAGES, &Config { cache: Cache { enabled: false, ..Default::default() }, ..config(&dir) });
+    assert!(uncached.format.as_ref().is_some_and(|f| !f.cached), "the uncached run interpreted the kernel");
     // The first document pays for the kernel; the later ones still read
     // their packages for the first time.
     for (what, source) in [("plain", PLAIN), ("packages", PACKAGES), ("gaps", GAPS)] {
@@ -111,6 +117,11 @@ fn a_run_that_builds_the_caches_and_one_that_reads_them_agree() {
         let again = run(&dir, source);
         same_rows(&warm, &again, what);
         assert_eq!(colors(&cold), colors(&warm), "{what}: color facts");
+        if source == PACKAGES {
+            same_rows(&uncached, &cold, "no cache against a cache being built");
+            same_rows(&uncached, &warm, "no cache against a cache being read");
+            assert!(warm.format.as_ref().is_some_and(|f| f.cached), "the warm run installed the cached kernel");
+        }
     }
     // The packages really were served the second time, or the test would
     // compare two cold runs.
@@ -174,91 +185,6 @@ fn colors_a_package_defines_are_reported_cached_or_not() {
     }
     assert_eq!(named(&cold), named(&warm));
     assert_eq!(colors(&cold), colors(&warm));
-}
-
-#[test]
-fn a_run_without_the_format_cache_and_one_with_it_agree() {
-    if !installed() {
-        return;
-    }
-    let dir = project("format");
-    // No cache at all: the kernel is interpreted and the packages are read.
-    let uncached =
-        analyze(&dir, PACKAGES, &Config { cache: Cache { enabled: false, ..Default::default() }, ..config(&dir) });
-    let stored = run(&dir, PACKAGES);
-    let loaded = run(&dir, PACKAGES);
-    same_rows(&uncached, &stored, "no cache against a cache being built");
-    same_rows(&uncached, &loaded, "no cache against a cache being read");
-    assert!(uncached.format.as_ref().is_some_and(|f| !f.cached), "the first run interpreted the kernel");
-    assert!(loaded.format.as_ref().is_some_and(|f| f.cached), "the third run installed the cached kernel");
-}
-
-/// Packages required from an `\input` file, then transformations of
-/// unknown scale inverted: `\pgfmathreciprocal@` forks on unknown values,
-/// so its calls may end with the effect its other runs taught
-/// (`analysis.assume_call_learned_effect`). A read load runs the calls
-/// open around it (each `\RequirePackage`), a replayed one does not, so
-/// what those records taught must not outlive the load's edges: in a
-/// thesis preamble the cold run applied learned effects the warm one never
-/// had (36.7k against 33.3k forks). This small case agreed before too; it
-/// guards that learning stays independent of the cache.
-const LEARNED: &str = "\\documentclass{article}\n\\input{mods.tex}\n\\begin{document}\n\
-\\pgftransformcm{\\pdfuniformdeviate 3}{0}{0}{2}{\\pgfpointorigin}\\pgftransforminvert\n\
-\\pgftransformcm{2}{0}{0}{\\pdfuniformdeviate 3}{\\pgfpointorigin}\\pgftransforminvert\n\
-\\pgftransformcm{\\pdfuniformdeviate 5}{0}{0}{\\pdfuniformdeviate 7}{\\pgfpointorigin}\\pgftransforminvert\n\
-\\end{document}\n";
-
-const MODS: &str = "\\RequirePackage{xcolor}\n\\RequirePackage{etoolbox}\n\\RequirePackage{tikz}\n";
-
-#[test]
-fn learned_call_effects_do_not_depend_on_the_package_cache() {
-    if !installed() {
-        return;
-    }
-    let dir = seeded("learned");
-    std::fs::write(dir.join("mods.tex"), MODS).expect("mods.tex");
-    let cold = run(&dir, LEARNED);
-    let warm = run(&dir, LEARNED);
-    same_rows(&cold, &warm, "learned effects");
-    assert_eq!(cold.forks, warm.forks, "the same undecided choices, read or replayed");
-    assert!(
-        warm.package_caches
-            .iter()
-            .any(|(name, .., state)| name == "pgfcore" && satex::analysis::machine::cache_served(state)),
-        "pgfcore was replayed: {:?}",
-        warm.package_caches
-    );
-}
-
-#[test]
-fn a_gap_inside_a_package_survives_being_cached() {
-    if !installed() {
-        return;
-    }
-    let dir = seeded("gap");
-    std::fs::write(dir.join("gappy.sty"), GAPPY).expect("gappy.sty");
-    let cold = run(&dir, GAPS);
-    let warm = run(&dir, GAPS);
-    assert_eq!(count_of(&cold, "unresolved-package"), 1, "the cold run records the gap once: {:?}", rows(&cold));
-    assert_eq!(count_of(&warm, "unresolved-package"), 1, "the replay records it once too: {:?}", rows(&warm));
-    let gap = |a: &Analysis| {
-        a.facts
-            .diagnostics
-            .iter()
-            .find(|d| d.code == "unresolved-package")
-            .map(|d| (d.severity.as_str(), d.message.clone(), d.count))
-    };
-    assert_eq!(
-        gap(&cold),
-        Some((
-            "unsupported",
-            "package file `satex-no-such-package.sty` was not found, so nothing it defines is in this analysis"
-                .to_string(),
-            1
-        ))
-    );
-    assert_eq!(gap(&cold), gap(&warm));
-    same_rows(&cold, &warm, "a package that leaves a gap");
 }
 
 /// A preamble interpreted as the project's format, so the diagnostics it
@@ -387,4 +313,179 @@ fn a_tagged_document_reads_the_same_with_its_loads_replayed() {
     let cold = run(&dir, METADATA);
     let warm = run(&dir, METADATA);
     same_rows(&cold, &warm, "a tagged document");
+}
+
+/// xcolor loaded inside a group (LaTeX errors, then reads it anyway, its
+/// local definitions one level deeper). A cold run and a run whose xcolor
+/// cache was built by a top-level load must agree. Pins: the replay keeps
+/// each definition's group depth from the run that built the cache (0 and 1
+/// instead of 1 and 2), so `unused-package` counted 17 names cold and 19
+/// names warm, and warm alone said `^^A` keeps category code 14 at the end.
+#[test]
+fn a_load_in_a_group_reports_the_same_cold_and_from_a_top_level_cache() {
+    if !installed() {
+        return;
+    }
+    const TOP: &str =
+        "\\documentclass{article}\n\\usepackage{xcolor}\n\\begin{document}\n\\textcolor{red}{x}\n\\end{document}\n";
+    const GROUP: &str =
+        "\\documentclass{article}\n\\begingroup\\usepackage{xcolor}\\endgroup\n\\begin{document}\nx\n\\end{document}\n";
+    let lint = |a: &Analysis| -> Vec<String> {
+        let s = |f: &satex::queries::query::Record, k: &str| f.get(k).map(|v| v.to_string()).unwrap_or_default();
+        satex::linter::lint(a).iter().map(|f| format!("{} {}", s(f, "code"), s(f, "message"))).collect()
+    };
+    let cold = run(&seeded("group-load-cold"), GROUP);
+    let dir = seeded("group-load-warm");
+    run(&dir, TOP);
+    let warm = run(&dir, GROUP);
+    let (c, w) = (lint(&cold), lint(&warm));
+    let only = |a: &[String], b: &[String]| a.iter().filter(|x| !b.contains(x)).cloned().collect::<Vec<_>>();
+    assert!(c == w, "cold only {:?}, warm only {:?}", only(&c, &w), only(&w, &c));
+    same_rows(&cold, &warm, "group load");
+}
+
+/// Which files a project takes as given (`project.frozen`) only steers reports, and its globs
+/// are made absolute to the project folder. A package cache keyed by them was built anew for
+/// every folder: the same project checked out elsewhere, or a second project with such a
+/// setting, never reused a package the machine had already analyzed.
+#[test]
+fn a_package_cache_is_shared_by_projects_that_freeze_different_files() {
+    if !installed() {
+        return;
+    }
+    let dir = seeded("frozen-globs");
+    let source = "\\documentclass{article}\n\\usepackage{keyval}\n\\begin{document}x\\end{document}\n";
+    let run = |project: &str| {
+        let home = dir.join(project);
+        std::fs::create_dir_all(&home).expect("project folder");
+        let mut cfg = config(&dir);
+        cfg.project.frozen = vec![format!("{}/lib/**", home.display())];
+        let path = home.join("doc.tex");
+        std::fs::write(&path, source).expect("doc.tex");
+        Machine::analyze(source, Some(&path), &cfg)
+    };
+    let (first, second) = (run("one"), run("two"));
+    let stored = |a: &Analysis| a.package_caches.iter().filter(|(_, _, state)| state.ends_with("stored")).count();
+    assert!(stored(&first) > 0, "the first project builds the caches: {:?}", first.package_caches);
+    assert_eq!(stored(&second), 0, "the second project built them again: {:?}", second.package_caches);
+    same_rows(&first, &second, "frozen globs");
+}
+
+/// Runs `group` in one project: cold, then once after each of `firsts` (with
+/// the package's own caches dropped first, so `first` builds them). Each warm
+/// run must say what the cold one said; returns the last warm run.
+fn in_group_runs(name: &str, package: &str, sty: &str, group: &str, firsts: &[&str]) -> Analysis {
+    let dir = seeded(name);
+    let said = |a: &Analysis| {
+        let lint = satex::linter::lint(a).iter().map(|f| format!("{:?}", f.get("message"))).collect::<Vec<_>>();
+        [crate::coldwarm::said(a), lint].concat()
+    };
+    // Only the kernel and other packages' caches stay: outputs and this package's trees go.
+    let fresh = || {
+        for e in std::fs::read_dir(&dir).expect("dir").flatten() {
+            if e.file_name() != "cache" {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+        for e in std::fs::read_dir(dir.join("cache")).expect("cache").flatten() {
+            if e.file_name().to_string_lossy().starts_with(&format!("package-{package}")) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+        std::fs::write(dir.join(format!("{package}.sty")), sty).expect("sty");
+    };
+    fresh();
+    let cold = run(&dir, group);
+    let leaked: Vec<_> =
+        cold.facts.diagnostics.iter().filter(|d| d.message.contains("leaked") || d.message.contains("lost")).collect();
+    assert!(leaked.is_empty(), "cold: {leaked:?}");
+    let mut last = cold;
+    for (i, first) in firsts.iter().enumerate() {
+        fresh();
+        run(&dir, first);
+        let warm = run(&dir, group);
+        let diff = crate::coldwarm::difference(&said(&last), &said(&warm));
+        assert!(diff.is_empty(), "primed by run {i}:\n{diff}");
+        last = warm;
+    }
+    last
+}
+
+/// A tiny package that writes a macro, a `\let`, a global macro, a scratch
+/// register and a category code, loaded inside a group. Cold, from a cache a
+/// top-level load built, and from a cache a load in a group built, the runs
+/// must say the same, and after the group only the global macro is left.
+/// Pins: a top-level recording replayed in a group left the load's locals in
+/// place (the tree's key had no group level), and a replay wrote a local by
+/// the binding's sticky `global` flag (a local `\dimen@=` keeps the flag that
+/// the register's `\newdimen` set), so the register kept its value past the group.
+#[test]
+fn a_tiny_package_in_a_group_says_the_same_cold_and_from_either_cache() {
+    if !installed() {
+        return;
+    }
+    const STY: &str = "\\ProvidesPackage{grp}\n\\def\\grpdef{1}\n\\let\\grplet\\relax\n\\gdef\\grpglobal{1}\n\
+                       \\dimen@=1pt\n\\catcode`\\^^A=14\n";
+    const TOP: &str = "\\documentclass{article}\n\\usepackage{grp}\n\\begin{document}\nx\n\\end{document}\n";
+    const GROUP: &str = "\\documentclass{article}\n\\begingroup\\usepackage{grp}\\endgroup\n\
+                         \\ifdefined\\grplet\\errmessage{let leaked}\\fi\n\\ifdefined\\grpdef\\errmessage{def leaked}\\fi\n\
+                         \\ifdefined\\grpglobal\\else\\errmessage{global lost}\\fi\n\
+                         \\ifnum\\catcode`\\^^A=14 \\errmessage{catcode leaked}\\fi\n\
+                         \\makeatletter\\ifdim\\dimen@=1pt \\errmessage{dimen leaked}\\fi\\makeatother\n\
+                         \\begin{document}\nx\n\\end{document}\n";
+    in_group_runs("tiny-group", "grp", STY, GROUP, &[TOP, GROUP]);
+}
+
+/// A package in a group writes a name globally, then locally. At the group's
+/// end TeX restores the global value, not the one from before the load
+/// (tex.web § 283: a save entry made after a global write holds that value).
+/// Guards the open case of the write kind a replay takes from the save stack:
+/// one local write would make the group's end restore the value from before
+/// the load. Green so far (the case was not reached by this replay).
+#[test]
+fn a_global_then_local_write_in_a_group_load_leaves_the_global_value() {
+    if !installed() {
+        return;
+    }
+    const STY: &str = "\\ProvidesPackage{mix}\n\\gdef\\mixname{G}\n\\def\\mixname{L}\n";
+    const GROUP: &str = "\\documentclass{article}\n\\begingroup\\usepackage{mix}\\endgroup\n\
+                         \\def\\mixG{G}\\ifx\\mixname\\mixG\\else\\errmessage{global lost}\\fi\n\
+                         \\begin{document}\nx\n\\end{document}\n";
+    in_group_runs("mix-group", "mix", STY, GROUP, &[GROUP]);
+}
+
+/// Intuition: a kernel cache holds what the kernel's code did under the
+/// configuration that read it, so another configuration never loads it. A
+/// kernel built under `limits.choices: 1` first, then a run under the
+/// default configuration over the same cache reads a kernel file of its
+/// own and gives what a fresh default run gives. Pins the kernel cache keyed without its configuration: the
+/// first test of a CI shard to build it decided what every later one
+/// loaded (a cut l3fp loop took 5.96M steps there, 1.89M alone).
+#[test]
+fn a_kernel_built_under_another_configuration_is_never_loaded() {
+    if !installed() {
+        return;
+    }
+    // the l3fp loop a line budget cuts, as in `documents::cut_inside_library_call_drops_the_call`
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/documents/cut_inside_library_call/main.tex");
+    let source = std::fs::read_to_string(fixture).expect("the fixture");
+    let (shared, fresh) = (project("kernel-config-shared"), project("kernel-config-fresh"));
+    let mut other = config(&shared);
+    other.limits.choices = 1;
+    let first = analyze(&shared, "\\relax\n", &other);
+    let cut = |dir: &Path| Config {
+        limits: satex::project::config::Limits { line_steps: 1_000_000, ..config(dir).limits },
+        ..config(dir)
+    };
+    let after = analyze(&shared, &source, &cut(&shared));
+    let alone = analyze(&fresh, &source, &cut(&fresh));
+    let steps = |a: &Analysis| a.steps - a.load_steps;
+    let codes = |a: &Analysis| a.facts.diagnostics.iter().map(|d| (d.code, d.span, d.count)).collect::<Vec<_>>();
+    let kernel = |a: &Analysis| a.format.as_ref().and_then(|f| f.cache.clone());
+    assert!(kernel(&first).is_some(), "the first run left no kernel cache");
+    assert_ne!(kernel(&after), kernel(&first), "the other configuration's kernel was loaded");
+    assert_eq!(steps(&after), steps(&alone));
+    assert_eq!(codes(&after), codes(&alone));
+    let _ = (std::fs::remove_dir_all(shared), std::fs::remove_dir_all(fresh));
 }

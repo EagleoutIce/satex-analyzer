@@ -31,7 +31,32 @@ fn said(analysis: &Analysis) -> Vec<String> {
     let occurrences =
         analysis.facts.occurrences.iter().map(|o| format!("occ|{:?}|{}|{}", o.kind, o.key, at(analysis, o.span)));
     let summary = [format!("steps|{}", analysis.steps), format!("typeset|{}", analysis.typeset)];
-    diagnostics.chain(defs).chain(expansions).chain(occurrences).chain(summary).collect()
+    diagnostics.chain(defs).chain(expansions).chain(occurrences).chain(summary).chain(keyed(analysis)).collect()
+}
+
+/// The facts kept by place in the project's own files, in the order of their places: a resumed
+/// run writes the edited lines' entries into the last run's tables where they stand. (Those in
+/// a package's files depend on what a cache served, which other tests compare.) And every
+/// vertex of the graph is found at its site: the sites follow the vertices the edit moved.
+fn keyed(analysis: &Analysis) -> Vec<String> {
+    let facts = &analysis.facts;
+    let own = |at: &satex::engine::tex::Span| analysis.project_file(at.file);
+    let mut out: Vec<String> = Vec::new();
+    let place = |at: &satex::engine::tex::Span| self::at(analysis, *at);
+    out.extend(facts.types.iter().filter(|(at, _)| own(at)).map(|(at, ty)| format!("type|{}|{ty:?}", place(at))));
+    out.extend(facts.csnames.iter().filter(|(at, _)| own(at)).map(|(at, r)| format!("csname|{}|{r:?}", place(at))));
+    out.extend(facts.slots.iter().filter(|(at, _)| own(at)).map(|(at, slot)| format!("slot|{}|{slot}", place(at))));
+    out.extend(facts.spaces.iter().filter(|(at, _)| own(at)).map(|(at, m)| format!("space|{}|{m:?}", place(at))));
+    out.extend(facts.kept_spaces.iter().filter(|at| own(at)).map(|at| format!("kept space|{}", place(at))));
+    let read = facts.lines.keys().filter(|(file, _)| analysis.project_file(*file));
+    out.extend(read.map(|(file, line)| format!("line|{}:{line}", analysis.file_name(*file))));
+    out.sort();
+    let graph = &analysis.graph;
+    let lost = (graph.vertices.iter().enumerate())
+        .filter(|(i, v)| graph.find(v.span, v.name, v.tag).map(|id| id as usize) != Some(*i))
+        .map(|(i, v)| format!("vertex {i} not at its site {}", self::at(analysis, v.span)));
+    out.extend(lost);
+    out
 }
 
 /// The first place `a` and `b` differ, if they do.
@@ -449,7 +474,9 @@ fn rows_in(analysis: &Analysis, path: &str, lo: u32, hi: u32) -> Vec<satex::quer
 /// from the state at its start and its own text, so its rows are the full run's. Pins: the
 /// playground waited for the whole run (and the page builder holds the paragraph until the
 /// page ships, so the runs never meet earlier); a longer word and a word in the last
-/// paragraph are covered too.
+/// paragraph are covered too. The preview is the run itself up to the paragraph's end, handed on
+/// there while the run goes on (it ran the paragraph twice before); the main file's last paragraph
+/// ends with the run, so the run's own rows are its preview and none is handed on early.
 #[test]
 fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
     if !installed() {
@@ -462,8 +489,12 @@ fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
     std::fs::write(&main, PARAGRAPHS).unwrap();
     let mut checkpoints = Checkpoints::new(&cfg).every(64);
     checkpoints.analyze(PARAGRAPHS, &main);
-    let edits =
-        [("the edits change", "an edit changed"), ("the last one", "the very last one"), ("a few words", "few words")];
+    let edits = [
+        ("the edits change", "an edit changed"),
+        ("A third paragraph", "The third paragraph"),
+        ("the last one", "the very last one"),
+        ("a few words", "few words"),
+    ];
     let mut text = PARAGRAPHS.to_string();
     for (was, now) in edits {
         text = text.replacen(was, now, 1);
@@ -473,12 +504,18 @@ fn a_paragraph_run_first_typesets_the_edited_paragraph_as_the_full_run() {
         checkpoints.hooks.preview = Some(Box::new(move |run, path, lo, hi| {
             *sink.borrow_mut() = Some((rows_in(&run, path, lo, hi), path.to_string(), lo, hi));
         }));
-        checkpoints.analyze(&text, &main);
+        let result = checkpoints.analyze(&text, &main);
+        let full = Machine::analyze_once(&text, Some(&main), &cfg);
+        // handing the preview on leaves the run as it was
+        assert_eq!(paragraph_rows(&result), paragraph_rows(&full), "{now}: the run after its preview");
+        if now.contains("last") {
+            assert!(got.take().is_none(), "{now}: the last paragraph ends with the run, no preview before it");
+            continue;
+        }
         let (rows, path, lo, hi) = got.take().unwrap_or_else(|| panic!("no paragraph run for {now}"));
         let edited = 1 + text.lines().position(|l| l.contains(now)).unwrap() as u32;
         assert!(lo <= edited && edited <= hi, "{now}: lines {lo}-{hi}");
         assert!(!rows.is_empty(), "{now}: no rows");
-        let full = Machine::analyze_once(&text, Some(&main), &cfg);
         assert_eq!(rows, rows_in(&full, &path, lo, hi), "{now}");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -746,12 +783,15 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
     let dir = crate::support::tmp_root().join("incremental-random");
     let report = report(3, 2);
     let report: Vec<(&str, &str)> = report.iter().map(|(name, text)| (name.as_str(), text.as_str())).collect();
-    let fixtures: [&[(&str, &str)]; 3] = [
+    let fixtures: [&[(&str, &str)]; 4] = [
         &[("main.tex", MAIN), ("chapter.tex", CHAPTER), ("appendix.tex", APPENDIX)],
         &[("main.tex", PARAGRAPHS)],
         &report,
+        &FOUND,
     ];
     let cfg = crate::support::config();
+    // how often a rule's findings stood from the lint before
+    let mut stood = 0;
     for (k, files) in fixtures.iter().enumerate() {
         for seed in 0..SEEDS {
             let _ = std::fs::remove_dir_all(&dir);
@@ -764,6 +804,7 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
             let mut checkpoints = Checkpoints::new(&cfg).every(64);
             Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
             let mut rng = Lcg(seed * 7919 + k as u64);
+            let mut linted: Option<(Analysis, satex::linter::Kept)> = None;
             for n in 1..=EDITS {
                 let (name, _) = files[rng.below(files.len())];
                 let path = dir.join(name);
@@ -777,9 +818,224 @@ fn random_edit_sequences_build_what_a_fresh_build_does() {
                     differs, None,
                     "fixture {k}, seed {seed}, edit {n} in {name} (resumed, met: {at:?}):\n{edited}"
                 );
+                // The findings kept from the last lint are those a lint of this run alone makes.
+                let last = linted.as_ref().map(|(run, kept)| (run, kept));
+                let (found, kept) = satex::linter::lint_document_keeping(&incremental, last);
+                assert_eq!(
+                    found,
+                    satex::linter::lint_document(&incremental),
+                    "fixture {k}, seed {seed}, edit {n} in {name}: kept {:?}\n{edited}",
+                    kept.stood
+                );
+                stood += kept.stood.len();
+                linted = Some((incremental, kept));
             }
         }
     }
+    assert!(stood > 0, "no finding stood across any edit");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A document the rules whose findings stand across an edit ([`satex::linter::Kept`]) each
+/// find something in: a macro nothing uses and one that calls itself with no test, in the
+/// main file, and a label given twice, in the chapter the edits are typed into.
+const FOUND: [(&str, &str); 2] = [
+    (
+        "main.tex",
+        "\\documentclass{article}\n\\newcommand\\never{unused}\n\\def\\again{a\\again}\n\\begin{document}\n\\section{One}\\label{one}\n\\input{chapter}\n\\end{document}\n",
+    ),
+    (
+        "chapter.tex",
+        "A paragraph of a few words, see Section~\\ref{one}, and then some more of them.\n\nA second one\\label{two} with \\emph{words} in it, named twice\\label{two} on one line.\n\nThe last paragraph of the chapter.\n",
+    ),
+];
+
+/// Intuition: a word typed into a paragraph changes what is typeset, nothing a rule about
+/// definitions, recursion or labels reads. Their findings are kept from the lint before
+/// ([`satex::linter::Kept`]), also where the word moves a `\ref` on its line. They are found
+/// anew where the edit touches what they read: a finding on the edited line (its place
+/// moved), a file the rule read for a fix, a label or a definition typed. Each time the
+/// findings are those of a lint that keeps nothing.
+/// Pins: every rule ran over the whole document after each typed character.
+#[test]
+fn findings_stand_across_a_typed_word_only_where_it_left_what_they_read() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-found");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, text) in FOUND {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let (main, chapter) = (dir.join("main.tex"), dir.join("chapter.tex"));
+    let cfg = crate::support::config();
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    let first = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+    let (found, kept) = satex::linter::lint_document_keeping(&first, None);
+    let codes = |found: &[satex::queries::query::Record]| -> Vec<String> {
+        found.iter().filter_map(|r| r.get("code")?.as_str().map(String::from)).collect()
+    };
+    for code in ["unused-definition", "unguarded-recursion", "duplicate-label"] {
+        assert!(codes(&found).iter().any(|c| c == code), "{code} finds nothing in the fixture: {:?}", codes(&found));
+    }
+    let mut linted = (first, kept);
+    // (file, text replaced, its replacement, the rules whose findings may stand)
+    let all = vec!["unused-definition", "unguarded-recursion", "duplicate-label"];
+    let edits: [(&Path, &str, &str, Vec<&str>); 6] = [
+        // a word before a `\ref` on its line: the reference moves, no rule reads where it stands
+        (&chapter, "A paragraph of", "A typed paragraph of", all.clone()),
+        (&chapter, "The last paragraph", "The very last paragraph", all.clone()),
+        // on the line of the label given twice: its finding stands there, and is found anew
+        (&chapter, "A second one", "A second, typed one", vec!["unused-definition", "unguarded-recursion"]),
+        // a label typed: an occurrence more
+        (&chapter, "The very last paragraph", "The very last\\label{three} paragraph", vec![]),
+        // the file the unused macro's fix reads
+        (&main, "\\section{One}", "\\section{One typed}", vec![]),
+        (&chapter, "of the chapter.", "of the typed chapter.", all.clone()),
+    ];
+    for (path, was, now, stand) in edits {
+        let text = read(path);
+        assert!(text.contains(was), "{was} is not in {path:?}");
+        std::fs::write(path, text.replacen(was, now, 1)).unwrap();
+        let run = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+        let (found, kept) = satex::linter::lint_document_keeping(&run, Some((&linted.0, &linted.1)));
+        assert_eq!(found, satex::linter::lint_document(&run), "typed {now}");
+        // never more than may stand; fewer where the runs number their names apart
+        let wrong: Vec<_> = kept.stood.iter().filter(|code| !stand.contains(code)).collect();
+        assert!(wrong.is_empty(), "typed {now}: findings stood that the edit touched: {wrong:?}");
+        linted = (run, kept);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A book: about 500 pages of generated paragraphs in sections (doc/site/e2e/kinds/big.mjs
+/// builds the same for the playground). A word typed in its middle must not cost a run of the
+/// book: the run resumes at the edit, meets the last run a page on and takes that run's rest.
+/// Counted in steps, so the bound holds on a loaded machine; the seconds are printed.
+/// Pins the whole chain on a large input: checkpoints kept within their number and memory,
+/// placed around the edit, the splice of the rest. It was red: the book records over a
+/// million list items, past half of the old bound (2^21, now `limits.list_items`), where a
+/// run after an edit numbers its lists apart from the last run's and can never take its rest:
+/// every typed word ran the second half of the book again (2.6M steps for 2 thousand).
+#[test]
+fn a_word_typed_in_a_book_runs_a_small_share() {
+    if !installed() {
+        return;
+    }
+    /// Sections of [`PARAGRAPHS`] paragraphs, about two pages each.
+    const SECTIONS: usize = 250;
+    const PARAGRAPHS: usize = 12;
+    /// The second edit's run takes at most this share of a full run's steps.
+    const SHARE: u64 = 20;
+    let dir = crate::support::tmp_root().join("incremental-book");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let words: Vec<&str> =
+        "the page line word text block field rule mark note part form list item unit step case code name type"
+            .split(' ')
+            .collect();
+    let mut seed: u64 = 7;
+    let mut next = move || {
+        seed = (seed * 1_103_515_245 + 12_345) % (1 << 31);
+        seed as usize
+    };
+    let mut body = String::new();
+    for s in 0..SECTIONS {
+        body.push_str(&format!("\\section{{Part {s}}}\\label{{sec:p{s}}}\n"));
+        for _ in 0..PARAGRAPHS {
+            let text: Vec<&str> = (0..70 + next() % 40).map(|_| words[next() % words.len()]).collect();
+            body.push_str(&format!("Words {}.\n\n", text.join(" ")));
+        }
+    }
+    // The edited paragraph: the first of the middle section.
+    let marker = format!("\\section{{Part {}}}\\label{{sec:p{}}}\nWords", SECTIONS / 2, SECTIONS / 2);
+    let text = |typed: &str| {
+        let edited = marker.replace("Words", typed);
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n{}\\end{{document}}\n",
+            body.replacen(&marker, &edited, 1)
+        )
+    };
+    let edited_line = 3 + text("Words").split(&marker).next().unwrap().lines().count() as u32;
+    std::fs::write(&main, text("Words")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let clock = std::time::Instant::now();
+    checkpoints.analyze(&text("Words"), &main);
+    eprintln!(
+        "book: {} lines, full run {:.1} s, {} steps",
+        text("Words").lines().count(),
+        clock.elapsed().as_secs_f64(),
+        checkpoints.ran.1
+    );
+    // As long as the word replaced: the line breaks stay.
+    for typed in ["Wordy", "Wordz"] {
+        std::fs::write(&main, text(typed)).unwrap();
+        let clock = std::time::Instant::now();
+        let incremental = checkpoints.analyze(&text(typed), &main);
+        let (ran, all) = checkpoints.ran;
+        eprintln!(
+            "book: typed {typed}: {:.2} s, ran {ran} of {all} steps, resumed {:?}",
+            clock.elapsed().as_secs_f64(),
+            checkpoints.resumed
+        );
+        if typed == "Wordz" {
+            let resumed = checkpoints.resumed.clone().map(|(_, line)| line);
+            assert!(
+                resumed.is_some_and(|l| l <= edited_line && l + 40 >= edited_line),
+                "line {edited_line}: resumed at {resumed:?}"
+            );
+            assert!(checkpoints.converged.is_some(), "typed {typed}: the runs never met");
+            assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+            let full = Machine::analyze_once(&text(typed), Some(&main), &cfg);
+            assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A checkpoint stands where a line of the document starts. A line that ends in a control
+/// word never showed one: TeX skips the line's end with the blanks after the name (tex.web
+/// § 347), so the run goes from the end of one command straight into the next. Such an end is
+/// as good as the next line's start ([`Mouth::quiet_line_mark`]). Pins: a document whose body
+/// is commands, one per line (`\Blinddocument` many times, 470 pages), kept no checkpoint
+/// after `\begin{document}`, and a word typed near its end ran the whole body again.
+#[test]
+fn a_body_of_command_lines_resumes_near_the_edit() {
+    if !installed() {
+        return;
+    }
+    /// Lines of the body, each one command that sets a paragraph.
+    const LINES: usize = 60;
+    /// The edit's run starts within this many lines before the edit.
+    const NEAR: u32 = 12;
+    let dir = crate::support::tmp_root().join("incremental-command-lines");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let head = "\\documentclass{article}\n\\newcommand\\block{Some words that fill a paragraph of text, again and again.\\par}\n\\begin{document}\n";
+    let text = |typed: Option<usize>| {
+        let body: String =
+            (0..LINES).map(|i| if typed == Some(i) { "Typed here.\n\n\\block\n" } else { "\\block\n" }).collect();
+        format!("{head}{body}\\end{{document}}\n")
+    };
+    std::fs::write(&main, text(None)).unwrap();
+    let cfg = crate::support::config();
+    // Close together: the body is short, the spacing is not what is tested.
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    checkpoints.analyze(&text(None), &main);
+    let at = LINES - 5;
+    let edited = head.lines().count() as u32 + at as u32 + 1;
+    std::fs::write(&main, text(Some(at))).unwrap();
+    let incremental = checkpoints.analyze(&text(Some(at)), &main);
+    let full = Machine::analyze_once(&text(Some(at)), Some(&main), &cfg);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None);
+    let resumed = checkpoints.resumed.clone().map(|(_, line)| line);
+    assert!(
+        resumed.is_some_and(|line| line + NEAR >= edited && line <= edited),
+        "the edit on line {edited} resumed at {resumed:?}"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -871,6 +1127,37 @@ fn an_edit_in_an_included_file_resumes_where_it_is_included() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Intuition: `\openin` only opens a file (tex.web § 1275), its first `\read` takes the text, so
+/// `\openin` + `\ifeof` (TeX Live 2022's `\IfFileExists`) asks only whether the file is there.
+/// An edit in the file then resumes inside it. Bug: `\openin` read the whole text, so the file
+/// counted as read twice and every checkpoint in it fell with the edit.
+#[test]
+fn an_edit_in_a_file_tested_by_openin_resumes_inside_it() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("incremental-openin"));
+    let main = dir.join("main.tex");
+    let main_text = "\\documentclass{article}\n\\newread\\probe\n\\begin{document}\nBefore.\n\
+                     \\openin\\probe=chapter.tex \\ifeof\\probe\\else\\closein\\probe\\fi\n\\input{chapter}\nAfter.\n\\end{document}\n";
+    std::fs::write(&main, main_text).unwrap();
+    let paragraphs: Vec<String> = (0..30).map(|i| format!("Paragraph {i} of the chapter.\n")).collect();
+    std::fs::write(dir.join("chapter.tex"), paragraphs.join("\n")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, main_text, &main, &cfg, true);
+    for edit in ["edited", "edited again"] {
+        let edited = paragraphs.join("\n").replacen("Paragraph 20 of", &format!("Paragraph 20, {edit}, of"), 1);
+        std::fs::write(dir.join("chapter.tex"), &edited).unwrap();
+        let incremental = Machine::build(&mut checkpoints, main_text, &main, &cfg, true);
+        let at = checkpoints.resumed.clone();
+        let full = Machine::build(&mut Checkpoints::new(&cfg), main_text, &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "{edit}: resumed at {at:?}");
+        let inside = |(path, line): &(String, u32)| path.ends_with("chapter.tex") && *line > 1;
+        assert!(at.as_ref().is_some_and(inside), "{edit}: resumed at {at:?}, not inside the chapter");
+    }
+}
+
 /// A build that makes its kernel and class caches and the next build, served from them, say
 /// the same, row for row. An edit's rerun resumes from the first build's checkpoints and
 /// splices its rest, so any row the two kinds of run record differently breaks the rerun.
@@ -894,5 +1181,317 @@ fn a_report_built_with_its_caches_says_what_one_served_from_them_says() {
     let cold = said(&Machine::build(&mut Checkpoints::new(&cfg), &text, &main, &cfg, true));
     let warm = said(&Machine::build(&mut Checkpoints::new(&cfg), &text, &main, &cfg, true));
     assert_eq!(first_difference(&cold, &warm), None, "cold build vs warm build");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: inserting an overlay command into a beamer frame is one edit,
+/// and the build that resumes before it must say what a build from nothing
+/// says. Pins a resumed build of an approximated beamer document (unknown
+/// colour names, errors on undecided paths) that published other findings
+/// than a fresh one: found by the LSP edit-sequence driver (cex-edit).
+#[test]
+fn a_resumed_beamer_build_after_an_overlay_edit_says_what_a_fresh_build_says() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-beamer-only");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{beamer}\n\\usetheme{Madrid}\\usecolortheme{default}\n\\title{Slides}\\author{S. Peaker}\\date{}\n\\begin{document}\n\\begin{frame}\\titlepage\\end{frame}\n\\begin{frame}{Outline}\\tableofcontents\\end{frame}\n\\section{Overlays}\n\\begin{frame}{Items}\n\\begin{itemize}[<+->]\\item first \\item second \\item \\alert{third}\\end{itemize}\n\\pause Then more.\n\\only<2>{Only on two.}\\uncover<3->{Uncovered from three.}\n\\end{frame}\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, text, &main, &cfg, true);
+    let edited = text.replacen("\\begin{frame}\\titlepage", "\\begin{frame}\\only<2>{two}\n\\titlepage", 1);
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let at = checkpoints.resumed.clone();
+    let full = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, true);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "resumed at {at:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: the editor's build after an edit starts from the files the
+/// last build left, and must say what a build from no files says. Pins an
+/// `\include` commented out: the chapter's label stayed in the run's facts
+/// (no undefined reference), which a fresh `satex lint` reports.
+#[test]
+fn an_include_commented_out_builds_what_a_fresh_build_does() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-include-off");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\begin{document}\nSee \\ref{sec:ch}.\n\\include{ch}\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    std::fs::write(dir.join("ch.tex"), "\\section{Ch}\\label{sec:ch}\n").unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    Machine::build(&mut checkpoints, text, &main, &cfg, true);
+    let edited = text.replace("\\include", "%\\include");
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let at = checkpoints.resumed.clone();
+    satex::project::overlay::clear();
+    let fresh = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, false);
+    assert_eq!(first_difference(&said(&incremental), &said(&fresh)), None, "resumed at {at:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: a name built around a number's unknown digits is one name per
+/// number, whichever run builds it. Pins the name spelling the number
+/// token's index: a run resumed after an edit numbers its new names after
+/// the last run's, so `\__seq_map_<n>:w` was another name than in a fresh
+/// build (the beamer red's first difference).
+#[test]
+fn a_name_around_unknown_digits_is_spelled_alike_after_a_resume() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join("incremental-digit-name");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let text = "\\documentclass{article}\n\\begin{document}\nOne.\n\n\\ExplSyntaxOn\n\\int_gset:Nn \\g__kernel_prg_map_int { \\pdfelapsedtime }\n\\seq_set_from_clist:Nn \\l_tmpa_seq { a, b }\n\\seq_map_inline:Nn \\l_tmpa_seq { #1 }\n\\ExplSyntaxOff\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg).every(64);
+    Machine::build(&mut checkpoints, text, &main, &cfg, true);
+    // New names before the map: a fresh run numbers the later ones one up.
+    let edited = text.replace("One.", "\\def\\one{1}\\def\\two{2}Two.");
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let at = checkpoints.resumed.clone();
+    satex::project::overlay::clear();
+    let fresh = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, false);
+    let numbered = said(&fresh).iter().any(|l| l.contains("__seq_map_") && l.contains('\u{5}'));
+    assert!(numbered, "the map's name is built around the unknown digits");
+    assert_eq!(first_difference(&said(&incremental), &said(&fresh)), None, "resumed at {at:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Intuition: the status line says where the run reads (`slides.tex:13`); a line past the file's end names a place
+/// that does not exist. Pins the playground's `slides.tex:1695` on an 18-line beamer file during a build's second run
+/// after an edit (userrun j13): the innermost file frame's line climbed past the file.
+#[test]
+fn progress_never_names_a_line_past_the_file() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-progress-line-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("progress-line.tex");
+    let text = "\\documentclass{beamer}\n\\usetheme{Madrid}\n\\title{T}\n\\begin{document}\n\\begin{frame}\\titlepage\\end{frame}\n\\section{A}\n\\begin{frame}{One}\nText \\ref{x}.\n\\end{frame}\n\\section{B}\\label{x}\n\\begin{frame}{Two}\nMore.\n\\end{frame}\n\\end{document}\n";
+    std::fs::write(&main, text).unwrap();
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keep = seen.clone();
+    satex::util::progress::listen(Some(Box::new(move |s: &satex::util::progress::Status| {
+        if s.file == "progress-line.tex" {
+            keep.lock().unwrap().push((s.run, s.line, s.text.clone()));
+        }
+    })));
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    let _ = Machine::build(&mut checkpoints, text, &main, &cfg, false);
+    let edited = text.replace("More.", "More, more.");
+    std::fs::write(&main, &edited).unwrap();
+    let _ = Machine::build(&mut checkpoints, &edited, &main, &cfg, false);
+    satex::util::progress::listen(None);
+    let _ = std::fs::remove_dir_all(&dir);
+    let lines = edited.lines().count() as u64 + 1;
+    let seen = seen.lock().unwrap();
+    let past: Vec<_> = seen.iter().filter(|(_, line, _)| *line > lines).collect();
+    assert!(past.is_empty(), "{} of {} statuses past line {lines}: {past:?}", past.len(), seen.len());
+}
+
+/// Letters typed into a paragraph whose lines are not known (it holds a kern of unknown
+/// width), with paragraphs and no page break after it: the run
+/// meets the last one on a line of the same page and takes its rest, with a full run's result.
+/// Such a paragraph is 1 to n lines, n bounded by its breakpoints; the bound is rounded up to
+/// a power of two, so one more letter moves it at most once in a while (here: at most once
+/// in the four letters).
+/// Pins: every typed letter raised the bound, and the page's length with it, so the runs met
+/// only past the next forced page break (a thesis chapter: 12M to 109M steps per typed word).
+#[test]
+fn letters_typed_into_a_paragraph_of_unknown_lines_meet_the_last_run_on_its_page() {
+    if !installed() {
+        return;
+    }
+    /// The edit's run takes at most this share of a full run's steps.
+    const SHARE: u64 = 3;
+    let dir = crate::support::tmp_root().join("incremental-same-page");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let words = "Some words that fill a paragraph of text across a few lines on the page here";
+    let body: String = (0..12)
+        .map(|i| format!("Paragraph {i}. {words} \\kern\\pdfuniformdeviate 3pt, {words}, {words}.\n\n"))
+        .collect();
+    let text = |typed: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n{}\\end{{document}}\n",
+            body.replacen("Paragraph 3.", typed, 1)
+        )
+    };
+    std::fs::write(&main, text("Paragraph 3.")).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    checkpoints.analyze(&text("Paragraph 3."), &main);
+    let typed = ["Paragraph 3 a.", "Paragraph 3 a b.", "Paragraph 3 a b c.", "Paragraph 3 a b c d."];
+    let mut met = 0;
+    for typed in typed {
+        std::fs::write(&main, text(typed)).unwrap();
+        let incremental = checkpoints.analyze(&text(typed), &main);
+        let full = Machine::analyze_once(&text(typed), Some(&main), &cfg);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed}");
+        let (ran, all) = checkpoints.ran;
+        met += usize::from(checkpoints.converged.is_some() && ran * SHARE <= all);
+    }
+    assert!(met + 1 >= typed.len(), "{met} of {} typed letters met the last run on the page", typed.len());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A word typed before a call of the document's own macro that reads a label and writes one:
+/// what the run notes of the call (the name read, the line written) stands in the macro's
+/// body, in a line no edit touched, and names the call, which moved along its line. The
+/// run takes these rows as its own and meets the last run after the paragraph.
+/// Guards the class (rows of a moved call); green before, no bug of its own.
+#[test]
+fn a_word_typed_before_a_macro_call_that_reads_a_label_meets_the_last_run() {
+    if !installed() {
+        return;
+    }
+    /// The edit's run takes at most this share of a full run's steps.
+    const SHARE: u64 = 3;
+    let dir = crate::support::tmp_root().join("incremental-call-moved");
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let words = "Some words that fill a paragraph of text across a few lines on the page here";
+    let body: String = (0..12)
+        .map(|i| {
+            format!(
+                "Paragraph {i}. {words},\nas \\see{{sec:{i}}} says \\mark{{m:{i}}} and \\cite{{k{i}}},\n{words}.\n\n"
+            )
+        })
+        .collect();
+    let text = |typed: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\newcommand\\see[1]{{Section~\\ref{{#1}} on page~\\pageref{{#1}}}}\n\
+             \\newcommand\\mark[1]{{\\label{{#1}}\\index{{#1}}}}\n\\begin{{document}}\n\\section{{One}}\\label{{sec:3}}\n{}\\end{{document}}\n",
+            body.replacen("as \\see{sec:3}", typed, 1)
+        )
+    };
+    let first = text("as \\see{sec:3}");
+    std::fs::write(&main, &first).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    checkpoints.analyze(&first, &main);
+    for typed in ["as the \\see{sec:3}", "as the text \\see{sec:3}", "as the text of \\see{sec:3}"] {
+        std::fs::write(&main, text(typed)).unwrap();
+        let incremental = checkpoints.analyze(&text(typed), &main);
+        let full = Machine::analyze_once(&text(typed), Some(&main), &cfg);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed}");
+        let (ran, all) = checkpoints.ran;
+        assert!(checkpoints.converged.is_some(), "typed {typed}: the runs never met");
+        assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The caret stands on a line before anything is typed there. A server places that line's
+/// checkpoints while it is idle ([`Checkpoints::place_at`]): a run of the unchanged text from
+/// the last checkpoint before the line, which keeps one at the line and some past it. The
+/// first word typed there then resumes at its line and meets the last run after its
+/// paragraph, as every later word does, with a full run's result. Placing again at the
+/// same line places nothing.
+/// Pins: the first edit at a place ran the old text again from the last kept checkpoint
+/// before it while the user waited (a thesis: 24M steps, 5 s, before the edit's own run).
+#[test]
+fn checkpoints_placed_at_the_caret_make_the_first_edit_run_its_paragraph() {
+    if !installed() {
+        return;
+    }
+    /// An edit may run this share of the document's steps.
+    const SHARE: u64 = 50;
+    let dir = crate::support::tmp_root().join("incremental-caret");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let files = report(6, 3);
+    for (name, text) in &files {
+        std::fs::write(dir.join(name), text).unwrap();
+    }
+    let (main, chapter) = (dir.join("main.tex"), dir.join("ch2.tex"));
+    let read = |p: &Path| std::fs::read_to_string(p).unwrap();
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+    let original = read(&chapter);
+    let line = 1 + original.lines().position(|l| l.contains("Paragraph 7. Some")).unwrap() as u32;
+    // a file the run never read has no place in it
+    assert!(!checkpoints.place_at(&read(&main), &dir.join("nowhere.tex"), line));
+    assert!(checkpoints.place_at(&read(&main), &chapter, line), "nothing placed at line {line}");
+    assert!(!checkpoints.place_at(&read(&main), &chapter, line), "placed twice at line {line}");
+    for typed in ["Paragraph 7! Some", "Paragraph 7? Some"] {
+        std::fs::write(&chapter, original.replacen("Paragraph 7. Some", typed, 1)).unwrap();
+        let incremental = Machine::build(&mut checkpoints, &read(&main), &main, &cfg, true);
+        let (at, (ran, all)) = ((checkpoints.resumed.clone(), checkpoints.converged.clone()), checkpoints.ran);
+        let full = Machine::build(&mut Checkpoints::new(&cfg), &read(&main), &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed} (resumed, met: {at:?})");
+        assert_eq!(at.0.as_ref().map(|(_, l)| *l), Some(line), "typed {typed}: resumed at {:?}", at.0);
+        assert!(at.1.is_some(), "typed {typed}: the runs never met");
+        assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+    }
+    // In the document itself, and at another place after the edits: the result stays a full run's.
+    let text = read(&main);
+    let include = 1 + text.lines().position(|l| l.contains("\\include{ch4}")).unwrap() as u32;
+    checkpoints.place_at(&text, &main, include);
+    let edited = text.replacen("\\include{ch4}", "Typed. \\include{ch4}", 1);
+    std::fs::write(&main, &edited).unwrap();
+    let incremental = Machine::build(&mut checkpoints, &edited, &main, &cfg, true);
+    let full = Machine::build(&mut Checkpoints::new(&cfg), &edited, &main, &cfg, true);
+    assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed in the document");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A paragraph typed into between generated sections (`blindtext`): every later line's text
+/// comes from a package, so the last character the document itself set stays on the edited
+/// line, and the edit's own characters move it. Typing on, each run still meets the last one
+/// after the paragraph and splices its rest, with a full run's result.
+/// Pins: the run never met the last one ("a place on the edited lines"), and every keystroke
+/// ran the rest of the document again.
+#[test]
+fn letters_typed_between_generated_sections_meet_the_last_run() {
+    if !installed() {
+        return;
+    }
+    /// An edit may run this share of the document's steps.
+    const SHARE: u64 = 50;
+    let dir = crate::support::tmp_root().join("incremental-generated");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let main = dir.join("main.tex");
+    let sections = "\\Blinddocument\n".repeat(3);
+    let text = |typed: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{{blindtext}}\n\\begin{{document}}\n{sections}\nLet's look at an example{typed} we know.\n\n{sections}\\end{{document}}\n"
+        )
+    };
+    let cfg = crate::support::config();
+    let mut checkpoints = Checkpoints::new(&cfg);
+    std::fs::write(&main, text("")).unwrap();
+    Machine::build(&mut checkpoints, &text(""), &main, &cfg, true);
+    let line = 1 + text("").lines().position(|l| l.starts_with("Let's")).unwrap() as u32;
+    checkpoints.place_at(&text(""), &main, line);
+    let mut typed = String::new();
+    for c in ["X", "Y", "Z"] {
+        typed.push_str(c);
+        std::fs::write(&main, text(&typed)).unwrap();
+        let incremental = Machine::build(&mut checkpoints, &text(&typed), &main, &cfg, true);
+        let (at, (ran, all)) = ((checkpoints.resumed.clone(), checkpoints.converged.clone()), checkpoints.ran);
+        let full = Machine::build(&mut Checkpoints::new(&cfg), &text(&typed), &main, &cfg, true);
+        assert_eq!(first_difference(&said(&incremental), &said(&full)), None, "typed {typed} (resumed, met: {at:?})");
+        assert_eq!(incremental.graph.len(), full.graph.len(), "typed {typed}: vertices");
+        assert!(at.1.is_some(), "typed {typed}: the runs never met");
+        assert!(ran * SHARE <= all, "typed {typed}: ran {ran} of {all} steps");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

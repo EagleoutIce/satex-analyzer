@@ -169,6 +169,13 @@ typedef struct global_State {
   TString *tmname[TM_N];  /* array with tag-method names */
   struct Table *mt[LUA_NUMTAGS];  /* metatables for basic types */
   TString *strcache[STRCACHE_N][STRCACHE_M];  /* cache for strings in API */
+  lua_Unsigned satex_writes;  /* satex: writes to state older than the run */
+  unsigned int satex_epoch;  /* satex: the current run's epoch, 0 outside runs */
+  unsigned int satex_epochs;  /* satex: the last epoch handed out */
+  unsigned int satex_choices;  /* satex: outcomes of the run's tests of unknowns, bit i the i-th */
+  unsigned int satex_nchoices;  /* satex: how many of them are given */
+  unsigned int satex_chosen;  /* satex: how many of them were taken */
+  lu_byte satex_asked;  /* satex: the run stopped at a test past them */
 } global_State;
 
 
@@ -177,6 +184,7 @@ typedef struct global_State {
 */
 struct lua_State {
   CommonHeader;
+  unsigned int satex_epoch;  /* satex: the epoch it was made in */
   unsigned short nci;  /* number of items in 'ci' list */
   lu_byte status;
   StkId top;  /* first free slot in the stack */
@@ -203,6 +211,19 @@ struct lua_State {
 
 
 #define G(L)	(L->l_G)
+
+/* satex: whether a run wrote state it found (satex's src/plugins/lua/run.rs).
+** Tables, userdata, threads and upvalues carry the epoch they were made in;
+** a write to one of an older epoch, or to state that has none, counts.
+** Epoch 0 (no run, or the epochs ran out): nothing is fresh. */
+#define satex_fresh(L,o)	(G(L)->satex_epoch != 0 && \
+                                 (o)->satex_epoch == G(L)->satex_epoch)
+#define satex_wrote(L)	cast_void(G(L)->satex_writes++)
+#define satex_write(L,o)	(satex_fresh(L,o) ? cast_void(0) : satex_wrote(L))
+/* satex: a run that was given the outcome of a test ('satex_choose') runs
+** once per outcome, so it stops before it stores into state it found. */
+#define satex_guard(L,o)	((G(L)->satex_chosen != 0 && !satex_fresh(L,o)) ? \
+                                 satex_unknown(L) : cast_void(0))
 
 
 /*

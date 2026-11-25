@@ -1,0 +1,19 @@
+# Only what `cargo build --bin satex` reads goes into the build context.
+.git
+.github
+.claude
+.cargo-home
+target
+site-out
+site-work
+**/node_modules
+**/__pycache__
+samples
+benches/docs
+editors
+semantics
+doc/site/showcase
+doc/site/bench
+doc/site/e2e
+Dockerfile
+.dockerignore

@@ -14,13 +14,13 @@ SaTeX merges `satex.yaml` layers, later ones winning:
 
 Mappings merge recursively. A list replaces the outer one unless its key ends in `+` (`load.skip+: [extra]`). A layer that does not fit the schema is skipped. `--no-config` ignores every file but keeps `--set`. `satex --version` lists the merged files.
 
-Rule settings (`lints`, `lint_off`) belong to the [lint rules](Lints). The `lsp` and `completion` keys belong to the [language server](Lsp). `limits` is explained [below](#configurable-limits-for-the-analysis).
+Rule settings (`lints`, `lint_off`) belong to the [lint rules](lints.md). The `lsp` and `completion` keys belong to the [language server](lsp.md). `limits` is explained [below](#configurable-limits-for-the-analysis).
 
 {{file: satex.yaml}}
 
 ## Plugins
 
-A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why ([queries](Queries#plugins)).
+A plugin picks a default from the machine, the installation and the build files. `satex.yaml` can override each. `satex query plugins -f FILE` shows what was chosen and why ([queries](queries.md#plugins)).
 
 | Plugin | Values | Detected from |
 | --- | --- | --- |
@@ -39,17 +39,18 @@ A plugin picks a default from the machine, the installation and the build files.
 - **l3build.** A `build.lua` runs in a sandboxed `texlua` (else its plain assignments are read). Its source dirs are searched, `.ins`/`.dtx` pairs read through docstrip, and `typesetexe`/`stdengine` pick the engine. `l3build:` in `satex.yaml` says which build files to look for (`files`), which `--config` files to read after it (`config`), and overrides the `module`, the test patterns (`tests`) and the check engines (`engines`). `checks: true` analyzes the regression tests as documents too. Empty values keep what the bundle says.
 - **depp.** Every file read maps to its TeX Live package by TDS path. With depp loaded or its file present, `missing-dependency` and `unused-dependency` compare against it. Rules: `depp.rules`, `depp.renames`, `depp.file`.
 - **Package augmentations.** What SaTeX knows about one package lives in one module, not in the lint rules. A rule asks the module, which can veto a finding or rewrite its message and fix. It reads the package's state from the run. siunitx is the first: an `S` column that rounds keeps `inconsistent-precision` quiet, and the fix names `\sisetup{round-mode = ...}`. `plugins.augment` lists the modules that are on.
-- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker (tex.web §§ 813–890). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. Anything not known gives `null`. Both are on by default.
+- **Typesetting.** `plugins.typeset` holds plugins that run TeX's own algorithms again on text the last run did not set, for the playground's echo of typed text. Each reads only the run's end state: fonts, parameters, codes and hyphenation tables. `hyphenate` answers `satex/hyphenate`: where each word may take a hyphen, from the patterns, exceptions, hyphen mins and `\lccode`s in force. `linebreak` answers `satex/break`: the lines a paragraph's words break into, by the run's own Knuth–Plass breaker (tex.web §§ 813–890). It builds the list as TeX's main loop does: TFM widths, ligatures and kerns, interword glue by space factor. Fonts come from the run's paragraph at the line given, and the parameters from where the run broke that paragraph. `mathwidths` answers `satex/mathwidths`: each math symbol typed (`a`, `+`, `\alpha`) as the run's math fonts set it. Its math code or `\mathchardef` names a family and a slot, the family's `\textfont` the font, and its TFM gives width, height, depth and italic correction. `commands` answers `satex/commandText`: what a control word typesets alone (`\TeX`, `\LaTeX`, a user's logo). A sandbox of the run's end state sets `\hbox{\name}`, and each character comes with its place: the width before it on its list, the kerns, the boxes `\raise` and `\lower` shift and a `\vbox`'s rows. A command that reads an argument or raises an error gives `null`. `fonts` answers `satex/fontAt`: the font the run set the character before a place in, as its family, series and shape among the defaults. It gives the echo the font of letters typed into a command's argument, a user's command too. Anything not known gives `null`. All five are on by default.
 - **Preloaded format.** A `%&fmt` line, `-fmt=` or `preload:` names a dumped preamble. SaTeX interprets that preamble instead (up to `\endofdump`). `pretex:` is code read before the first line (latexmk's `-usepretex`).
 
 ### Format and package caches
 
-The interpreted kernel is cached after the first run (`satex cache`, `satex cache build`, `satex cache clear`, see the [command line page](Cli)).
+The interpreted kernel is cached after the first run (`satex cache`, `satex cache build`, `satex cache clear`, see the [command line page](cli.md)).
 
 A package is cached per **read set**: the meanings, registers, hooks, options and catcodes it consulted, with the values seen. Its **effect** (bindings, hooks, facts, diagnostics) is replayed in any later run that agrees with the read set. Register allocations are renumbered on replay.
 
 - **Rejected** when a file it read changed, a name now resolves to another file, or the state disagrees. `-v` says why. `satex summary` shows `cached`, `stored`, `stale: …`.
-- **Not cached**: loads under a conditional or in a group, or that ran out of budget or left a group open. `-v` names each one and why.
+- **Not cached**: loads under a conditional, or that ran out of budget or left a group open. `-v` names each one and why.
+- **In a group** a load is cached apart for each group level. Its local assignments stay local there.
 - **Nested loads** have their own entries, also from a file `\input` in between. The outer one resumes at its next line at rest.
 - **Project files** (frozen or not) are cached like installed ones. The key holds their content, so an edit reads them again.
 - **Lookaheads** that read a line ahead (`\@ifnextchar` after `\RequirePackage`, beamer's `\mode`) give it back to the file. That line then starts at rest too.
@@ -103,7 +104,7 @@ profiles:
 
 {{fields: Project project}}
 
-A rule's own settings live under `lints.⟨code⟩`. [Lint rules](Lints) lists the rules, and `lint_off` turns one off.
+A rule's own settings live under `lints.⟨code⟩`. [Lint rules](lints.md) lists the rules, and `lint_off` turns one off.
 
 {{fields: UnusedDefinition lints.unused-definition}}
 
@@ -133,11 +134,17 @@ A rule's own settings live under `lints.⟨code⟩`. [Lint rules](Lints) lists t
 | `2026-09-29`, `2026-09-29T14:30+02:00` | a pinned date |
 | `unknown` | every digit unknown: date-dependent code is analyzed for every outcome |
 
-Package caches that read the clock are kept per setting. So are document caches.
+A package reads the same clock as the document, as in a TeX job. A package cache is a function of what its load found, the clock and the job name among it:
+
+- A value the load only stores is filled in where the cache is served. `\count@=\time`, arithmetic on it (`\advance`, `\multiply`, `\divide`), and `\the` of it, `\jobname` or `\pdfcreationdate` inside an `\edef` are stored as what they compute.
+- A test on such a value (`\ifnum`) is stored with its outcome. The cache is served where the test comes out the same (pgfmath's random seed at any minute but midnight).
+- Anything else that looks at the value keys that part of the load on the exact value. It is read again where the value differs.
+
+One cache file serves every date and every job name. Document caches are kept per setting.
 
 ## Where paths join
 
-Undecided tests part the run into paths ([Domains](Domains)). They join where they stand alike, and at the points `analysis.join_paths_at` names.
+Undecided tests part the run into paths ([Domains](domains.md)). They join where they stand alike, and at the points `analysis.join_paths_at` names.
 
 ```yaml
 analysis:
@@ -158,7 +165,7 @@ stubs:
   \xinttheexpr: { until: \relax, result: { text: number } }
 ```
 
-`args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](Domains#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
+`args`: `s` star, `o` optional, `m` mandatory, or `until` a delimiter. `result` is an element of the [unknown-text lattice](domains.md#unknown-text-the-textclass-lattice): `nothing`, `number` / `{ number: [lo, hi] }`, `dimen`, `text` / `{ text: digits | number | dimension | cs-free | any }`, `box` / `{ box: { width, height, depth } }`. `sets` names what it assigns (`sets: { \pgfmathresult: number }`). A document that redefines the name gets its own definition.
 
 ## Configurable limits for the analysis
 

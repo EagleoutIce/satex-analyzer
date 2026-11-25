@@ -150,7 +150,7 @@ fn label_text(analysis: &Analysis, key: &str) -> Option<String> {
         }
         depth == 0
     })?;
-    Some(crate::engine::tex::text_of(&toks[1..end], &analysis.interner))
+    Some(crate::engine::tex::label_text_of(&toks[1..end], &analysis.interner))
 }
 
 /// The document's numbered items that no `\label` names, each once:
@@ -222,7 +222,7 @@ fn refer_to_item(
     let analysis = report.analysis();
     let edits = report.edits();
     let typed = if paren { format!("{word} ({number})") } else { format!("{word} {number}") };
-    let key: String = item.label.chars().filter(|c| c.is_alphanumeric()).collect::<String>().to_lowercase();
+    let key = crate::util::equiv::key(&item.label, crate::util::equiv::Level::Letters);
     let key = format!("item:{key}");
     let taken = analysis.facts.occurrences.iter().any(|o| o.kind == OccKind::Label && o.key == key);
     let own = item_parts(&item.label).0.is_some_and(|w| names(&w.to_lowercase(), &word.to_lowercase()));
@@ -484,7 +484,7 @@ fn hand_written_author(report: &mut Report) {
         if !read.insert(path.clone()) {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(text) = crate::project::overlay::read_to_string(&path) else { continue };
         for entry in crate::plugins::bib::entries(&text) {
             authors.entry(entry.key).or_insert(entry.author);
         }

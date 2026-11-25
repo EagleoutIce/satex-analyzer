@@ -36,12 +36,14 @@ pub mod codec {
 
     pub enum Mode {
         /// Names and paths are written out in full: equal bytes mean equal
-        /// values in any run.
-        Hash { names: super::Names, files: Vec<Rc<str>> },
+        /// values in any run. A span in an `own` file is written as a mark
+        /// and kept in `seen`: text that moved digests the same.
+        Hash { names: super::Names, files: Vec<Rc<str>>, own: Vec<bool>, seen: Vec<Span> },
         /// Numbers are written as indices into tables built on the way.
         Encode { syms: HashMap<u32, u32>, sym_order: Vec<u32>, files: HashMap<FileId, u32>, file_order: Vec<FileId> },
-        /// Indices are read back through the tables of the run installing it.
-        Decode { syms: Vec<Sym>, files: Vec<FileId> },
+        /// Indices are read back through the tables of the run installing it,
+        /// and spans through `moved` where their text now stands.
+        Decode { syms: Vec<Sym>, files: Vec<FileId>, moved: std::sync::Arc<HashMap<Span, Span>> },
     }
 
     thread_local! {
@@ -128,6 +130,16 @@ pub mod codec {
     impl Serialize for Span {
         fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
             let (line, col) = (self.line, self.col);
+            let own = MODE.with(|m| match &mut *m.borrow_mut() {
+                Some(Mode::Hash { own, seen, .. }) if own.get(self.file as usize) == Some(&true) => {
+                    seen.push(*self);
+                    true
+                }
+                _ => false,
+            });
+            if own {
+                return SpanRepr { file: "", line: 0, col: 0 }.serialize(s);
+            }
             match file_out(self.file) {
                 Out::Plain => SpanRepr { file: self.file, line, col }.serialize(s),
                 Out::Text(path) => SpanRepr { file: &*path, line, col }.serialize(s),
@@ -139,11 +151,14 @@ pub mod codec {
     impl<'de> Deserialize<'de> for Span {
         fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Span, D::Error> {
             let raw = SpanRepr::<u32>::deserialize(d)?;
-            let file = MODE.with(|m| match &*m.borrow() {
-                Some(Mode::Decode { files, .. }) => files.get(raw.file as usize).copied().unwrap_or(0),
-                _ => raw.file as FileId,
-            });
-            Ok(Span { file, line: raw.line, col: raw.col })
+            Ok(MODE.with(|m| match &*m.borrow() {
+                Some(Mode::Decode { files, moved, .. }) => {
+                    let file = files.get(raw.file as usize).copied().unwrap_or(0);
+                    let span = Span { file, line: raw.line, col: raw.col };
+                    moved.get(&span).copied().unwrap_or(span)
+                }
+                _ => Span { file: raw.file as FileId, line: raw.line, col: raw.col },
+            }))
         }
     }
 }
@@ -507,6 +522,62 @@ pub struct Interner {
     /// A bit per name that begins with [`OWN_NAME`]: hot tests of satex's
     /// own names look here before they read the text.
     own: Rc<Vec<u64>>,
+    /// Names asked for by [`NameKey`] ([`Interner::keyed`]): typesetting reads a font's
+    /// fields and a character's codes per character, and formatting and hashing each
+    /// name was a hot cost. Names are never taken back, so an entry stays right in every
+    /// copy; not part of equality, which the names decide.
+    keyed: Rc<std::collections::HashMap<NameKey, Sym, NameHash>>,
+    /// The hottest of them by a row and a column the caller places them in
+    /// ([`Interner::keyed`]): two indexes, no hash. Rows are shared apart, so a copy
+    /// that adds a name copies one row.
+    cells: Rc<Vec<Rc<Vec<Sym>>>>,
+}
+
+/// An empty cell of [`Interner::keyed`]'s grid.
+const NO_CELL: Sym = Sym(u32::MAX);
+
+/// What a hot name is built from: a kind, a static text and a number. The caller of
+/// [`Interner::keyed`] builds the same name from the same key, and different names
+/// from different ones.
+pub type NameKey = (KeyKind, StaticText, u64);
+
+/// A static text as a key, compared and hashed by where it lies: an equal text
+/// elsewhere is only a second entry for the same name.
+#[derive(Clone, Copy, Debug)]
+pub struct StaticText(pub &'static str);
+
+impl PartialEq for StaticText {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.0, other.0)
+    }
+}
+
+impl Eq for StaticText {}
+
+impl std::hash::Hash for StaticText {
+    fn hash<H: std::hash::Hasher>(&self, h: &mut H) {
+        h.write_usize(self.0.as_ptr() as usize);
+        h.write_usize(self.0.len());
+    }
+}
+
+/// The families of names [`NameKey`] stands for.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum KeyKind {
+    /// An engine key named by its text alone.
+    Engine,
+    /// A font's field: the field, the font.
+    FontField,
+    /// A font's `\fontdimen`: the font and the parameter, packed.
+    FontParam,
+    /// The slot for a family's unpinned writes: the family.
+    Unpinned,
+    /// The slot for a font field's unpinned writes: the field (empty for a parameter), the font.
+    FontUnpinned,
+    /// A character's entry in a code table: the table, the character.
+    Code,
+    /// The slot for every character of a code table: the table.
+    AnyCode,
 }
 
 /// What satex's own names (registers, unknown text) begin with.
@@ -651,6 +722,57 @@ impl Interner {
         sym
     }
 
+    /// The name `key` stands for, which `name` writes where it was not asked for yet.
+    #[inline]
+    /// `cell` places the key in the grid instead of the map; the caller gives each key one
+    /// cell and each cell one key.
+    pub fn keyed(&mut self, key: NameKey, cell: Option<(usize, usize)>, name: impl FnOnce(&mut String)) -> Sym {
+        if let Some(sym) = self.key_sym(&key, cell) {
+            self.touch(sym);
+            return sym;
+        }
+        let mut text = String::new();
+        name(&mut text);
+        let sym = self.intern(&text);
+        self.keep_key(key, cell, sym);
+        sym
+    }
+
+    /// [`Interner::lookup`] of `name`, the name `key` stands for, found by the key where it
+    /// was asked for before: no name is added and none counts as asked for.
+    pub fn lookup_keyed(&mut self, key: NameKey, cell: Option<(usize, usize)>, name: &str) -> Option<Sym> {
+        if let Some(sym) = self.key_sym(&key, cell) {
+            return Some(sym);
+        }
+        let sym = self.lookup(name)?;
+        self.keep_key(key, cell, sym);
+        Some(sym)
+    }
+
+    fn key_sym(&self, key: &NameKey, cell: Option<(usize, usize)>) -> Option<Sym> {
+        match cell {
+            Some((r, c)) => self.cells.get(r).and_then(|row| row.get(c)).copied().filter(|&s| s != NO_CELL),
+            None => self.keyed.get(key).copied(),
+        }
+    }
+
+    fn keep_key(&mut self, key: NameKey, cell: Option<(usize, usize)>, sym: Sym) {
+        match cell {
+            Some((r, c)) => {
+                let rows = Rc::make_mut(&mut self.cells);
+                if rows.len() <= r {
+                    rows.resize_with(r + 1, Default::default);
+                }
+                let row = Rc::make_mut(&mut rows[r]);
+                if row.len() <= c {
+                    row.resize(c + 1, NO_CELL);
+                }
+                row[c] = sym;
+            }
+            None => _ = Rc::make_mut(&mut self.keyed).insert(key, sym),
+        }
+    }
+
     fn touch(&mut self, sym: Sym) {
         if let Some((seen, order)) = &mut self.touched {
             let word = sym.0 as usize / 64;
@@ -713,6 +835,17 @@ impl Interner {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+    /// How many of the first names both number alike. A run resumed from another's state
+    /// shares its strings, so they compare by pointer, and a shared base all at once.
+    pub fn alike(&self, other: &Interner) -> usize {
+        let n = self.len().min(other.len());
+        let shared = if Rc::ptr_eq(&self.base, &other.base) { self.base.names.len().min(n) } else { 0 };
+        fn at(me: &Interner, i: usize) -> &Rc<str> {
+            me.base.names.get(i).unwrap_or_else(|| &me.names[i - me.base.names.len()])
+        }
+        (shared..n).find(|&i| !(Rc::ptr_eq(at(self, i), at(other, i)) || at(self, i) == at(other, i))).unwrap_or(n)
+    }
+
     /// Whether every name of `other` is a name here, under the same symbol.
     pub fn holds(&self, other: &Interner) -> bool {
         let (mine, theirs) = (self.names(), other.names());
@@ -809,6 +942,21 @@ impl Default for CatcodeTable {
 }
 
 impl CatcodeTable {
+    /// Becomes a copy of `live`, keeping the shared maps it already holds.
+    pub fn refresh(&mut self, live: &CatcodeTable) {
+        let CatcodeTable { ascii, wide, wide_default, unknown, reach, reach_cats, known } = self;
+        (*ascii, *wide_default, *reach, *reach_cats) = (live.ascii, live.wide_default, live.reach, live.reach_cats);
+        if !Rc::ptr_eq(wide, &live.wide) {
+            *wide = live.wide.clone();
+        }
+        if !Rc::ptr_eq(unknown, &live.unknown) {
+            *unknown = live.unknown.clone();
+        }
+        if !Rc::ptr_eq(known, &live.known) {
+            *known = live.known.clone();
+        }
+    }
+
     /// INITEX's table (tex.web § 232): letters 11, `\\` 0, `%` 14, `^^@` 9,
     /// `^^M` 5, space 10, `^^?` 15, everything else 12.
     pub fn initex() -> Self {
@@ -1282,10 +1430,25 @@ pub fn text_with_groups(toks: &[Token], it: &Interner) -> String {
 
 /// Text value of a token list (braces dropped, control sequences bare).
 pub fn text_of(toks: &[Token], it: &Interner) -> String {
+    text_with(toks, it, |name, out| out.push_str(name))
+}
+
+/// What `\ref` prints of a label's tokens, as [`text_of`] spells it: `\protect` prints
+/// nothing, and the hard space `~` leaves in a `\protected@edef` of an older kernel
+/// (`\protect\nobreakspace␣`, a robust command's inner name) prints as `~` again.
+pub fn label_text_of(toks: &[Token], it: &Interner) -> String {
+    text_with(toks, it, |name, out| match name.trim_end() {
+        "protect" => {}
+        "nobreakspace" => out.push('~'),
+        _ => out.push_str(name),
+    })
+}
+
+fn text_with(toks: &[Token], it: &Interner, mut cs: impl FnMut(&str, &mut String)) -> String {
     let mut out = String::new();
     for t in toks {
         match t.tok {
-            Tok::Cs(sym) => out.push_str(it.name(sym)),
+            Tok::Cs(sym) => cs(it.name(sym), &mut out),
             Tok::Chr(_, Catcode::Begin | Catcode::End) => {}
             Tok::Chr(c, _) => out.push(c),
             Tok::Param(_) => {}
@@ -1627,12 +1790,14 @@ impl Mouth {
                 _ => return None,
             }
         }
-        // What the end of the line adds (tex.web § 347): nothing, or a
-        // space skipped outside state M.
+        // What the end of the line adds (tex.web § 347): nothing, a space
+        // skipped outside state M, or an end of line dropped in state S
+        // (after a control word: `skip_blanks+car_ret` finishes the line).
         let quiet = comment
             || self.line_end.char().is_none_or(|e| match cats.get(e) {
                 Catcode::Ignored | Catcode::Comment | Catcode::Invalid => true,
                 Catcode::Space => self.state != LineState::Middle,
+                Catcode::Eol => self.state == LineState::Skipping,
                 _ => false,
             });
         if !quiet {
@@ -1821,6 +1986,18 @@ impl Mouth {
 
     pub fn here(&self) -> Span {
         Span::new(self.file, self.line, self.col)
+    }
+
+    /// Where TeX's `l.` line stands: a line's end once read leaves TeX on
+    /// that line until it needs the next (tex.web § 362), so just past a
+    /// newline it is the newline's place, not the next line's start.
+    pub fn tex_here(&self) -> Span {
+        let ended = self.col == 1 && self.line > 1 && self.pos > 0 && self.src.get(self.pos - 1) == Some(&'\n');
+        if !ended {
+            return self.here();
+        }
+        let start = self.src[..self.pos - 1].iter().rposition(|&c| c == '\n').map_or(0, |i| i + 1);
+        Span::new(self.file, self.line - 1, (self.pos - start) as u32)
     }
 
     /// Characters read so far and in all.
@@ -2420,6 +2597,11 @@ pub struct MacroDef {
 }
 
 impl MacroDef {
+    /// Whether the macro takes no parameters: its text is all it is.
+    pub fn plain(&self) -> bool {
+        self.parameter_text.items.is_empty() && !self.parameter_text.brace_end && self.arg_spec.is_none()
+    }
+
     pub fn arity(&self) -> u8 {
         self.arg_spec.as_ref().map_or(self.parameter_text.arity, ArgSpec::arity)
     }
@@ -2530,6 +2712,25 @@ mod quiet_marks {
         mouth.quiet_line_mark(&cats).map(|m| (m.line, m.col))
     }
 
+    /// After a control word TeX skips blanks, and the end of the line with them (tex.web § 347):
+    /// a line that ends in one reads on at the next line's start. Without this a document whose
+    /// lines are commands (`\Blinddocument` thirty times) had no place for a checkpoint in its body.
+    #[test]
+    fn a_line_ending_in_a_control_word_marks_the_next_line() {
+        let after = |src: &str, tokens: usize| {
+            let (cats, mut it, mut mouth) = (CatcodeTable::latex(), Interner::default(), Mouth::file(src, 0));
+            for _ in 0..tokens {
+                mouth.next_with(&cats, &mut it, EndLineChar(13)).expect("a token");
+            }
+            mouth.quiet_line_mark(&cats).map(|m| (m.line, m.col))
+        };
+        assert_eq!(after("\\x\n\\y\n", 1), Some((2, 1)));
+        assert_eq!(after("\\x  \n\\y\n", 1), Some((2, 1)));
+        // After a group's end the line's end is a space, after a control symbol too.
+        assert_eq!(after("\\x{}\n\\y\n", 3), None);
+        assert_eq!(after("\\x\\,\n\\y\n", 2), None);
+    }
+
     #[test]
     fn a_line_end_that_adds_no_token_marks_the_next_line() {
         // expl3: the appended space is ignored.
@@ -2581,5 +2782,71 @@ mod from_names {
         assert_eq!(stored.lookup("n7"), Some(Sym(7)));
         assert_eq!(stored.intern("new"), one_by_one.intern("new"));
         assert_eq!(stored.name(Sym(2500)), "new");
+    }
+}
+
+#[cfg(test)]
+mod interner_tests {
+    use super::*;
+
+    /// Intuition: two runs number their names alike up to the first one they number apart.
+    /// Pins [`Interner::alike`], which carrying the scope rows over an edit asks instead of
+    /// comparing every name's text: a copy shares its strings, a fresh table compares by text.
+    #[test]
+    fn interners_number_names_alike_up_to_the_first_they_number_apart() {
+        let mut a = Interner::from_names(vec!["x".into(), "y".into()]);
+        let mut b = a.clone();
+        a.intern("p");
+        b.intern("p");
+        a.intern("q");
+        b.intern("r");
+        assert_eq!(a.alike(&b), a.lookup("q").unwrap().0 as usize);
+        assert_eq!(a.alike(&a.clone()), a.len());
+        let c = Interner::from_names(vec!["x".into(), "z".into()]);
+        assert_eq!(a.alike(&c), a.lookup("y").unwrap().0 as usize);
+    }
+}
+
+#[cfg(test)]
+mod keyed_tests {
+    use super::*;
+
+    /// Intuition: a key names the symbol interning its name gives, in every copy of the
+    /// table, also in copies that numbered other names since and in a table rebuilt from
+    /// its names (where the keys are gone). Pins [`Interner::keyed`]: the per-character
+    /// font and code reads now skip formatting their names, and a stale symbol after a
+    /// checkpoint swapped the table would read another key's value.
+    #[test]
+    fn a_key_names_what_interning_its_name_gives_in_every_copy() {
+        let key = |n| (KeyKind::FontField, StaticText("size"), n);
+        let name = |n: u64| move |s: &mut String| *s = format!("font{n}.size");
+        let mut a = Interner::default();
+        let first = a.keyed(key(1), None, name(1));
+        let mut b = a.clone();
+        a.intern("only in a");
+        b.intern("only in b");
+        assert_eq!(a.keyed(key(2), None, name(2)), a.lookup("font2.size").unwrap());
+        assert_eq!(b.keyed(key(2), None, name(2)), b.lookup("font2.size").unwrap());
+        assert_eq!(b.keyed(key(1), None, name(1)), first);
+        let mut rebuilt = Interner::from_names(a.names().iter().map(|n| n.to_string()).collect());
+        assert_eq!(rebuilt.keyed(key(2), None, name(2)), a.keyed(key(2), None, name(2)));
+        // An equal text elsewhere is another key for the same name.
+        let other: &'static str = Box::leak(String::from("size").into_boxed_str());
+        assert_eq!(a.keyed((KeyKind::FontField, StaticText(other), 1), None, name(1)), first);
+        // A cell holds its name in copies that went on apart, each adding its own cells.
+        let in_cell = a.keyed(key(3), Some((2, 3)), name(3));
+        let mut d = a.clone();
+        assert_eq!(d.keyed(key(4), Some((2, 4)), name(4)), d.lookup("font4.size").unwrap());
+        assert_eq!(a.keyed(key(3), Some((2, 3)), name(3)), in_cell);
+        assert_eq!(d.keyed(key(3), Some((2, 3)), name(3)), in_cell);
+        assert!(a.lookup("font4.size").is_none());
+        // A lookup by key adds no name.
+        assert_eq!(a.lookup_keyed(key(9), None, "font9.size"), None);
+        assert_eq!(a.lookup_keyed(key(1), None, "font1.size"), Some(first));
+        assert_eq!(a.lookup_keyed(key(3), Some((2, 3)), "font3.size"), Some(in_cell));
+        // The keys are a cache, not part of what the table is.
+        let mut c = Interner::default();
+        c.keyed(key(1), None, name(1));
+        assert!(c == Interner::from_names(vec!["font1.size".into()]));
     }
 }

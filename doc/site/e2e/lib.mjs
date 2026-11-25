@@ -1,12 +1,25 @@
 // Browser plumbing for the playground's e2e suite (doc/site/e2e/README.md): one headless Chromium over the DevTools
 // protocol, one page per scenario in a fresh browser context, an in-page frame sampler and draw recorders.
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { driver, PROBE } from './page.mjs';
 
 export const VIEW = { width: 1400, height: 900 };
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** The Type bar's Insert menu (`bar`: `#play-pdf`, `#play-typeset`) opened and its row `label` run, under whichever group
+ * (Math ▸, Floats ▸ …) holds it: true when found. */
+export const insertRow = (p, bar, label) => p.eval(`(() => {
+  document.querySelector('${bar} .ins-open').click();
+  for (const g of document.querySelectorAll('.pa-root > button[aria-haspopup]')) {
+    g.click();
+    const b = [...document.querySelectorAll('.pa-sub button')].find((x) => x.querySelector('span')?.textContent === ${JSON.stringify(label)});
+    if (b) { b.click(); return true; }
+  }
+  document.querySelectorAll('.pa-menu').forEach((m) => m.remove());
+  return false;
+})()`);
 
 const browserPath = () => {
   if (process.env.CHROME) return process.env.CHROME;
@@ -140,6 +153,33 @@ export async function browser(outDir) {
   return { cdp, close: () => { try { cdp.close(); } catch {} chrome.kill(); }, pid: chrome.pid };
 }
 
+/** `E2E_SITE_SRC=<dir>`: the page's own scripts and style (`/draw.js`, `/play/playground.js`, `style.css`) from the
+ * `doc/site` at `dir`, as `--dev` serves them (TypeScript through esbuild): a work copy's site against a running server. */
+/** The body `--dev` would serve for a script or style URL from the `doc/site` at `dir` (TypeScript through esbuild), else null. */
+export const siteBody = (dir) => {
+  const esbuild = join(dir, '../../editors/vscode/node_modules/.bin/esbuild');
+  return (u) => {
+    const m = new URL(u).pathname.match(/\/([\w-]+?)\.(js|css)$/);
+    if (!m) return null;
+    // a hashed name (`style-d35bf134f7a2.css`) is its source's, as `--dev` serves it
+    const stem = m[1].replace(/-[0-9a-f]{12}$/, ''), ts = join(dir, `${stem}.ts`), own = join(dir, `${stem}.${m[2]}`);
+    if (m[2] === 'js' && existsSync(ts)) return execFileSync(existsSync(esbuild) ? esbuild : 'esbuild', ['--loader=ts', '--format=iife', '--log-level=error'], { input: readFileSync(ts) });
+    return existsSync(own) ? readFileSync(own) : null;
+  };
+};
+async function siteFrom(cdp, s, sessionId, dir) {
+  const local = siteBody(dir);
+  cdp.on('Fetch.requestPaused', ({ requestId, request }, sid) => {
+    if (sid !== sessionId) return;
+    const body = local(request.url);
+    if (!body) return s('Fetch.continueRequest', { requestId }).catch(() => {});
+    const type = request.url.includes('.css') ? 'text/css' : 'application/javascript';
+    s('Fetch.fulfillRequest', { requestId, responseCode: 200, responseHeaders: [{ name: 'Content-Type', value: type }, { name: 'Cache-Control', value: 'no-cache' }], body: Buffer.from(body).toString('base64') }).catch(() => {});
+  });
+  await s('Fetch.enable', { patterns: [{ urlPattern: '*.js*' }, { urlPattern: '*.css*' }] });
+  await s('Network.setBypassServiceWorker', { bypass: true });
+}
+
 /** One page in a fresh context. */
 export async function page(cdp, url, outDir) {
   const { browserContextId } = await cdp.send('Target.createBrowserContext');
@@ -170,10 +210,13 @@ export async function page(cdp, url, outDir) {
   await s('Network.enable');
   await s('Network.setBlockedURLs', { urls: blocked });
   await s('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'light' }] });
-  await s('Page.addScriptToEvaluateOnNewDocument', { source: PRELUDE + MIXED });
+  await s('Page.addScriptToEvaluateOnNewDocument', { source: PRELUDE + MIXED + PROBE });
+  if (process.env.E2E_SITE_SRC) await siteFrom(cdp, s, sessionId, process.env.E2E_SITE_SRC);
   await s('Page.navigate', { url });
   const api = {
     s, errors, consoleLog, workerLog, t0,
+    /** The step vocabulary (page.mjs) on this page: targets, conditions and actions as data. */
+    drv: driver(s),
     /** Blocks `urls` too, for the page and every worker, those running and those to come. */
     block: async (urls) => {
       blocked.push(...urls);

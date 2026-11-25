@@ -5,20 +5,28 @@
 #   scripts/ci-test.sh lib
 #   scripts/ci-test.sh reds     the known-red tests, at most ${REDS_SECONDS:-1200} s
 #   scripts/ci-test.sh quick <filters>   the given modules, without the doc feature
-# Tests are dealt round-robin from the sorted list, the long ones of
-# tests/slow.txt first, so every shard gets a similar share of both.
-# A new test lands in a shard by itself.  The compliance ledger fails on
+# Tests are dealt longest first onto the least loaded shard by the seconds in
+# tests/times.txt, so the shards end together.  The compliance ledger fails on
 # purpose while it has open entries, so it is a shard of its own, reported
 # non-blocking; being short, it also runs the unit tests (`lib`), blocking.
 # A shard fails on any failing test; the ones tests/known-red.txt lists run
 # only in `reds` (non-blocking, time-boxed: an open one may hang), where one
-# that passes is named so the list shrinks.  A known-red test that tests/green-baseline.txt records
+# that passes is named so the list shrinks.  A red that ends the test binary (stack overflow,
+# abort) is a crash: `reds` then exits 2, which the workflow does not forgive, and no
+# `crash::` test may be listed at all.  A known-red test that tests/green-baseline.txt records
 # as once green is flagged "REGRESSION": it broke, it was not always open.
 # tests/known-red-tl<year>.txt lists reds of one TeX Live only; they count as known there.
 # Logs go to ${CI_LOG_DIR:-target}; passing document and budget tests append
 # their analysis steps to steps-<name>.txt there (scripts/regress.sh reads them).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# TEXLIVE=<year|dir> picks the TeX Live; tests/texlive.yaml names the tests that do not apply to it.
+source scripts/texlive.sh
+texlive_use
+tl=$(texlive_year)
+skipped=$(texlive_skips "$tl")
+while IFS=$'\t' read -r t why; do [[ -z "$t" ]] || echo "not on TeX Live $tl (tests/texlive.yaml): $t: $why"; done <<<"$skipped"
+skipped=$(cut -f1 <<<"$skipped" | sed '/^$/d')
 
 profile="${CARGO_PROFILE:-ci}"
 # The integration and unit test binaries: prebuilt ones when CI's build job handed them over
@@ -44,8 +52,6 @@ gated() {
     local failed known new
     failed=$(sed -n 's/^test \(.*\) \.\.\. FAILED$/\1/p' "$log" | LC_ALL=C sort -u)
     # Plus the reds of this TeX Live only (tests/known-red-tl<year>.txt).
-    local tl
-    tl=$(tex --version 2>/dev/null | sed -n 's/.*TeX Live \([0-9]\{4\}\).*/\1/p' | head -1)
     known=$(cat tests/known-red.txt ${tl:+$(ls tests/known-red-tl"$tl".txt 2>/dev/null)} | grep -v '^#' | LC_ALL=C sort -u)
     new=$(comm -23 <(printf '%s\n' "$failed" | sed '/^$/d') <(printf '%s\n' "$known"))
     while read -r t; do
@@ -57,6 +63,13 @@ gated() {
         reg=$(comm -12 <(comm -12 <(printf '%s\n' "$failed") <(printf '%s\n' "$known")) <(LC_ALL=C sort -u tests/green-baseline.txt))
         [[ -z "$reg" ]] || { echo "REGRESSION, green in tests/green-baseline.txt, now red (fix it, do not list it):"; printf '  %s\n' $reg; }
     fi
+    # A crash is never a known red: the crash tests are not listed, and a binary that died
+    # (stack overflow, abort, out of memory) fails the job whatever it was running.
+    if grep -q '^crash::' <<<"$known"; then echo "$0: tests/known-red.txt lists a crash:: test: fix the crash" >&2; return 1; fi
+    if grep -qE 'has overflowed its stack|\(signal: (4|6|7|8|11),|memory allocation of [0-9]+ bytes failed' "$log"; then
+        echo "$0: CRASH: the test binary died (see $log): the test it ran last is a crash, not a red" >&2
+        return 2
+    fi
     grep -q '^test result: ' "$log" || { echo "$0: the test binary did not finish" >&2; return 1; }
     [[ -z "$new" ]] || { echo "failing, not known red:"; printf '  %s\n' $new; return 1; }
 }
@@ -64,7 +77,7 @@ gated() {
 if [[ "${1-}" == quick ]]; then
     shift
     # Known reds run in `reds` only: an open one may hang.
-    skips=(); while read -r t; do skips+=(--skip "$t"); done < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
+    skips=(); while read -r t; do skips+=(--skip "$t"); done < <({ grep -v '^#' tests/known-red.txt; echo "$skipped"; } | sed '/^$/d')
     gated quick cargo test --locked --profile "$profile" --no-fail-fast --test it -- "$@" "${skips[@]}"
     exit
 fi
@@ -74,7 +87,7 @@ if [[ "${1-}" == compliance ]]; then
     exit
 fi
 if [[ "${1-}" == reds ]]; then
-    mapfile -t reds < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
+    mapfile -t reds < <(cat tests/known-red.txt $(ls tests/known-red-tl"$tl".txt 2>/dev/null) | grep -v '^#' | sed '/^$/d' | LC_ALL=C sort -u)
     gated reds timeout "${REDS_SECONDS:-1200}" "${IT[@]}" --exact "${reds[@]}"
     exit
 fi
@@ -87,15 +100,24 @@ fi
 k=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
 (( k <= n )) || { echo "$0: shard $k of $n" >&2; exit 2; }
 
+# This TeX Live's own reds run in `reds` too, never in a shard: an open one may take an hour.
+tlreds=$(grep -v '^#' tests/known-red-tl"$tl".txt 2>/dev/null || true)
+# Longest first onto the least loaded shard, by tests/times.txt (an unmeasured test counts
+# 60 s if tests/slow.txt names it, else one); every shard computes the same deal.
 mapfile -t tests < <(
     it --list 2>/dev/null | sed -n 's/: test$//p' | LC_ALL=C sort |
-        awk -v k="$k" -v n="$n" '
+        awk '
+            FILENAME == "tests/times.txt" { t[$2] = $1; next }
             FILENAME == "tests/slow.txt" { slow[$0] = 1; next }
-            FILENAME == "tests/known-red.txt" { red[$0] = 1; next }
+            FILENAME == "tests/known-red.txt" || FILENAME == "/dev/fd/3" { red[$0] = 1; next }
             $0 in red { next }
             /^compliance_matrix::/ { next }
-            { c = ($0 in slow) ? "s" : "f"; if (i[c]++ % n + 1 == k) print }
-        ' tests/slow.txt tests/known-red.txt -
+            { print ($0 in t ? t[$0] : ($0 in slow ? 60 : 1)), $0 }
+        ' tests/times.txt tests/slow.txt tests/known-red.txt /dev/fd/3 - 3<<<"$skipped"$'\n'"$tlreds" |
+        LC_ALL=C sort -k1,1gr -k2,2 |
+        awk -v k="$k" -v n="$n" '
+            { b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $1; if (b == k) print $2 }
+        '
 )
 (( ${#tests[@]} > 0 )) || { echo "$0: shard $k/$n is empty" >&2; exit 1; }
 

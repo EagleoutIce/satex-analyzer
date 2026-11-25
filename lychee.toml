@@ -40,10 +40,10 @@ exclude_all_private = false
 # The header banner links to this repository's own `main` branch, which
 # does not exist until this branch is merged there; checking it here would
 # fail on every branch and pull request that has not shipped yet.
-# The wiki pages (doc/wiki, README.md, SEMANTICS.md, doc/chktex-coverage.md)
-# link to each other by wiki page name (`Domains`, `Chktex-Coverage`), and
-# README.md to `../../releases`: they resolve once .github/workflows/wiki.yml
-# publishes them, never as files in the checkout.
+# doc/chktex-coverage.md and SEMANTICS.md link by wiki page name (`Lints`,
+# `Domains`), and README.md to `../../releases`: they resolve once
+# .github/workflows/wiki.yml publishes them, never as files in the checkout.
+# The pages in doc/wiki link as files, which wiki.yml renames on publish.
 #
 # The ACM digital library and pdfa.org answer lychee's requests with 403.
 exclude = [

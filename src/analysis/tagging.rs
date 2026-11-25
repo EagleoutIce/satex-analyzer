@@ -1,7 +1,8 @@
 //! PDF tagging as the run set it up: `\DocumentMetadata` (latex-lab), pdfmanagement and tagpdf.
 //! Nothing here is a table of the tagging code's names. The facts are what the kernel's own
 //! accessors return in a sandbox at the run's end: `\GetDocumentProperties` for what
-//! `\DocumentMetadata` and hyperref recorded, `\pdf_version:` for the PDF version, and the
+//! `\DocumentMetadata` and hyperref recorded, `\tag_if_active:TF` for whether the tagging code
+//! tags, `\pdf_version:` for the PDF version, the marked content the run wrote, and the
 //! installation's `latex-tagging-status.ltx` run as TeX for each loaded file's status (what
 //! `check-tagging-status` prints).
 
@@ -39,8 +40,16 @@ impl Val {
 /// The tagging state of a run that called `\DocumentMetadata`.
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct Tagging {
-    /// `document/tagging`: `active` or `inactive`.
+    /// `document/tagging`: `active` or `inactive`, as `\DocumentMetadata` declared it.
     pub tagging: Val,
+    /// `\tag_if_active:TF` at `\begin{document}`, `1` or `0`: what the tagging code itself asks
+    /// before it tags. `\tagpdfsetup` after the class may differ from the declaration.
+    pub running: Val,
+    /// The tagging code's own files the run read (status 8): the modules `testphase` chose.
+    pub modules: Vec<String>,
+    /// The marked-content sequences the run wrote, by tag with their number (ISO 32000-2
+    /// § 14.6: `/Figure … BDC`, `/Artifact BMC`). pdfTeX only: LuaTeX marks by attribute.
+    pub marked: Vec<(String, usize)>,
     /// The standards claimed, as pdfmanagement names them: `A-4F`, `UA-2`, `X-4`.
     pub standards: Vec<String>,
     /// `document/lang`: the `/Lang` of the catalog.
@@ -57,9 +66,9 @@ pub struct Tagging {
 }
 
 impl Tagging {
-    /// Whether the structure tree is written.
+    /// Whether the document is tagged: the tagging code's own answer, else the declaration.
     pub fn active(&self) -> bool {
-        self.tagging.text() == Some("active")
+        self.running.text().map_or(self.tagging.text() == Some("active"), |r| r == "1")
     }
     /// Whether a PDF/UA standard is claimed: what makes a missing title or language an error.
     pub fn ua(&self) -> Option<&str> {
@@ -74,23 +83,29 @@ pub struct Status {
     pub file: String,
     /// The index of its load in [`crate::analysis::facts::Facts::loads`].
     pub load: usize,
-    pub code: u8,
+    /// `None`: the status file has no entry for it.
+    pub code: Option<u8>,
 }
 
 impl Status {
     /// The status file's own words for a code (its header).
     pub fn meaning(&self) -> &'static str {
         match self.code {
-            4 => "compatible",
-            3 => "partially compatible",
-            2 => "currently incompatible",
-            1 => "not supported",
-            _ => "unchecked",
+            Some(4) => "compatible",
+            Some(3) => "partially compatible",
+            Some(2) => "currently incompatible",
+            Some(1) => "not supported",
+            Some(_) => "unchecked",
+            None => "unlisted",
         }
     }
     /// Incompatible now (2) or for good (1).
     pub fn incompatible(&self) -> bool {
-        matches!(self.code, 1 | 2)
+        matches!(self.code, Some(1 | 2))
+    }
+    /// Listed with a caveat: anything below compatible.
+    pub fn flagged(&self) -> bool {
+        self.code.is_some_and(|c| c < 4)
     }
 }
 
@@ -119,8 +134,11 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
         return None;
     }
     let mut exprs: Vec<String> = PROPERTIES.iter().map(|p| format!("\\GetDocumentProperties{{{p}}}")).collect();
-    // No property set at all (no `\DocumentMetadata`): nothing to look up, and the status file is costly.
-    if evaluate(analysis, State::End, None, &exprs)?.iter().all(|v| *v == Val::Empty) {
+    // the kernel's predicate, which tagpdf redefines: no name of its switches is read here
+    exprs.push("\\ifcsname tag_if_active:TF\\endcsname\\csname tag_if_active:TF\\endcsname{1}{0}\\fi".into());
+    // No property set and nothing tagging (no `\DocumentMetadata`): nothing to look up, and the status file is costly.
+    let unset = |v: &[Val]| v[..RUNNING].iter().all(|v| *v == Val::Empty) && v[RUNNING].text() != Some("1");
+    if unset(&evaluate(analysis, State::End, None, &exprs)?) {
         return None;
     }
     exprs.push("\\ifcsname pdf_version:\\endcsname\\csname pdf_version:\\endcsname\\fi".into());
@@ -129,7 +147,7 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
     // the end's: what the PDF gets. A run without `\begin{document}` has only the end.
     let loads: Vec<(usize, String)> = files(analysis);
     let mut with_status = exprs.clone();
-    with_status.extend(loads.iter().map(|(_, f)| status(f)));
+    with_status.extend(lookups(&loads));
     let pre = evaluate(analysis, State::Preamble, Some(STATUS_FILE), &with_status);
     let end = match &pre {
         Some(_) => evaluate(analysis, State::End, None, &exprs)?,
@@ -144,8 +162,9 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
         Val::Unknown => before(i).unwrap_or(Val::Unknown),
         v => v,
     };
-    let tagging = fixed(0);
-    if tagging == Val::Empty {
+    // in force for the body: a draft's last page switches the tree off again
+    let (tagging, running) = (fixed(0), before(RUNNING).unwrap_or_else(|| at(RUNNING)));
+    if tagging == Val::Empty && running.text() != Some("1") {
         return None;
     }
     let (a, ua, x) = (fixed(1), fixed(2), fixed(3));
@@ -160,17 +179,80 @@ fn read(analysis: &Analysis) -> Option<Tagging> {
         (Val::Unknown, Val::Text(_)) => lang_set.clone(),
         (v, _) => v,
     };
-    let (title, pdfversion) = (at(5), fixed(6));
-    let statuses = loads
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, (load, file))| {
-            let code = codes.get(PROPERTIES.len() + 1 + i)?.text()?.parse().ok()?;
-            // 8: the tagging code's own files, 100: a part its package's entry covers
-            (code <= 4).then_some(Status { file, load, code })
-        })
-        .collect();
-    Some(Tagging { tagging, standards, lang, lang_set, title, pdfversion, statuses })
+    let (title, pdfversion) = (at(5), fixed(RUNNING + 1));
+    let (statuses, modules) = judge(loads, codes.get(exprs.len()..).unwrap_or_default());
+    Some(Tagging {
+        tagging,
+        running,
+        modules,
+        marked: marked(analysis),
+        standards,
+        lang,
+        lang_set,
+        title,
+        pdfversion,
+        statuses,
+    })
+}
+
+/// Where [`read`]'s expressions hold `\tag_if_active:TF`: after the properties.
+const RUNNING: usize = PROPERTIES.len();
+
+/// The expressions for the status of each of `loads`, then one that is `1` where the status
+/// file was read: without it no file is listed, and none is called unlisted.
+fn lookups(loads: &[(usize, String)]) -> Vec<String> {
+    let mut out: Vec<String> = loads.iter().map(|(_, f)| status(f)).collect();
+    // `\ProvidesFile` records every file it names
+    out.push(format!("\\ifcsname ver@{STATUS_FILE}\\endcsname1\\fi"));
+    out
+}
+
+/// `loads` with what [`lookups`] gave: the files to judge, and the tagging code's own (8).
+/// A part its package's entry covers (100) is neither.
+fn judge(loads: Vec<(usize, String)>, codes: &[Val]) -> (Vec<Status>, Vec<String>) {
+    let (mut statuses, mut modules) = (Vec::new(), Vec::new());
+    if codes.get(loads.len()).and_then(Val::text) != Some("1") {
+        return (statuses, modules);
+    }
+    for (i, (load, file)) in loads.into_iter().enumerate() {
+        match codes[i].text().map(str::parse::<u8>) {
+            Some(Ok(8)) => modules.push(file),
+            Some(Ok(code)) if code <= 4 => statuses.push(Status { file, load, code: Some(code) }),
+            None if codes[i] == Val::Empty => statuses.push(Status { file, load, code: None }),
+            _ => {}
+        }
+    }
+    (statuses, modules)
+}
+
+/// Each loaded file's status: the run's own under `\DocumentMetadata`, else looked up the same
+/// way, to judge a document before it turns tagging on.
+pub fn loaded(analysis: &Analysis) -> Vec<Status> {
+    if let Some(t) = of(analysis) {
+        return t.statuses.clone();
+    }
+    let loads = files(analysis);
+    let exprs = lookups(&loads);
+    let codes = evaluate(analysis, State::Preamble, Some(STATUS_FILE), &exprs)
+        .or_else(|| evaluate(analysis, State::End, Some(STATUS_FILE), &exprs))
+        .unwrap_or_default();
+    judge(loads, &codes).0
+}
+
+/// The marked-content sequences among the run's literals, by tag: `/tag … BDC` and `/tag BMC`
+/// open one (ISO 32000-2 § 14.6).
+fn marked(analysis: &Analysis) -> Vec<(String, usize)> {
+    let mut out: Vec<(String, usize)> = Vec::new();
+    for l in analysis.facts.literals.iter() {
+        let text = l.text.trim();
+        let opened = text.strip_suffix("BDC").or_else(|| text.strip_suffix("BMC"));
+        let Some(tag) = opened.and_then(|t| t.strip_prefix('/')?.split_whitespace().next()) else { continue };
+        match out.iter_mut().find(|(t, _)| t == tag) {
+            Some(entry) => entry.1 += 1,
+            None => out.push((tag.to_string(), 1)),
+        }
+    }
+    out
 }
 
 /// The status codes of `files` (`geometry.sty`), loaded or not, by the installation's status
@@ -186,7 +268,7 @@ pub fn statuses(analysis: &Analysis, files: &[String]) -> Vec<Option<u8>> {
         .iter()
         .enumerate()
         .map(|(i, f)| match known.iter().find(|s| s.file == *f) {
-            Some(s) => Some(s.code),
+            Some(s) => s.code,
             None => codes.get(i)?.text()?.parse().ok().filter(|c| *c <= 4),
         })
         .collect()
@@ -263,9 +345,11 @@ fn evaluate(analysis: &Analysis, state: State, prelude: Option<&str>, exprs: &[S
 /// the value all members share, else unknown.
 fn value(m: &Machine, toks: &[crate::engine::tex::Token]) -> Val {
     if let [one] = toks
-        && let Some(members) = m.one_of_members(*one)
+        && m.one_of_members(*one).is_some()
     {
-        let mut vals = members.iter().map(|t| value(m, t));
+        // A text that holds itself, or nested too deep: unknown.
+        let crate::analysis::machine::explore::Nested::Open(inner) = m.one_of_nested(*one) else { return Val::Unknown };
+        let mut vals = inner.texts.iter().map(|t| value(m, t));
         let first = vals.next().unwrap_or(Val::Unknown);
         return if vals.all(|v| v == first) { first } else { Val::Unknown };
     }

@@ -9,6 +9,15 @@ import { ctx, setText } from '../engine.mjs';
 const J = JSON.stringify;
 const HEAD = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world}\n\nWhat do you thing\n\nabout\n';
 const T0 = HEAD + '\\end{document}\n';
+const TITLE_DOC = '\\documentclass{article}\n\\newcommand{\\DocName}{Document}\n\\title{A Sample \\DocName{} for sa\\TeX}\n\\author{An Author}\n\\date{}\n\\begin{document}\n\\maketitle\nSome body text.\n\\end{document}\n';
+// a centered table of `l`, `c` and `r` columns with rules: typing widens a column for all its rows
+// the column chips shown, left and right edges in px
+const CHIPS = `[...document.querySelectorAll('#play-pdf .pdf-col')].filter((e) => getComputedStyle(e).visibility !== 'hidden').map((e) => { const r = e.getBoundingClientRect(); return [r.left, r.right]; }).sort((a, b) => a[0] - b[0])`;
+const TABLE_DOC = '\\documentclass{article}\n\\begin{document}\nBefore the table.\n\\begin{center}\n\\begin{tabular}{|l|c|r|}\n\\hline\napple & mid & zed \\\\\napricot & m & zz \\\\\n\\hline\nap & middle & zzz \\\\\n\\hline\n\\end{tabular}\n\\end{center}\nAfter it.\n\\end{document}\n';
+// a centered table whose first row is a `\\multicolumn{2}{c}` span over the `l` and `c` columns
+const SPAN_DOC = TABLE_DOC.replace('\\hline\napple', '\\hline\n\\multicolumn{2}{|c|}{Heading} & top \\\\\n\\hline\napple');
+// a table with a paragraph column (`p`, `m` with array, `X` in a tabularx of 6cm) of 2cm between an `l` and an `r` one
+const PAR_DOC = (c) => `\\documentclass{article}\n\\usepackage{array,tabularx}\n\\begin{document}\nBefore the table.\n\n${c === 'X' ? '\\begin{tabularx}{6cm}{|l|X|r|}' : `\\begin{tabular}{|l|${c}{2cm}|r|}`}\n\\hline\nleft & one two & right \\\\\n\\hline\nbelow & cell & here \\\\\n\\hline\n\\end{${c === 'X' ? 'tabularx' : 'tabular'}}\n\nAfter it.\n\\end{document}\n`;
 let fails = [], log = () => {}, first = null;
 /** The runner's page for the case's first `open`, a fresh one for each later one. */
 const fresh = async () => {
@@ -156,6 +165,220 @@ async function paraPicture(name, ms) {
   { const a = await wordBox(p, 'With'); if (a) await p.shot(name + '.png', { x: a[0] - 20, y: a[1] - 30, width: 360, height: 220 }, 2); }
   log(name, 'builds seen', builds.size, bad.length ? J(bad.slice(0, 3)) : 'no overlap', J((await p.eval('satexHealth().text')).split('\n').slice(11, 14)));
   if (bad.length) fails.push(`${name}: a typed row over the unpushed picture ${bad.length}x: ${J(bad[0])}`);
+  await p.close();
+}
+
+/** A table's other rows follow a typed cell: the end of `word` clicked, `keys` typed fast. The echo
+ * moves every other word of the table (satexPdfBlock's `moved`) where Compile's build then sets it, within 2.5 bp, and
+ * the caret stays put when that build lands. Red before 2026-11-22: only the typed row moved. */
+async function tableRows(name, word, keys, doc = TABLE_DOC, skip = [], row = false) {
+  const p = await open(doc, 'play-pdf');
+  const build = async () => { await p.eval(`(self.__e2eG = document.querySelector('#play-pdf .pdf-page img')?.__build ?? null, document.getElementById('pdf-compile').click())`); return p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build && i.__build !== self.__e2eG && i.naturalWidth > 100 && !document.querySelector('#play-pdf.pdf-running'); })()`, 90000); };
+  if (!await build()) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  // the table's words: between "table." and "After"
+  // `row`: the words on the typed word's baseline instead (a centered title)
+  let base = null;
+  const table = (ws) => { if (row) { const o = base ??= ws.find((w) => w[5] === word); return ws.filter((w) => o && w[0] === o[0] && Math.abs(w[4] - o[4]) < 1); } const a = ws.find((w) => w[5] === 'table.'), b = ws.find((w) => w[5] === 'After'); return ws.filter((w) => a && b && w[0] === a[0] && w[4] > a[4] + 2 && w[4] < b[4] - 2); };
+  const before = table(await p.eval(`satexPdfWords()`));
+  const w = await wordBox(p, word);
+  if (!w || before.length < (row ? 3 : 6)) { fails.push(`${name}: table words ${J(before.map((v) => v[5]))}`); return p.close(); }
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // fast keys: the echo is read before a build of them lands (Type mode builds whatever the automatic compile says)
+  await type(p, keys, 20);
+  const moved = await p.eval(`satexPdfBlock(1).moved ?? []`), pushed = await p.eval(`satexPdfBlock(1).pushed`), chips0 = await p.eval(CHIPS), x0 = await p.eval(`document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect().left ?? null`);
+  const early = await p.eval(`!document.querySelector('#play-pdf .pdf-page img').__build?.text?.includes(${J(keys)})`);
+  await p.shot(name + '-echo.png', { x: w[0] - 160, y: w[1] - 40, width: 420, height: 110 }, 3);
+  if (!early) fails.push(`${name}: a build of the keys landed before the echo was read`);
+  if (!await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 30000) && !await build()) { fails.push(name + ': the typed text was never built'); return p.close(); }
+  await sleep(1500);
+  await p.shot(name + '-landed.png', { x: w[0] - 160, y: w[1] - 40, width: 420, height: 110 }, 3);
+  const after = table(await p.eval(`satexPdfWords()`)), chips1 = await p.eval(CHIPS), x1 = await p.eval(`document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect().left ?? null`);
+  const same = (a, b) => a.every((v, i) => v === b[i]), off = [];
+  for (const v of before) {
+    if (v[5] === word || skip.includes(v[5])) continue;
+    // where the echo drew it: moved (dx, dy), else pushed down with what is below the push's top
+    const m = moved.find((m) => same(m.from, v)), want = v[1] + (m?.dx ?? 0), wantY = v[4] + (m ? m.dy : pushed && v[4] > pushed.top ? pushed.dy : 0);
+    const got = after.filter((u) => u[5] === v[5]).sort((a, b) => Math.hypot(a[1] - want, a[4] - wantY) - Math.hypot(b[1] - want, b[4] - wantY))[0];
+    if (!got) { off.push(`${v[5]} gone`); continue; }
+    if (Math.abs(got[1] - want) > 2.5 || Math.abs(got[4] - wantY) > 2.5) off.push(`${v[5]} echoed at ${want.toFixed(1)},${wantY.toFixed(1)}, built at ${got[1].toFixed(1)},${got[4].toFixed(1)} bp`);
+  }
+  log(name, J({ words: before.length, moved: moved.length, off, caret: [x0, x1] }));
+  if (off.length) fails.push(`${name}: the table's other words jump when the build lands: ${off.join('; ')}`);
+  // the column chips (the pointer rests on the table) stand where the build then puts them
+  const chipOff = chips0.length !== chips1.length ? [`${chips0.length} chips, then ${chips1.length}`] : chips0.flatMap((c, i) => c.some((v, j) => Math.abs(v - chips1[i][j]) > 4) ? [`${c.map(Math.round)} -> ${chips1[i].map(Math.round)}`] : []);
+  if (chipOff.length) fails.push(`${name}: the column chips jump when the build lands: ${chipOff.join('; ')}`);
+  if (x0 == null || x1 == null || Math.abs(x1 - x0) > 4) fails.push(`${name}: the caret moved ${x0?.toFixed(1)} -> ${x1?.toFixed(1)} px when the build landed`);
+  await p.close();
+}
+
+/** A command name typed in the PDF (`\su` on the way to `\sum`): no "1 error" while the name is unfinished. Samples the
+ * status lines every 50 ms through a 1 s pause after `\su`. Red before 2026-11-22: the run of `\su` showed its
+ * undefined-name finding until the name was done. */
+async function namingQuiet(name) {
+  const p = await open(T0, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p)) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'about');
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  await type(p, ' $\\su', 80);
+  const seen = [];
+  for (let t = 0; t < 20; t++) { seen.push(await p.eval(`(document.getElementById('play-status')?.textContent ?? '') + ' | ' + (document.getElementById('pdf-status')?.textContent ?? '')`)); await sleep(50); }
+  log('built', J(await p.eval(`(() => { const t = document.querySelector('#play-pdf .pdf-page img')?.__build?.text ?? ''; const i = t.indexOf('about'); return t.slice(i, i + 20); })()`)));
+  await type(p, 'm x$', 80);
+  const bad = seen.filter((t) => /\b\d+ errors?\b/.test(t));
+  log(name, J({ samples: seen.length, bad: bad.slice(0, 2) }));
+  if (bad.length) fails.push(`${name}: an error shown while \\su was typed (${bad.length} of ${seen.length} samples): ${J(bad[0])}`);
+  await p.close();
+}
+
+/** `\\su` typed in math while the analysis runs: the list with `\\sum` shows at once (kept items, not after the run),
+ * and once `\\sum` is picked its build lands without another key (no naming wait for a picked name). The bug: a dropped
+ * empty answer stood in for the kept items, the list stayed off for the run (2-4 s), and a picked name waited 1.5 s. */
+async function namingPick(name) {
+  const p = await open(T0, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p)) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'about');
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  await type(p, ' $\\su', 80);
+  const t0 = Date.now(), hasSum = `[...document.querySelectorAll('.type-complete li code')].some((e) => e.textContent.startsWith('\\\\sum'))`;
+  const listed = await p.until(hasSum, 4000), listMs = Date.now() - t0;
+  if (!listed) { fails.push(`${name}: no \\sum in the list after 4 s`); return p.close(); }
+  await p.eval(`[...document.querySelectorAll('.type-complete li')].find((li) => li.querySelector('code')?.textContent.startsWith('\\\\sum')).dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))`);
+  const t1 = Date.now(), built = await p.until(`/\\\\sum/.test(document.querySelector('#play-pdf .pdf-page img')?.__build?.text ?? '')`, 5000), buildMs = Date.now() - t1;
+  log(name, J({ listMs, buildMs, built: !!built }));
+  if (listMs > 600) fails.push(`${name}: the list with \\sum took ${listMs} ms`);
+  if (!built || buildMs > 1300) fails.push(`${name}: the build of the picked \\sum took ${built ? buildMs + ' ms' : 'over 5 s'}`);
+  await p.close();
+}
+
+/** Keys typed while builds land: on every animation frame the page shows the typed text, as built or in the echo. The
+ * bug: pdfShow moved the kept page into a <template>'s inert document, its image loaded again, and for 50-70 ms at each
+ * build the page showed neither the typed rows nor (with a page drawn anew) any pixels. */
+async function landBlink(name) {
+  const p = await open(T0, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p)) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'about');
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // per frame: whether the caret's page shows its image drawn and either an echo or a build with the text as typed
+  await p.eval(`(() => { const L = self.__blink = []; let on = true; self.__blinkStop = () => on = false;
+    const tick = () => { const pg = document.querySelector('#play-pdf .pdf-page'), img = pg?.querySelector(':scope > img');
+      const built = img?.__build?.text === satexHealth().text, echo = !!pg?.querySelector('.pdf-echo:not(.pdf-push)');
+      L.push([performance.now(), !!img?.complete && img.naturalWidth > 0, built || echo]); if (on) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick); })()`);
+  await type(p, ' and more words typed here', 110);
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text; })()`, 15000);
+  await sleep(400);
+  const L = await p.eval(`(self.__blinkStop(), self.__blink)`), bad = L.filter((f) => !f[1] || !f[2]);
+  const builds = await p.eval(`performance.getEntriesByName('pdf-echo').length`);
+  log(name, J({ frames: L.length, bad: bad.length, builds }));
+  if (bad.length) fails.push(`${name}: ${bad.length} of ${L.length} frames showed the page without the typed text or without its image`);
+  await p.close();
+}
+
+/** A macro's output typed into (its definition edited) on a row with `$\\sum_i x_{42}$`: every frame until the build lands
+ * the echo moves the ∑ and its limit `i` as the page's pixels, inside the echo's band. The bug (typing showcase 9-10 s):
+ * the echo's band was the typed word's box, the ∑ was cut to a bar or doubled and the `i` painted over. */
+async function sumKept(name) {
+  const doc = '\\documentclass{article}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\nWith \\model, it drops by $\\sum_i x_{42}$ per step.\n\\end{document}\n';
+  const p = await open(doc, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'step.')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const ws = await p.eval(`satexPdfWords()`), w = await wordBox(p, 'TinyNet,');
+  const sum = ws.find((x) => /∑|P/.test(x[5]) && x[1] > 100), sub = sum && ws.find((x) => x[5] === 'i' && Math.abs(x[1] - sum[3]) < 4);
+  if (!w || !sum || !sub) { fails.push(`${name}: words ${J(ws.map((x) => x[5]))}`); return p.close(); }
+  await p.mouse(w[0] + (w[2] - w[0]) * 0.8, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  await type(p, 'XY', 60);
+  const moved = await p.eval(`satexPdfBlock(1).moved ?? []`), band = await p.eval(`(() => { const e = document.querySelector('#play-pdf .pdf-page .pdf-echo:not(.pdf-push)'), img = e && e.parentElement.querySelector(':scope > img'); if (!e) return null; const h = img.naturalHeight * 72 / satexPdfWords().dpi; return [parseFloat(e.style.top) / 100 * h, (parseFloat(e.style.top) + parseFloat(e.style.height)) / 100 * h]; })()`);
+  const has = (v) => moved.some((m) => m.from[1] === v[1] && m.from[5] === v[5]);
+  log(name, J({ band, sum: [sum[2], sum[4]], sub: [sub[2], sub[4]], movedSum: has(sum), movedSub: has(sub) }));
+  if (!band) fails.push(`${name}: no echo`);
+  else if (band[0] > sum[2] + 0.5 || band[1] < Math.max(sum[4], sub[4]) - 0.5) fails.push(`${name}: the echo's band ${J(band.map((x) => +x.toFixed(1)))} cuts the ∑ ${J([sum[2], sum[4]].map((x) => +x.toFixed(1)))} or its i`);
+  if (!has(sum) || !has(sub)) fails.push(`${name}: the ∑ (${has(sum)}) and its i (${has(sub)}) not moved as the page's pixels`);
+  await p.close();
+}
+
+/** The first key into a macro's output (its row laid out again): on every animation frame each echo row that moves
+ * page words shows them, its pixels drawn on its canvas when it is put in. The bug (typing showcase, the first `t` into
+ * TinyNet): the moved words were a CSS background of the page image, painted a frame late: a frame of bare paper. */
+async function firstFrame(name) {
+  const doc = '\\documentclass{article}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\nWith \\model, it drops by $\\sum_i x_{42}$ per step.\n\\end{document}\n';
+  const p = await open(doc, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'step.')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'TinyNet,');
+  if (!w) { fails.push(name + ': no TinyNet'); return p.close(); }
+  await p.mouse(w[0] + (w[2] - w[0]) * 0.8, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // per frame: the echo rows with moved words (a hidden placeholder) and whether each shows their pixels
+  await p.eval(`(() => { const L = self.__ff = []; let on = true; self.__ffStop = () => on = false;
+    const inked = (cv) => { if (!cv?.width || !cv.height) return false; const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data; for (let i = 3; i < d.length; i += 4) if (d[i] > 0) return true; return false; };
+    const tick = () => { for (const e of document.querySelectorAll('#play-pdf .pdf-echo:not(.pdf-echo-kept)')) if (e.querySelector('i > span[style*=hidden]')) L.push(inked(e.querySelector(':scope > canvas.pdf-echo-px'))); if (on) requestAnimationFrame(tick); };
+    requestAnimationFrame(tick); })()`);
+  await type(p, 'X', 60);
+  await sleep(400);
+  const L = await p.eval(`(self.__ffStop(), self.__ff)`), bad = L.filter((x) => !x).length;
+  log(name, J({ frames: L.length, bad }));
+  if (!L.length) fails.push(`${name}: no echo row moved words`);
+  else if (bad) fails.push(`${name}: ${bad} of ${L.length} frames showed an echo row without its moved words' pixels`);
+  await p.close();
+}
+
+/** The Type caret's completion list (`\\su` typed at a line's end, a heading above, a picture below) hides no word of the
+ * page: it goes where it covers no text, narrowed beside a heading if need be. The bug (typing showcase 2.5-3.0 s): the
+ * list above the line covered "1 Results", below it the picture. */
+async function listClear(name) {
+  const doc = "\\documentclass{article}\n\\usepackage[paperwidth=9cm,paperheight=7.4cm,margin=6mm,includefoot]{geometry}\n\\usepackage{tikz}\n\\definecolor{accent}{HTML}{0B3D91}\n\\tikzset{thick, box/.style={draw=accent, fill=accent!8,\n  rounded corners=3pt, minimum width=10mm}}\n\\newcommand{\\model}{TinyNet}\n\\begin{document}\n\\section{Results}\nWith \\model, the loss falls fast.\n\n\\begin{tikzpicture}[draw=accent]\n  \\node[box] (d) at (0,0) {data};\n  \\node[box] (m) at (2.6,-0.6) {\\model};\n  \\node[box] (l) at (5.2,0) {loss};\n  \\draw[->] (d) -- node[above] {train} (m);\n  \\draw[->] (m) -- (l);\n\\end{tikzpicture}\n\\begin{center}\n\\begin{tabular}{lr}\nRun & Steps\\\\ \\hline\nsmall & 120\\\\\nbase & 95\n\\end{tabular}\n\\end{center}\n\\end{document}\n"; // the typing showcase's page (shots.json)
+  const p = await open(doc, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'train')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(1500);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'fast.');
+  if (!w) { fails.push(name + ': no word'); return p.close(); }
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  await type(p, ' It drops by $\\su', 60);
+  if (!await p.until(`document.querySelector('.type-complete li')`, 12000)) { await p.shot(name + '-nolist.png'); fails.push(name + ': no list ' + J(await p.eval(`satexHealth().text.slice(-260)`))); return p.close(); }
+  await sleep(300);
+  const hit = await p.eval(`(() => { const L = document.querySelector('.type-complete').getBoundingClientRect(), ws = satexPdfWords();
+    return ws.filter((v) => { const img = document.querySelector('#play-pdf .pdf-page[data-page="' + v[0] + '"] img'), r = img.getBoundingClientRect(), k = r.width / (img.naturalWidth * 72 / ws.dpi);
+      const a = r.left + v[1] * k, b = r.top + v[2] * k, c = r.left + v[3] * k, d = r.top + v[4] * k; return Math.min(c, L.right) - Math.max(a, L.left) > 1 && Math.min(d, L.bottom) - Math.max(b, L.top) > 1; }).map((v) => v[5]); })()`);
+  await p.shot(name + '.png', await p.eval(`(() => { const r = document.getElementById('play-pdf').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, 500) }; })()`));
+  log(name, J({ hit }));
+  if (hit.length) fails.push(`${name}: the completion list covers page words ${J(hit)}`);
   await p.close();
 }
 
@@ -337,6 +560,38 @@ export const CASES = {
   'pdf-new-para': () => newPara('pdf-new-para', 25),
   // a person's pace: builds land between the keys (the open-paragraph branch, then the paragraph the build sets)
   'pdf-new-para-slow': () => newPara('pdf-new-para-slow', 160),
+  // the screenshot of 2026-11-21: `\(\sum \)` typed into a new paragraph, the caret on the sum's row, the editor alike
+  'pdf-math-caret': () => mathCaret('pdf-math-caret', 60),
+  'pdf-math-caret-slow': () => mathCaret('pdf-math-caret-slow', 400),
+  'pdf-macro-comma': () => macroComma('pdf-macro-comma', ['x', 'y']),
+  'pdf-macro-comma-space': () => macroComma('pdf-macro-comma-space', [' ', 'x']),
+  // caret2 (screenshots 2026-11-21 18:14, 18:15): the edges of a macro's output are the call's edges
+  'pdf-macro-edges': () => macroEdges('pdf-macro-edges'),
+  // caret2 (user 2026-11-21): Up and Down by visual line, in two columns
+  'pdf-updown-columns': () => upDownColumns('pdf-updown-columns'),
+  // caret2 (user 2026-11-21): typing into teletype text echoes in its fixed-width face
+  'pdf-tt-echo': () => ttEcho('pdf-tt-echo'),
+  'pdf-math-caret-below': () => mathCaret('pdf-math-caret-below', 60, true),
+  // a cell typed wider than its column's widest: the column grows in every row, the columns after it move (`l`, `c`)
+  'pdf-naming-quiet': () => namingQuiet('pdf-naming-quiet'),
+  'pdf-naming-pick': () => namingPick('pdf-naming-pick'),
+  'pdf-land-blink': () => landBlink('pdf-land-blink'),
+  'pdf-sum-kept': () => sumKept('pdf-sum-kept'),
+  'pdf-first-frame': () => firstFrame('pdf-first-frame'),
+  'pdf-list-clear': () => listClear('pdf-list-clear'),
+  'pdf-table-rows-l': () => tableRows('pdf-table-rows-l', 'apple', 'sauce'),
+  // user 2026-11-22: typing into a centered title (\\maketitle's center) keeps it centered: its other words move by half the change
+  'pdf-title-centered': () => tableRows('pdf-title-centered', 'Sample', 'qqq', TITLE_DOC, [], true),
+  'pdf-table-rows-c': () => tableRows('pdf-table-rows-c', 'm', 'agnificent'),
+  // a `\multicolumn` span over the grown column moves by its share; a span typed wider widens its last column
+  // a paragraph cell typed past its width: its lines wrap, the rows below and the rules move down; `m`: the row's other
+  // cells by half; an `X` column of tabularx alike
+  'pdf-table-par-p': () => tableRows('pdf-table-par-p', 'two', ' more words to wrap', PAR_DOC('p'), ['one', 'more', 'words', 'to', 'wrap']),
+  'pdf-table-par-m': () => tableRows('pdf-table-par-m', 'two', ' more words to wrap', PAR_DOC('m'), ['one', 'more', 'words', 'to', 'wrap']),
+  'pdf-table-par-x': () => tableRows('pdf-table-par-x', 'two', ' more words to wrap', PAR_DOC('X'), ['one', 'more', 'words', 'to', 'wrap']),
+  'pdf-table-span-under': () => tableRows('pdf-table-span-under', 'apple', 'sauce', SPAN_DOC),
+  'pdf-table-span-typed': () => tableRows('pdf-table-span-typed', 'Heading', 'sverylong', SPAN_DOC),
+  'pdf-math-caret-below-slow': () => mathCaret('pdf-math-caret-below-slow', 400, true),
   // the editor: type the paragraph in the source while the PDF shows (Type on, caret in the PDF follows the editor?)
   async 'pdf-editor-para'() {
     const p = await open(T0, 'play-pdf');
@@ -360,6 +615,248 @@ export const CASES = {
     await p.close();
   },
 };
+
+// The PDF caret against the source caret: the editor's cursor at the caret's offset, and the caret drawn on a row
+// SyncTeX sets from the caret's source line (where it sets any: a macro's definition is set at its calls) once a build of the text as typed shows, else marked pending (never on
+// another paragraph's row). `{line, built, pending, onRow, editor, at}`; null where no caret is drawn.
+const caretState = (p) => p.eval(`(() => {
+  const c = document.querySelector('#play-pdf .pdf-caret'), pc = satexPdfCaret(), h = satexHealth();
+  if (!c || !pc) return null;
+  const pg = c.closest('.pdf-page'), img = pg?.querySelector('img');
+  if (!img) return null;
+  const r = img.getBoundingClientRect(), cr = c.getBoundingClientRect(), ws = satexPdfWords(), k = r.height / (img.naturalHeight * 72 / ws.dpi);
+  const line = h.text.slice(0, pc.at).split('\\n').length, built = img.__build?.text === h.text, y = (cr.top + cr.height / 2 - r.top) / k;
+  const rows = satexPdfBoxes().filter((b) => b.line === line && b.page === +pg.dataset.page).map((b) => b.y);
+  return { line, built, pending: c.classList.contains('pdf-caret-stale'), onRow: rows.some((b) => y > b - 9 && y < b + 2), y: Math.round(y), rows: [...new Set(rows.map(Math.round))], editor: h.cursor?.[1] ?? null, at: pc.at, ghost: pc.ghost, own: pc.own };
+})()`);
+/** The checks of one caret sample: the editor at the caret's offset; a landed build's caret on its line's row or pending. */
+function caretCheck(name, st, what) {
+  if (!st) return;
+  if (st.editor != null && st.editor !== st.at) fails.push(`${name}: ${what}: editor cursor ${st.editor}, PDF caret ${st.at}`);
+  if (st.built && !st.pending && st.rows.length && !st.onRow) fails.push(`${name}: ${what}: caret on y ${st.y} bp, line ${st.line} is set on ${J(st.rows)}`);
+}
+/** The screenshot of 2026-11-21 13:16: a paragraph after `\textbf{world}`, `\(\sum \)` typed into a new paragraph from
+ * the pages. The caret stayed on "I think…" (the word it was put in) while the build set the sum a row below. */
+async function mathCaret(name, ms, below = false) {
+  const T = '\\documentclass{article}\n\\begin{document}\nHello, world! This is an amazing concept\n\nWhat do you say?\n\nI think it is nice to consider a \\textbf{world}\n\\end{document}\n';
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'world')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'world', 1) ?? await wordBox(p, 'world');
+  // `below`: a click on the empty page under the last paragraph, a new paragraph the first key writes; else the end of
+  // "world" and Enter
+  if (below) await p.mouse(w[0] + 2, w[3] + 3 * (w[3] - w[1])); else await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  // the editor's cursor follows once the keys rest (150 ms, pdfCaretDraw): sampled after that
+  const sample = async (what) => { await sleep(250); const st = await caretState(p); log(what, J(st)); caretCheck(name, st, what); };
+  if (!below) await key(p, 'Enter', ms);
+  for (const k of ['\\', '(', '\\', 's', 'u', 'm']) { await key(p, k, ms); await sample(`key ${k}`); }
+  await key(p, 'Escape', ms);
+  await key(p, ' ', ms);
+  await sample('space');
+  // the build of the text as typed lands: the caret on the sum's row, the source's cursor at the same offset
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  await sample('landed');
+  log('text', J((await p.eval('satexHealth().text')).slice(-60)));
+  await p.shot(name + '.png', await p.eval(`(() => { const r = document.querySelector('#play-pdf .pdf-page').getBoundingClientRect(); return { x: r.left, y: r.top, width: r.width, height: Math.min(r.height, 300) }; })()`));
+  // typing on in text after the formula, then a new paragraph: each landed build's caret on its row
+  for (const k of ['a', 'n', 'd']) { await key(p, k, ms); await sample(`after ${k}`); }
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  await sample('landed 2');
+  await p.close();
+}
+
+/** The screenshot of 2026-11-21 13:21: a click right after "Hello," of `\greet{world}` (its definition's text
+ * `{Hello, #1!}`), then keys: the row as drawn must hold the comma once ("Hello,x, world!" was drawn). */
+async function macroComma(name, keys) {
+  const T = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world} This is an amazing concept\n\\end{document}\n';
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'amazing')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'Hello,');
+  if (!w) { fails.push(`${name}: no "Hello," on the page: ${J(await p.eval('satexPdfWords().map((x) => x[5]).join(" ")'))}`); return p.close(); }
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(400);
+  const row = async (what) => {
+    // the echo's row as drawn: its words' texts (the page's own pixels moved carry their text hidden)
+    const txt = await p.eval(`[...document.querySelectorAll('#play-pdf .pdf-echo:not(.pdf-push)')].map((e) => e.textContent).join('|')`);
+    const st = await caretState(p);
+    log(what, J(txt), J(st));
+    if ((txt.match(/,/g) ?? []).length > 1) fails.push(`${name}: ${what}: the comma drawn twice: ${J(txt)}`);
+    caretCheck(name, st, what);
+  };
+  await row('clicked');
+  for (const k of keys) { await key(p, k, 60); await row(`key ${k}`); await p.shot(`${name}-${keys.indexOf(k)}.png`, { x: w[0] - 10, y: w[1] - 15, width: 260, height: 50 }, 4); }
+  log('text', J((await p.eval('satexHealth().text')).split('\n')[1]));
+  await p.shot(name + '.png', { x: w[0] - 10, y: w[1] - 15, width: 260, height: 50 }, 4);
+  await p.close();
+}
+
+/** The screenshots of 2026-11-21 18:14 and 18:15 (`\greet{world}` setting "Hello, world!"): an editor position after
+ * the call is drawn after the output's last glyph `!` (was: before it, the argument's end), also after Left/Right and
+ * once a build lands; a click before "Hello" puts the caret before the call (typing goes into the document, was: into
+ * the definition's `{|Hello`), one inside the output into the definition. */
+async function macroEdges(name) {
+  const T = '\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{world}\n\nThis is an example text.\n\\end{document}\n';
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'example')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const call = T.indexOf('\\greet{world}'), after = call + '\\greet{world}'.length;
+  const caretX = () => p.eval(`(() => { const c = document.querySelector('#play-pdf .pdf-caret'); if (!c) return null; const r = c.getBoundingClientRect(); return r.left + r.width / 2; })()`);
+  const at = () => p.eval(`satexPdfCaret()?.at ?? null`);
+  const hello = await wordBox(p, 'Hello,'), world = await wordBox(p, 'world!');
+  if (!hello || !world) { fails.push(`${name}: no "Hello, world!" on the page: ${J(await p.eval('satexPdfWords().map((x) => x[5]).join(" ")'))}`); return p.close(); }
+  const mid = (w) => (w[1] + w[3]) / 2;
+  // the end of the output: after the call, drawn after `!`, after the arrows too
+  await p.mouse(world[2] - 0.5, mid(world));
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  const end = async (what) => {
+    const a = await at(), x = await caretX();
+    log(what, a, x, J(world));
+    if (a !== after) fails.push(`${name}: ${what}: caret at ${a}, want ${after} (after the call)`);
+    if (x == null || Math.abs(x - world[2]) > 2) fails.push(`${name}: ${what}: caret drawn at x ${x?.toFixed(1)}, want after "!" at ${world[2].toFixed(1)}`);
+  };
+  await end('clicked end');
+  await key(p, 'ArrowLeft', 200); await key(p, 'ArrowRight', 300);
+  await end('left, right');
+  // a build of the text lands (a key typed and taken back): the caret placed by its offset, no click's x
+  await key(p, 'Z', 300); await key(p, 'Backspace', 300);
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  await end('landed');
+  await p.shot(name + '-end.png', { x: hello[0] - 20, y: hello[1] - 15, width: 240, height: 50 }, 4);
+  // the start of the output: before the call
+  await key(p, 'Escape', 200);
+  await p.mouse(hello[0] + 0.3, mid(hello));
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  const a0 = await at(), x0 = await caretX();
+  log('clicked start', a0, x0);
+  if (a0 !== call) fails.push(`${name}: start: caret at ${a0} ${J(T.slice(a0 - 12, a0))}|, want ${call} (before the call)`);
+  if (x0 == null || Math.abs(x0 - hello[0]) > 2) fails.push(`${name}: start: caret drawn at x ${x0?.toFixed(1)}, want before "H" at ${hello[0].toFixed(1)}`);
+  // placed by its offset once a build lands: before "H" still (was: before "world!", the first word the source spells)
+  await key(p, 'Z', 300); await key(p, 'Backspace', 300);
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  const x1 = await caretX();
+  log('start landed', await at(), x1);
+  if (x1 == null || Math.abs(x1 - hello[0]) > 2) fails.push(`${name}: start landed: caret drawn at x ${x1?.toFixed(1)}, want before "H" at ${hello[0].toFixed(1)}`);
+  // inside the output (after "Hel"): the definition
+  await key(p, 'Escape', 200);
+  await p.mouse(hello[0] + (hello[2] - hello[0]) * 0.45, mid(hello));
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  const a1 = await at(), d0 = T.indexOf('{Hello') + 1;
+  log('clicked inside', a1);
+  if (!(a1 > d0 && a1 < d0 + 6)) fails.push(`${name}: inside: caret at ${a1}, want in the definition's "Hello" ${d0}..${d0 + 6}`);
+  // typing before the output goes into the document
+  await key(p, 'Escape', 200);
+  await p.mouse(hello[0] + 0.3, mid(hello));
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  await key(p, 'X', 300);
+  const t = await p.eval('satexHealth().text');
+  log('typed', J(t.split('\n').slice(1, 4)));
+  if (!t.includes('{Hello, #1!}') || !t.includes('X\\greet{world}')) fails.push(`${name}: X typed before the output: ${J(t.split('\n').slice(1, 4))}, want X\\greet{world} and the definition kept`);
+  await p.close();
+}
+
+/** Up and Down in the PDF move by visual line as Home and End do, keeping the x they started from; in two columns they
+ * stay in the column and go on from a column's bottom to the next column's top (and back up to its bottom). Was: the
+ * nearest baseline with a word under the caret's x, the x drifting to word edges, stuck at a column's end. */
+async function upDownColumns(name) {
+  const body = Array.from({ length: 40 }, (_, i) => `Line ${i} has words q${i}a q${i}b q${i}c q${i}d.`).join('\n');
+  const T = `\\documentclass[twocolumn]{article}\n\\usepackage[paperwidth=12cm,paperheight=9cm,margin=8mm]{geometry}\n\\pagestyle{empty}\n\\begin{document}\n${body}\n\\end{document}\n`;
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'q2a')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const caret = () => p.eval(`(() => { const c = document.querySelector('#play-pdf .pdf-caret'), i = document.querySelector('#play-pdf .pdf-page img'); if (!c || !i) return null; const r = c.getBoundingClientRect(), q = i.getBoundingClientRect(); return { x: r.left - q.left, y: r.top - q.top, w: q.width, at: satexPdfCaret()?.at }; })()`);
+  const start = await wordBox(p, 'q2b');
+  if (!start) { fails.push(`${name}: no q2b on the page`); return p.close(); }
+  const img = await p.eval(`(() => { const q = document.querySelector('#play-pdf .pdf-page img').getBoundingClientRect(); return [q.left, q.top]; })()`);
+  await p.mouse(start[0] + (start[2] - start[0]) * 0.5, (start[1] + start[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  const c0 = await caret(), seen = [c0];
+  log('start', J(c0));
+  // down the left column: one line a key, the x kept, until the caret goes over to the right column
+  let k = 0, c = c0;
+  for (; k < 40; k++) {
+    await key(p, 'ArrowDown', 250);
+    const n = await caret();
+    if (!n) { fails.push(`${name}: down ${k}: no caret`); break; }
+    seen.push(n);
+    if (n.x > c0.w / 2) { c = n; break; }
+    if (n.y <= c.y + 2) { fails.push(`${name}: down ${k}: caret did not move down (y ${c.y.toFixed(1)} -> ${n.y.toFixed(1)})`); break; }
+    if (n.y - c.y > 3 * (start[3] - start[1])) fails.push(`${name}: down ${k}: skipped lines (y ${c.y.toFixed(1)} -> ${n.y.toFixed(1)})`);
+    if (Math.abs(n.x - c0.x) > 12) fails.push(`${name}: down ${k}: x drifted ${c0.x.toFixed(1)} -> ${n.x.toFixed(1)}`);
+    c = n;
+  }
+  log('down', k, J(seen.map((q) => [Math.round(q.x), Math.round(q.y)])));
+  const bottom = seen.at(-2);
+  if (!(c.x > c0.w / 2)) fails.push(`${name}: Down never reached the right column (last ${J(c)})`);
+  else {
+    // the right column's first line, at the same x within the column
+    if (c.y > c0.y) fails.push(`${name}: the right column's caret at y ${c.y.toFixed(1)}, want its top line (start was ${c0.y.toFixed(1)})`);
+    // the columns' left edges (the page's words, in image px): the same x within the column
+    const [l0, l1] = await p.eval(`(() => { const ws = satexPdfWords().filter((w) => w[0] === 1), i = document.querySelector('#play-pdf .pdf-page img'), k = i.getBoundingClientRect().width / (i.naturalWidth * 72 / satexPdfWords().dpi), mid = Math.max(...ws.map((w) => w[3])) / 2 + Math.min(...ws.map((w) => w[1])) / 2; return [Math.min(...ws.map((w) => w[1])) * k, Math.min(...ws.filter((w) => w[1] > mid).map((w) => w[1])) * k]; })()`);
+    if (Math.abs(c.x - l1 - (c0.x - l0)) > 12) fails.push(`${name}: the right column's caret at x ${c.x.toFixed(1)}, want about ${(c0.x - l0 + l1).toFixed(1)} (the same x in the column)`);
+    await key(p, 'ArrowUp', 300);
+    const u = await caret();
+    log('up', J(u));
+    if (!u || u.x > c0.w / 2 || Math.abs(u.y - bottom.y) > 2) fails.push(`${name}: Up from the right column's top: ${J(u)}, want the left column's last line ${J(bottom)}`);
+  }
+  await p.shot(name + '.png', { x: img[0], y: img[1], width: c0.w, height: 340 }, 2);
+  await p.close();
+}
+
+/** Typing into `\\texttt{…}` from the page: the echo sets the typed letters in the teletype face or a monospace
+ * fallback at its advance (was: Latin Modern Roman's proportional widths), so the caret keeps its place when the build
+ * lands. Letters the page's subset lacks (`q`, `z`) test the fallback. */
+async function ttEcho(name) {
+  const T = '\\documentclass{article}\n\\begin{document}\nPlain words and \\texttt{code words here} end.\n\\end{document}\n';
+  const p = await open(T, 'play-pdf');
+  await p.eval(`document.getElementById('pdf-compile').click()`);
+  if (!await compiled(p, 'end.')) { fails.push(name + ': no build'); return p.close(); }
+  await sleep(800);
+  if (await p.eval(`document.getElementById('pdf-type').getAttribute('aria-pressed')`) !== 'true') await p.eval(`document.getElementById('pdf-type').click()`);
+  await sleep(400);
+  const w = await wordBox(p, 'here');
+  await p.mouse(w[2] - 0.5, (w[1] + w[3]) / 2);
+  await p.until(`satexPdfCaret()`, 3000);
+  await sleep(300);
+  for (const k of 'qzqz') await key(p, k, 80);
+  await sleep(200);
+  const x0 = await p.eval(`document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect().left ?? null`), es = await echoes(p);
+  log('echo', J(es.map((q) => [q.t, q.font])));
+  const typed = es.filter((q) => /[qz]/.test(q.t));
+  if (!typed.length) fails.push(`${name}: no echo of the typed letters: ${J(es)}`);
+  for (const q of typed) if (!/g_|Mono|monospace/.test(q.font)) fails.push(`${name}: ${J(q.t)} drawn in ${J(q.font)}, want the teletype face or a monospace`);
+  await p.until(`(() => { const i = document.querySelector('#play-pdf .pdf-page img'); return i?.__build?.text === satexHealth().text && !document.querySelector('#play-pdf.pdf-running'); })()`, 20000);
+  await sleep(800);
+  const x1 = await p.eval(`document.querySelector('#play-pdf .pdf-caret')?.getBoundingClientRect().left ?? null`);
+  log('caret', x0, x1);
+  if (x0 == null || x1 == null || Math.abs(x1 - x0) > 3) fails.push(`${name}: the caret moved ${x0?.toFixed(1)} -> ${x1?.toFixed(1)} when the build landed`);
+  await p.shot(name + '.png', { x: w[0] - 200, y: w[1] - 15, width: 420, height: 50 }, 3);
+  await p.close();
+}
 
 export async function echo(p, sc) {
   const res = { name: sc.name, fails: [], perf: [], info: { log: [] } };

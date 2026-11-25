@@ -1,5 +1,7 @@
 # LuaTeX's (luahbtex 1.x) globals and library fields, as `pairs` lists them:
-# G name type / F library field type.  Written by luahbtex -ini.
+# G name type / F library field type / T function number name: the number
+# tables `node.types()`, `node.whatsits()`, `tex.getmodevalues()` return.
+# Written by luahbtex -ini.
 F bit32 arshift function
 F bit32 band function
 F bit32 bnot function
@@ -892,3 +894,83 @@ G vf table
 G xpcall function
 G zip table
 G zlib table
+T node.types 0 hlist
+T node.types 1 vlist
+T node.types 2 rule
+T node.types 3 ins
+T node.types 4 mark
+T node.types 5 adjust
+T node.types 6 boundary
+T node.types 7 disc
+T node.types 8 whatsit
+T node.types 9 local_par
+T node.types 10 dir
+T node.types 11 math
+T node.types 12 glue
+T node.types 13 kern
+T node.types 14 penalty
+T node.types 15 unset
+T node.types 16 style
+T node.types 17 choice
+T node.types 18 noad
+T node.types 19 radical
+T node.types 20 fraction
+T node.types 21 accent
+T node.types 22 fence
+T node.types 23 math_char
+T node.types 24 sub_box
+T node.types 25 sub_mlist
+T node.types 26 math_text_char
+T node.types 27 delim
+T node.types 28 margin_kern
+T node.types 29 glyph
+T node.types 30 align_record
+T node.types 31 pseudo_file
+T node.types 32 pseudo_line
+T node.types 33 page_insert
+T node.types 34 split_insert
+T node.types 35 expr_stack
+T node.types 36 nested_list
+T node.types 37 span
+T node.types 38 attribute
+T node.types 39 glue_spec
+T node.types 40 attribute_list
+T node.types 41 temp
+T node.types 42 align_stack
+T node.types 43 movement_stack
+T node.types 44 if_stack
+T node.types 45 unhyphenated
+T node.types 46 hyphenated
+T node.types 47 delta
+T node.types 48 passive
+T node.types 49 shape
+T node.whatsits 0 open
+T node.whatsits 1 write
+T node.whatsits 2 close
+T node.whatsits 3 special
+T node.whatsits 4 late_special
+T node.whatsits 7 save_pos
+T node.whatsits 8 late_lua
+T node.whatsits 9 user_defined
+T node.whatsits 16 pdf_literal
+T node.whatsits 17 pdf_late_literal
+T node.whatsits 18 pdf_refobj
+T node.whatsits 19 pdf_annot
+T node.whatsits 20 pdf_start_link
+T node.whatsits 21 pdf_end_link
+T node.whatsits 22 pdf_dest
+T node.whatsits 23 pdf_action
+T node.whatsits 24 pdf_thread
+T node.whatsits 25 pdf_start_thread
+T node.whatsits 26 pdf_end_thread
+T node.whatsits 27 pdf_thread_data
+T node.whatsits 28 pdf_link_data
+T node.whatsits 29 pdf_colorstack
+T node.whatsits 30 pdf_setmatrix
+T node.whatsits 31 pdf_save
+T node.whatsits 32 pdf_restore
+T node.whatsits 33 pdf_link_state
+T tex.getmodevalues 0 unset
+T tex.getmodevalues 1 vertical
+T tex.getmodevalues 134 horizontal
+T tex.getmodevalues 267 math)

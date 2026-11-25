@@ -6,3 +6,7 @@ __pycache__/
 doc/site/showcase/img/*.avif
 doc/site/showcase/img/*.webp
 doc/site/showcase/img/*.mp4
+
+# patch(1) leftovers
+*.orig
+*.rej

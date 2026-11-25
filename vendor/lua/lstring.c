@@ -241,6 +241,7 @@ Udata *luaS_newudata (lua_State *L, size_t s) {
   o = luaC_newobj(L, LUA_TUSERDATA, sizeludata(s));
   u = gco2u(o);
   u->len = s;
+  u->satex_epoch = G(L)->satex_epoch;
   u->metatable = NULL;
   setuservalue(L, u, luaO_nilobject);
   return u;

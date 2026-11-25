@@ -61,7 +61,8 @@ fn occurrence(kind: OccKind, key: &str, detail: Option<&str>, span: Span) -> Occ
         package: None,
         node: 0,
         section: None,
-        certain: false,
+        // The sketch follows one path: the run's findings replace its own.
+        certain: true,
     }
 }
 
@@ -94,6 +95,8 @@ struct Guess {
     loads: Vec<Load>,
     graphics: Vec<(Span, String)>,
     graphics_path: Vec<String>,
+    /// `\input`s no file of the document's folder answers: looked up in the installation next.
+    inputs: Vec<(Span, String)>,
 }
 
 impl Guess {
@@ -165,14 +168,31 @@ impl Guess {
                         // the kernel's `\@missingfileerror`; `\include` only warns (`No file …`)
                         Err(_) if name == "input" => {
                             let file = path.file_name().map(|f| f.to_string_lossy()).unwrap_or_default();
-                            let message = format!("LaTeX Error: File `{file}' not found. (Default extension: tex)");
-                            self.occurrences.push(occurrence(OccKind::Message, &message, None, span));
+                            self.inputs.push((span, file.into_owned()));
                         }
                         Err(_) => {}
                     }
                 }
             }
             i = next;
+        }
+    }
+
+    /// The kernel's `\@missingfileerror` for an `\input` that neither the document's folder nor
+    /// TeX's input path (kpathsea, as `\input` searches it) holds: `hyperref.sty`'s
+    /// `\input{pd1enc.def}` is found in its own tree.
+    fn missing_inputs(&mut self, dir: &Path, cfg: &Config) {
+        let inputs = std::mem::take(&mut self.inputs);
+        if inputs.is_empty() {
+            return;
+        }
+        let project = crate::project::build_files::Project::discover_with(dir, &cfg.l3build);
+        let mut resolver = crate::engine::loader::Resolver::for_project(cfg, &project);
+        for (span, file) in inputs {
+            if resolver.resolve(&file, LoadKind::Input, dir).is_none() {
+                let message = format!("LaTeX Error: File `{file}' not found. (Default extension: tex)");
+                self.occurrences.push(occurrence(OccKind::Message, &message, None, span));
+            }
         }
     }
 
@@ -220,9 +240,10 @@ pub fn sketch(source: &str, main: &Path, cfg: &Config) -> Analysis {
         at += 1;
     }
     guess.missing_graphics(&dir, early, cfg);
+    guess.missing_inputs(&dir, cfg);
     let paths: Vec<PathBuf> = guess.files.iter().map(|(p, _)| p.clone()).collect();
     let mut analysis = Analysis::sketch(source, &paths, cfg, guess.loads);
-    analysis.facts.occurrences = guess.occurrences;
+    analysis.facts.occurrences = guess.occurrences.into();
     analysis
 }
 

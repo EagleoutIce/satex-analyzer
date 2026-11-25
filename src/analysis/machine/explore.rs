@@ -72,6 +72,42 @@ struct Tag {
     after: Vec<Vec<Tok>>,
 }
 
+/// What [`Machine::closing`] counted per macro.
+pub(super) type Closing = crate::fixed::HashMap<Sym, (i64, i64)>;
+
+/// The one-of tokens being walked into, innermost last. A run's own: a copy starts with none.
+#[derive(Default)]
+pub(crate) struct Open(Rc<std::cell::RefCell<Vec<Sym>>>);
+
+impl Clone for Open {
+    fn clone(&self) -> Self {
+        Open::default()
+    }
+}
+
+/// What [`Machine::one_of_nested`] finds a token to be.
+pub(crate) enum Nested {
+    /// No one-of token.
+    No,
+    /// A one-of token the walk is inside of: its texts add nothing the walk does not see already.
+    Again,
+    /// One-of tokens nested past `limits.meaning_set`: any text of its class.
+    Deep,
+    Open(Opened),
+}
+
+/// A one-of token's texts, open for a walk until dropped.
+pub(crate) struct Opened {
+    pub(crate) texts: Vec<Rc<[Token]>>,
+    open: Open,
+}
+
+impl Drop for Opened {
+    fn drop(&mut self) {
+        self.open.0.borrow_mut().pop();
+    }
+}
+
 impl Key {
     fn new(state: &PathState, groups: &[(GroupKind, bool, Vec<Tok>)]) -> Key {
         let places = state.input.iter().filter_map(place).collect();
@@ -132,7 +168,7 @@ struct Head {
     config: Config,
     passes: u32,
     /// The bound the last pass here started with ([`Machine::pass_bound`]).
-    bound: Option<u64>,
+    bound: u64,
 }
 
 /// Where a loop was entered: the input levels, conditionals and groups at entry.
@@ -143,8 +179,8 @@ struct Loop {
     passes: u32,
     /// Number of output routines fired when last met ([`Machine::pages`]).
     pages: u64,
-    /// Number of names assigned before the entry.
-    recent: usize,
+    /// [`crate::engine::env::Env::assignments`] at the entry.
+    recent: u64,
     /// The input levels below the loop body, by identity and by place. A pass
     /// reaches its next call without consuming any of them.
     levels: Vec<Level>,
@@ -187,6 +223,16 @@ impl PartialEq for Level {
             (Level::Pseudo(a), Level::Pseudo(b)) => Rc::ptr_eq(a, b),
             (Level::Boundary, Level::Boundary) => true,
             _ => false,
+        }
+    }
+}
+
+impl Level {
+    /// The same list, or one with the same text.
+    fn same_text(&self, other: &Level) -> bool {
+        match (self, other) {
+            (Level::Tokens(a), Level::Tokens(b)) => Rc::ptr_eq(a, b) || a[..] == b[..],
+            _ => self == other,
         }
     }
 }
@@ -247,8 +293,8 @@ struct Shelved {
     error: String,
     at: Span,
     counts: Counts,
-    /// The diagnostics its run raised ([`Machine::retract`]), removed if it stays dropped.
-    rows: std::ops::Range<usize>,
+    /// The rows of the diagnostics its run raised ([`Machine::retract`]), removed if it stays dropped.
+    rows: Vec<usize>,
 }
 
 /// Diagnostic counts, as (counter, how many).
@@ -270,7 +316,7 @@ enum Next {
 /// command's state and the paths. Saved in checkpoints.
 #[derive(Clone)]
 pub(super) struct Drive {
-    outer: (Vec<usize>, Vec<Choice>, usize, bool),
+    outer: (Vec<(usize, usize)>, Vec<Choice>, usize, bool),
     outer_unit: (Unit, bool),
     nested: bool,
     paths: Paths,
@@ -305,6 +351,12 @@ impl Machine<'_> {
         self.branch_at(by, arms, span, false)
     }
 
+    /// [`Machine::branch`] where no one-path summary is sound: a hot site
+    /// does not refuse it ([`Machine::branch_at`]).
+    pub(crate) fn branch_needed(&mut self, by: Sym, arms: usize, span: Span) -> Option<usize> {
+        self.branch_at(by, arms, span, true)
+    }
+
     /// [`Machine::branch`]. `needed` means no other handling is sound (the
     /// paths cannot be merged), so the fork backstop of a hot site, which only
     /// bounds work, does not refuse it.
@@ -312,10 +364,12 @@ impl Machine<'_> {
         if arms < 2 {
             return (arms == 1).then_some(0);
         }
+        self.scratch.assumed_arm = false;
         if !needed
             && self.script.len() <= self.choices.len()
             && let Some(arm) = self.page_arm(span)
         {
+            self.scratch.assumed_arm = true;
             return Some(arm);
         }
         if !self.cutting() && self.learned_cut() {
@@ -339,13 +393,14 @@ impl Machine<'_> {
         if !needed && self.hot_site(span) && !scripted {
             return None;
         }
-        let arm = self.script.get(i).copied().unwrap_or(0);
+        let arm = self.script.get(i).map_or(0, |s| s.0);
         self.out.heat(|h| &mut h.forks, span);
         match self.output_active() {
             true => self.out.output_forks += 1,
             false => self.out.forks += 1,
         }
         self.choices.push(Choice { span, by, arms, arm, joined: false });
+        self.arm = true;
         Some(arm)
     }
 
@@ -386,6 +441,13 @@ impl Machine<'_> {
     /// The arm [`Machine::branch`] returned does not exist, nor does any later
     /// one. The path is not a possible run of the document.
     pub(crate) fn no_arm(&mut self) {
+        self.refute();
+        self.absent = true;
+    }
+
+    /// The path is refuted: no run of the document takes it. The other arms
+    /// of its choices are runs of their own and are still explored.
+    pub(crate) fn refute(&mut self) {
         self.infeasible = true;
         self.halted = true;
     }
@@ -416,7 +478,7 @@ impl Machine<'_> {
     /// Whether the run may be one of several paths, so what it does now need
     /// not happen in every run.
     pub(crate) fn on_paths(&self) -> bool {
-        self.parted || self.env.forking() || !self.choices.is_empty()
+        self.parted || self.arm
     }
 
     /// Runs commands on every path until `done` holds for all of them or they
@@ -460,6 +522,10 @@ impl Machine<'_> {
                 let (outer, paths) = (outer.clone(), paths.clone());
                 self.take_checkpoint(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
             }
+            if !ended && paths.top && self.preview_due() {
+                let (outer, paths) = (outer.clone(), paths.clone());
+                self.hand_preview(Drive { outer, outer_unit, nested, paths, keep_errors, mark, commands });
+            }
             self.halted |= spliced || (!ended && paths.top && (self.preview_done() || self.planted()));
             self.charge(&mut mark);
             if !nested {
@@ -478,7 +544,7 @@ impl Machine<'_> {
             }
             self.lone = paths.fork.is_none();
             if self.lone && paths.top {
-                (self.approximated, self.blind) = (false, false);
+                (self.approximated, self.blind, self.arm) = (false, false, false);
             }
             let (live_before, steps_before) = (paths.parked.len(), self.out.steps);
             let next = if finished { None } else { Some(self.explore(&mut paths, true)) };
@@ -654,9 +720,17 @@ impl Machine<'_> {
                         self.swap_choices(&mut outer);
                         let arm = self.branch_at(self.unknown, configs.len(), span, true);
                         self.swap_choices(&mut outer);
+                        // A replay names an arm by its place among the paths the run it
+                        // repeats ended with. A rerun that ended with another number
+                        // (a count shared with the earlier runs refused a choice or
+                        // summarized a loop) names no fixed path: it follows the join of
+                        // all it has. It runs the same command from the same state, at
+                        // most coarser, so the join covers the arms the index meant.
+                        let replayed = outer.1.len().checked_sub(1).and_then(|i| outer.0.get(i));
+                        let stale = arm.is_some() && replayed.is_some_and(|s| s.1 != configs.len());
                         let forced = match arm {
-                            Some(_) => None,
-                            None => self.join_done(&fork, &configs, false),
+                            Some(_) if !stale => None,
+                            _ => self.join_done(&fork, &configs, false),
                         };
                         match forced {
                             Some(joined) => {
@@ -670,7 +744,7 @@ impl Machine<'_> {
                             }
                             None => {
                                 // During a cut the region is summarized whichever path it follows.
-                                if arm.is_none() && !self.cutting() {
+                                if (arm.is_none() || stale) && !self.cutting() {
                                     self.diagnose(
                                         Severity::Unsupported,
                                         "unjoined-lookahead",
@@ -678,13 +752,8 @@ impl Machine<'_> {
                                         "paths a look ahead parted into end apart in different files past the choices one command may make. The first is followed".into(),
                                     );
                                 }
-                                // A replayed arm beyond the paths this run ended with is infeasible.
-                                let Some(config) = configs.into_iter().nth(arm.unwrap_or(0)) else {
-                                    self.no_arm();
-                                    self.env.unfork(fork);
-                                    break;
-                                };
-                                config
+                                let k = arm.unwrap_or(0).min(configs.len() - 1);
+                                configs.into_iter().nth(k).expect("configs is not empty")
                             }
                         }
                     }
@@ -812,7 +881,7 @@ impl Machine<'_> {
         let shelved = std::mem::take(&mut paths.shelved);
         if !paths.failed {
             for s in shelved {
-                self.retract(s.rows);
+                self.retract(&s.rows);
                 self.report_dropped(&s.error, s.at);
             }
             return;
@@ -847,7 +916,7 @@ impl Machine<'_> {
     }
 
     /// Swaps the running drive's choices with the enclosing command's.
-    fn swap_choices(&mut self, outer: &mut (Vec<usize>, Vec<Choice>, usize, bool)) {
+    fn swap_choices(&mut self, outer: &mut (Vec<(usize, usize)>, Vec<Choice>, usize, bool)) {
         std::mem::swap(&mut self.script, &mut outer.0);
         std::mem::swap(&mut self.choices, &mut outer.1);
         std::mem::swap(&mut self.runs, &mut outer.2);
@@ -879,7 +948,7 @@ impl Machine<'_> {
     /// arms its choices allow. Without `head` it is not checked against the
     /// loop heads, because it starts from one.
     fn explore(&mut self, paths: &mut Paths, head: bool) -> Next {
-        let start = self.save_path();
+        let start = self.save_start();
         let file = self.file_level();
         let mut fork = self.env.fork();
         let own = paths.fork.is_none();
@@ -888,7 +957,7 @@ impl Machine<'_> {
         self.runs = 0;
         let mut outcomes = Vec::new();
         let mut first = None;
-        let mut dropped: Vec<(Config, String, Counts, std::ops::Range<usize>)> = Vec::new();
+        let mut dropped: Vec<(Config, String, Counts, Vec<usize>)> = Vec::new();
         // Each rerun and each re-entry after a cut is charged, as in the drive.
         let mut mark = if head { self.out.steps.wrapping_sub(1) } else { self.out.steps };
         loop {
@@ -898,7 +967,7 @@ impl Machine<'_> {
                 self.path_ids += 1;
                 self.path_id = self.path_ids;
             }
-            (self.infeasible, self.ended_run) = (false, false);
+            (self.infeasible, self.ended_run, self.absent) = (false, false, false);
             self.at_join = None;
             // A top-level run starts with no pending error. A nested one keeps its path's.
             (self.dropping, self.dropping_possible, self.dropping_breaks, self.dropping_nested) = match paths.top {
@@ -906,6 +975,11 @@ impl Machine<'_> {
                 false => start.dropping.clone(),
             };
             let rows_from = self.raised_mark();
+            self.raise_run(true);
+            // Before a top-level run no raise may be retracted by its place in the log any more.
+            if paths.top {
+                self.trim_raised(rows_from);
+            }
             let run_from = self.out.steps;
             let going = match self.unit {
                 Unit::Command => self.command(),
@@ -922,11 +996,13 @@ impl Machine<'_> {
             // A refuted run ends its combination of arms: the other arms
             // of its last choice are tried next (see `next_script`).
             let refuted = self.infeasible && !self.ended_run;
-            let next = next_script(&self.choices, refuted);
+            let next = next_script(&self.choices, refuted && self.absent);
+            self.raise_run(false);
             let rows = rows_from..self.raised_mark();
             // A refuted run raised no diagnostics.
             if refuted {
-                self.retract(rows.clone());
+                let raised = self.raised_rows(rows.clone());
+                self.retract(&raised);
             }
             // In a nested drive, a path keeps an error only if TeX's recovery
             // would break library code's brackets. The enclosing command's run
@@ -965,8 +1041,9 @@ impl Machine<'_> {
                     let base = paths.fork.as_ref().expect("others wait");
                     let (state, env, at) = (self.save_path(), self.env.path(base), self.position_span());
                     let counts = self.made_counts(counters.0);
+                    let rows = self.raised_rows(rows.clone());
                     paths.shelved.push(Shelved { config: Config::new(state, env, !going), error, at, counts, rows });
-                    self.restore_path(start);
+                    self.restore_path(*start);
                     self.env.rewind(&fork);
                     // If this run created `paths.fork`, the shelved path still needs it.
                     if !own || paths.fork.is_none() {
@@ -980,6 +1057,7 @@ impl Machine<'_> {
                     paths.fork = None;
                 }
                 self.env.unfork(fork);
+                self.spare_start.0.push(start);
                 return match (self.infeasible, going) {
                     (true, _) => Next::None,
                     (false, true) => Next::One,
@@ -998,11 +1076,11 @@ impl Machine<'_> {
                 let (state, env) = (self.save_path(), self.env.path(base));
                 let config = Config::new(state, env, !going);
                 match error {
-                    Some(error) => dropped.push((config, error, self.made_counts(counters.0), rows)),
+                    Some(error) => dropped.push((config, error, self.made_counts(counters.0), self.raised_rows(rows))),
                     None => outcomes.push(config),
                 }
             }
-            self.restore_path(start.clone());
+            self.restore_path(PathState::clone(&start));
             self.env.rewind(&fork);
             self.undo_counters(counters);
             match next {
@@ -1025,11 +1103,19 @@ impl Machine<'_> {
             paths.shelved.push(Shelved { config, error, at, counts, rows });
         }
         if outcomes.is_empty() {
+            self.spare_start.0.push(start);
             return Next::None;
         }
+        // The flags tell of the last run, which may be a refuted arm. The
+        // command goes on as its outcomes, so a run that encloses this drive
+        // must not take it for refuted.
+        (self.infeasible, self.ended_run, self.absent) = (false, false, false);
         match first {
-            Some(choice) if head => self.loop_head(paths, choice, start, outcomes),
-            _ => Next::Many(outcomes),
+            Some(choice) if head => self.loop_head(paths, choice, *start, outcomes),
+            _ => {
+                self.spare_start.0.push(start);
+                Next::Many(outcomes)
+            }
         }
     }
 
@@ -1093,7 +1179,9 @@ impl Machine<'_> {
                 while m < l.levels.len().min(levels.len()) {
                     let equal = here.key.places.get(m) == Some(&l.places[m]);
                     if !equal {
-                        read = l.levels[m] == levels[m];
+                        // The same text at another place, or a copy of it (an
+                        // enclosing loop's next pass replays it): another call.
+                        read = l.levels[m].same_text(&levels[m]);
                         break;
                     }
                     m += 1;
@@ -1214,7 +1302,7 @@ impl Machine<'_> {
         for c in outcomes.iter_mut() {
             let bounds = Rc::make_mut(&mut c.state.loop_bounds);
             bounds.retain(|(l, _)| *l != id);
-            bounds.push((id, bound));
+            bounds.push((id, Some(bound)));
         }
         let entry = paths.loops.iter().find(|l| l.id == id).map(|l| (l.depth.0, l.depth.1, l.passes));
         let forced = match paths.loops.iter().position(|l| l.id == id) {
@@ -1224,7 +1312,8 @@ impl Machine<'_> {
                 // bounded text) is not counted: such loops end by construction,
                 // with every state exact.
                 let before = here.state.loop_bounds.iter().find(|(l, _)| *l == id).and_then(|(_, b)| *b);
-                let shrinks = matches!((before, bound), (Some(a), Some(b)) if b < a);
+                self.compare_bounds(before, bound);
+                let shrinks = before.is_some_and(|a| bound < a);
                 let l = &mut paths.loops[l];
                 l.pages = pages;
                 l.passes += u32::from(!shrinks);
@@ -1242,7 +1331,7 @@ impl Machine<'_> {
                     depth,
                     passes: 0,
                     pages,
-                    recent: self.env.recent_len(),
+                    recent: self.env.assignments,
                     levels,
                     places,
                     top,
@@ -1330,7 +1419,8 @@ impl Machine<'_> {
         // is treated as the same head with its input widened. A head whose input
         // held more bounded text is an earlier pass of a loop that ends by
         // construction, so it is neither kin nor a deeper level.
-        let shrunk = |h: &Head| matches!((h.bound, bound), (Some(a), Some(b)) if b < a);
+        self.compare_bounds(paths.heads.iter().filter(|h| same(h)).map(|h| h.bound), bound);
+        let shrunk = |h: &Head| bound < h.bound;
         let kin = |h: &Head| {
             let (a, b) = (&h.config.key, &here.key);
             let text = |p: &Place| matches!(p, Place::Tokens(..) | Place::Returned(..));
@@ -1681,14 +1771,26 @@ impl Machine<'_> {
             paths.parked.iter().chain(&paths.arrived).chain(&paths.done).any(|p| p.state.summary_of.contains(&id));
         if !carried {
             let mut entry = paths.stopped[l].depth;
-            // Met again with no source read since the last cut: the cut left
-            // the text that leads back here. Each such meeting drops one more
-            // input level. When only source is left, the line is skipped.
-            let again = match self.scratch.recut {
-                Some((s, p, k)) if s == span && p == here.key.progress => k + 1,
-                _ => 0,
+            // Met again at a head cut since source was last read, with the same
+            // text left to read: the cuts left the text that leads back here.
+            // Each such meeting drops one more input level. When only source is
+            // left, the line is skipped. Heads of one loop may take turns (an
+            // `\if` in a loop's body that also calls it), so any head counts.
+            let (progress, at) = (here.key.progress, (span, here.key.places.clone()));
+            let again = match &mut self.scratch.recut {
+                Some((p, heads, k)) if *p == progress => {
+                    match heads.contains(&at) {
+                        true => *k += 1,
+                        false => heads.push(at),
+                    }
+                    keep_last(heads, self.limits.loop_heads);
+                    *k
+                }
+                recut => {
+                    *recut = Some((progress, vec![at], 0));
+                    0
+                }
             };
-            self.scratch.recut = Some((span, here.key.progress, again));
             entry.0 = entry.0.min(depth.0).saturating_sub(again as usize);
             if again > 0
                 && entry.0
@@ -1759,6 +1861,7 @@ impl Machine<'_> {
         self.resume_config(fork, Config::new(here.state, env, false));
         let l = paths.stopped.iter().rposition(|l| l.id == id);
         let carried = cut && l.is_some_and(|l| self.exits_carry(paths, fork, l, progress, span));
+        let frames = self.input.len();
         if cut && !carried {
             self.unwind(depth, span);
         }
@@ -1781,8 +1884,13 @@ impl Machine<'_> {
         if carried {
             return Next::None;
         }
-        if cut {
-            self.read_unknown(span);
+        // The unknown token stands for the text the cut dropped. Outside a scan
+        // of text it is read in front of what is left, so with nothing dropped
+        // it would add a token no run has: the path runs on from the widened
+        // state instead. In a scan of text it stands for the rest of that text.
+        let text = matches!(self.unit, Unit::Body { .. } | Unit::Expand);
+        if cut && (text || self.input.len() < frames) {
+            self.read_unknown_from(span, self.input.len() == frames);
         }
         self.explore(paths, false)
     }
@@ -1831,13 +1939,24 @@ impl Machine<'_> {
     }
 
     /// How many conditionals and groups `t` closes, less those it opens.
-    pub(super) fn closing(&self, t: &Token) -> (i64, i64) {
-        self.closing_in(t, &mut Vec::new())
+    /// `memo` holds the macros counted already: one per text whose meanings stay.
+    pub(super) fn closing(&self, t: &Token, memo: &mut Closing) -> (i64, i64) {
+        self.closing_in(t, &mut Vec::new(), memo)
+    }
+
+    /// Charges `n` texts a walk inside this step opens: whether the step's
+    /// walks stay within `limits.walk_texts`. Every walk through macro bodies
+    /// or one-of texts pays here, so their work counts against the line
+    /// ([`Machine::charge`]), and one past the budget over-approximates.
+    pub(crate) fn walk(&self, n: usize) -> bool {
+        self.env.walked.spend(n, self.limits.walk_texts)
     }
 
     /// [`Machine::closing`], looking through parameterless macros (`\close`
-    /// for `\endgroup`) that are not already in `seen`.
-    fn closing_in(&self, t: &Token, seen: &mut Vec<Sym>) -> (i64, i64) {
+    /// for `\endgroup`) that are not already in `seen`. Each macro is counted
+    /// once (`memo`): a body naming the same macro many times (acmart's
+    /// `\@currentaffiliation`, grown per `\and`) was walked once per path, exponentially.
+    fn closing_in(&self, t: &Token, seen: &mut Vec<Sym>, memo: &mut Closing) -> (i64, i64) {
         use crate::engine::builtins::Primitive as P;
         let char_group = |cat: crate::engine::tex::Catcode| match cat {
             crate::engine::tex::Catcode::Begin => (0, -1),
@@ -1853,10 +1972,19 @@ impl Machine<'_> {
                 Meaning::Primitive(P::EndGroup) => (0, 1),
                 Meaning::Char(_, cat) => char_group(cat),
                 Meaning::Macro(m) if m.parameter_text.items.is_empty() && !seen.contains(&sym) => {
+                    if let Some(&known) = memo.get(&sym) {
+                        return known;
+                    }
+                    // Linear in the macros by the memo: paid, never cut, as a cut would miscount.
+                    self.walk(1);
                     seen.push(sym);
-                    let sum = m.replacement_text.iter().map(|t| self.closing_in(t, seen));
-                    let sum = sum.fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+                    let mut sum = (0, 0);
+                    for t in m.replacement_text.iter() {
+                        let (a, b) = self.closing_in(t, seen, memo);
+                        sum = (sum.0 + a, sum.1 + b);
+                    }
                     seen.pop();
+                    memo.insert(sym, sum);
                     sum
                 }
                 _ => (0, 0),
@@ -1883,8 +2011,9 @@ impl Machine<'_> {
                 Some(Frame::Returned(t)) => t.clone(),
                 _ => Vec::new(),
             };
+            let memo = &mut Closing::default();
             for t in &left {
-                let (c, g) = self.closing(t);
+                let (c, g) = self.closing(t, memo);
                 closes = (closes.0 + c, closes.1 + g);
             }
             at = lower(at, self.input.last());
@@ -1965,19 +2094,22 @@ impl Machine<'_> {
     }
 
     /// Settles paths dropped for an error in a file the running path has since
-    /// closed. The running path got through that file without the error, so the
-    /// dropped paths are settled as at the drive's end ([`Machine::settle`]).
-    /// Keeping them would hold the fork open, and every later load would run
-    /// as if on several paths.
+    /// closed, or reads on in a line after the one they stood in. TeX reads
+    /// the next line only once the lists above the file are used up (tex.web
+    /// §§ 357-360), so the running path got through that line without the
+    /// error, and the dropped paths are
+    /// settled as at the drive's end ([`Machine::settle`]). Keeping them would
+    /// hold the fork open: every later load would run as if on several paths,
+    /// and no later line of a package would be a checkpoint of its cache.
     fn settle_closed(&mut self, paths: &mut Paths) {
         if paths.failed || paths.shelved.is_empty() {
             return;
         }
-        let open: Vec<FileId> = self
+        let open: Vec<(FileId, usize)> = self
             .input
             .iter()
             .filter_map(|f| match f {
-                Frame::File { mouth, .. } => Some(mouth.file),
+                Frame::File { mouth, .. } => Some((mouth.file, mouth.offset())),
                 _ => None,
             })
             .collect();
@@ -1988,16 +2120,22 @@ impl Machine<'_> {
                 .iter()
                 .rev()
                 .find_map(|p| match p {
-                    Place::File(file, ..) => Some(*file),
+                    Place::File(file, offset, _, source) => Some((*file, *offset, source)),
                     _ => None,
                 })
-                .is_some_and(|file| !open.contains(&file))
+                .is_some_and(|(file, offset, source)| match open.iter().rev().find(|o| o.0 == file) {
+                    // Read on into a later line: the dropped path's line is done.
+                    Some(&(_, read)) => {
+                        source.get(offset..read.saturating_sub(1)).is_some_and(|text| text.contains(&'\n'))
+                    }
+                    None => true,
+                })
         };
         let (gone, kept): (Vec<Shelved>, Vec<Shelved>) =
             std::mem::take(&mut paths.shelved).into_iter().partition(closed);
         paths.shelved = kept;
         for s in gone {
-            self.retract(s.rows);
+            self.retract(&s.rows);
             self.report_dropped(&s.error, s.at);
         }
     }
@@ -2631,7 +2769,38 @@ impl Machine<'_> {
         let class = self.class_name(named.iter().map(|n| &n.1[..]));
         let ids = named.iter().map(|n| n.0).collect::<Vec<_>>();
         let sym = self.intern(&format!("{UNKNOWN_NAME}{ONE_OF}{ids:x?}{class}"));
+        // The name spells the set. The arms stand in the order of their texts,
+        // which tokens TeX ignores before the command leave as it is.
+        named.sort_by(|a, b| self.text_order(&a.1, &b.1, 0).then(a.0.cmp(&b.0)));
         (sym, named.into_iter().map(|(_, text)| text_meaning(text)).collect())
+    }
+
+    /// The order of two texts by what they spell: characters before names, a
+    /// one-of token by its texts, other names by their spelling with numbers
+    /// as numbers ([`natural_order`]). A number's name counts the steps of its
+    /// line, so a hash of the names would order the same texts another way
+    /// after a `\relax` more.
+    fn text_order(&self, a: &[Token], b: &[Token], depth: u16) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        for (x, y) in a.iter().zip(b) {
+            let order = match (x.tok, y.tok) {
+                (Tok::Cs(s), Tok::Cs(t)) if s == t => Ordering::Equal,
+                (Tok::Cs(s), Tok::Cs(t)) => match (self.one_of_members(*x), self.one_of_members(*y)) {
+                    (Some(xs), Some(ys)) if depth < self.limits.meaning_set => (xs.iter().zip(&ys))
+                        .map(|(x, y)| self.text_order(x, y, depth + 1))
+                        .find(|o| o.is_ne())
+                        .unwrap_or(xs.len().cmp(&ys.len())),
+                    (Some(_), None) => Ordering::Greater,
+                    (None, Some(_)) => Ordering::Less,
+                    _ => natural_order(self.name(s), self.name(t)),
+                },
+                (x, y) => x.word().cmp(&y.word()),
+            };
+            if order.is_ne() {
+                return order;
+            }
+        }
+        a.len().cmp(&b.len())
     }
 
     /// One token for either of two balanced texts. Data with unknown parts
@@ -2837,6 +3006,29 @@ impl Machine<'_> {
         Some(may.iter().filter_map(|m| m.as_macro().map(|m| m.replacement_text.clone())).collect())
     }
 
+    /// [`Machine::one_of_members`] for a walk that goes on into the texts.
+    /// A text may hold its own token (a repetition, [`Machine::repeat_token`])
+    /// or nest one-of tokens pass by pass, so such a walk ends only with
+    /// this: a token it is inside of already is [`Nested::Again`], one past
+    /// `limits.meaning_set` levels [`Nested::Deep`], and the walker says what
+    /// holds there. The texts stay open until the value is dropped. Texts
+    /// that name the one-of below many times make the walk a tree far larger
+    /// than the texts: past the step's walk budget ([`Machine::walk`]) a
+    /// token is [`Nested::Deep`] too.
+    pub(crate) fn one_of_nested(&self, t: Token) -> Nested {
+        let Some(texts) = self.one_of_members(t) else { return Nested::No };
+        let sym = t.cs().expect("a one-of token is a name");
+        let mut open = self.one_of_open.0.borrow_mut();
+        if open.contains(&sym) {
+            return Nested::Again;
+        }
+        if open.len() >= usize::from(self.limits.meaning_set) || !self.walk(texts.len()) {
+            return Nested::Deep;
+        }
+        open.push(sym);
+        Nested::Open(Opened { texts, open: Open(self.one_of_open.0.clone()) })
+    }
+
     /// At `-vvvv`, prints the sizes of the main tables at each new 256 MiB high.
     fn report_memory(&mut self, paths: &Paths) {
         if self.cfg.verbose < 4 {
@@ -2875,7 +3067,7 @@ impl Machine<'_> {
         ];
         let facts = &self.out.facts;
         crate::util::progress::note!(
-            "satex: memory {} MiB at {:?}: paths {:?} | env trail/journal/recent/forks {:?} | defs {} exps {} occs {} diags {} | graph {} {} | names {} | calls {} {} | sites {} {} {} diag_seen {} | undo {} copies {} written {} reads {} keys {} | summaries {} {} gaps {}",
+            "satex: memory {} MiB at {:?}: paths {:?} | env trail/journal/recent/forks {:?} | defs {} exps {} occs {} diags {} | graph {} {} | names {} | calls {} {} memo {} MiB | sites {} {} {} diag_seen {} | undo {} copies {} written {} reads {} keys {} | summaries {} {} gaps {}",
             crate::analysis::budget::in_use() >> 20,
             self.position_span(),
             groups,
@@ -2887,9 +3079,10 @@ impl Machine<'_> {
             self.out.graph.len(),
             self.out.graph.edge_count(),
             self.out.interner.len(),
-            self.call_runs.len(),
+            self.call_runs.size(),
             self.call_recs.len(),
-            self.definition_sites.len(),
+            self.memo_bytes >> 20,
+            self.definition_sites.size(),
             self.expansion_sites.size(),
             self.cond_sites.len(),
             self.diag_seen.len(),
@@ -3104,6 +3297,7 @@ impl Machine<'_> {
         x.learn_forks = x.learn_forks.max(y.learn_forks);
         x.approximated |= y.approximated;
         x.blind |= y.blind;
+        x.arm |= y.arm;
         x.read_outside |= y.read_outside;
         x.ran_off = x.ran_off.or(y.ran_off);
         // The join keeps a pending error only if every joined path has one.
@@ -3486,6 +3680,30 @@ fn text_hash(text: &[Token], name: impl Fn(Sym) -> String) -> u128 {
     (u128::from(half(0)) << 64) | u128::from(half(1))
 }
 
+/// Two names in order, their runs of digits compared as numbers.
+fn natural_order(a: &str, b: &str) -> std::cmp::Ordering {
+    let (mut x, mut y) = (a.as_bytes(), b.as_bytes());
+    let digits = |s: &[u8]| s.iter().take_while(|c| c.is_ascii_digit()).count();
+    loop {
+        let (i, j) = (digits(x), digits(y));
+        let order = match (i, j) {
+            (0, _) | (_, 0) => match (x.first(), y.first()) {
+                (Some(c), Some(d)) => c.cmp(d),
+                (c, d) => return c.cmp(&d),
+            },
+            _ => {
+                let lead = |s: &[u8]| s.iter().take_while(|&&c| c == b'0').count();
+                let (p, q) = (&x[lead(&x[..i]).min(i)..i], &y[lead(&y[..j]).min(j)..j]);
+                p.len().cmp(&q.len()).then_with(|| p.cmp(q))
+            }
+        };
+        if order.is_ne() {
+            return order;
+        }
+        (x, y) = (&x[i.max(1)..], &y[j.max(1)..]);
+    }
+}
+
 /// Splits a name that ends in digits (a loop counter, `l_test_flag12`)
 /// before the digits: the prefix, and an empty suffix.
 fn digit_run(name: &str) -> Option<(String, String)> {
@@ -3689,15 +3907,15 @@ fn partner(parked: &[Config], config: &Config, apart: &dyn Fn(&Config, &Config) 
 /// The arms for the next run of a command: the last choice with an arm left
 /// advances to it, and the choices after it start over. With `absent`, the
 /// last choice's arm did not exist, nor does any later one.
-fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<usize>> {
+fn next_script(choices: &[Choice], absent: bool) -> Option<Vec<(usize, usize)>> {
     let mut arms: Vec<(usize, usize)> = choices.iter().map(|c| (c.arm, c.arms)).collect();
     if absent {
         arms.pop();
     }
     while let Some((arm, count)) = arms.pop() {
         if arm + 1 < count {
-            let mut script: Vec<usize> = arms.iter().map(|a| a.0).collect();
-            script.push(arm + 1);
+            let mut script = arms;
+            script.push((arm + 1, count));
             return Some(script);
         }
     }
@@ -3848,4 +4066,23 @@ fn keep_list(x: &Frame, y: &Frame, text: &mut Vec<Token>) -> Option<Frame> {
     }
     text.truncate(text.len() - rest.len());
     Some(if i >= j { x.clone() } else { y.clone() })
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::natural_order;
+    use std::cmp::Ordering;
+
+    /// Intuition: a number's name counts steps (`#6.99.0`), and one step more
+    /// must not reorder two names: runs of digits compare as numbers, not as
+    /// text (`99` before `100`), so a shift of both keeps their order.
+    #[test]
+    fn names_order_by_their_numbers() {
+        assert_eq!(natural_order("0..9#6.99.0", "0..9#6.100.0"), Ordering::Less);
+        assert_eq!(natural_order("0..9#6.100.0", "0..9#6.101.0"), Ordering::Less);
+        assert_eq!(natural_order("0..9#6.007.0", "0..9#6.7.0"), Ordering::Equal);
+        assert_eq!(natural_order("a1", "a"), Ordering::Greater);
+        assert_eq!(natural_order("a1b", "a1c"), Ordering::Less);
+        assert_eq!(natural_order("x", "x"), Ordering::Equal);
+    }
 }

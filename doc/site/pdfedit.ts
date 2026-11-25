@@ -23,19 +23,30 @@ type Edit = { from: number; to: number; now: string };
 /** A table's own column padding (`padding`) or one gap's space (`gap`): as written, and the edits setting it. */
 type Spacing = { now: string | null; edits(v: string | null): Edit[] };
 type Respec = { body: string; pre: string; letter: string; array: boolean };
+/** A row or column inserted before `at`, deleted at `at`, or moved from `at` to `to` (pdfedit.ts tableOp). */
+type TableOp = { what: 'row' | 'col'; act: 'insert' | 'delete' | 'move'; at: number; to?: number };
 type Form = { kind: 'len'; num: number; unit: string } | { kind: 'share'; num: number; name: string; lead: boolean };
 /** A piece of a paragraph for the echo's line breaking: its width `n` and the space before it `gap` (bp); `par` starts
  * a new paragraph (Enter), `brk` a new row of the same one (`\\\\`). Anything else it carries (its text, the page word it is) rides along. */
 /** `disp`: display math, centered on a row of its own, that much more space above it (bp), `dshort` when the row
  * before ends left of it, `below` after it. */
-type Piece = { gap: number; n: number; par?: boolean; brk?: boolean; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number };
+/** `pen`: a break after it costs that penalty (a formula's relation or binary operator); `mg`: its gap is a formula's
+ * own space, no break (TeX breaks math only at penalties). */
+type Piece = { gap: number; n: number; par?: boolean; brk?: boolean; disp?: number; dshort?: number; below?: number; st?: number; sh?: number; hy?: boolean; hw?: number; pen?: number; mg?: boolean };
 /** The lines a paragraph may take: its right edge, its left margin, the indent and gap of a new paragraph, the rows the
  * page set after the first (each its left edge and its own words, gaps set), whether a row may take words up (`pull`). */
 type Line<P> = { right: number; left: number; indent: number; skip: number; parskip: number; rows: { x: number; pieces: P[] }[]; pull?: boolean; shrink?: number; justify?: boolean; fit?: boolean; breaks?: { breaks: number[]; ratios: number[] } | null };
 /** Rows laid out: each its left edge, its pieces placed (`x`), the page row it takes (`from`: -2 the first, -1 a new
  * one) and a new row's baseline shift from the row before (`dy`); `freed` the page rows whose words all went up. */
 /** A piece of prose as typed (pdfedit.ts `prose`). */
-type Prose = { t: string; gap: boolean; par: boolean; ctx: string; brk?: boolean };
+type Prose = { t: string; gap: boolean; par: boolean; ctx: string; brk?: boolean; dim?: boolean; box?: unknown };
+/** What a control word sets in the echo: a glyph's text, or a box the run set (`box`, its letters `t`). */
+type Spelled = string | { t: string; box: unknown } | undefined;
+/** What a key command's call sets in the echo (pdfedit.ts `refSet`): its text, `sure` false for a guess. */
+type RefSet = { t: string; sure: boolean };
+/** A typeset row as `satex/typeset` sends it, the parts `refFacts` reads. */
+type RefRow = { path?: string; marked?: string; detail?: string; keys?: { at: number; key: string; kind: string; role?: string }[]; sites?: { at: number; line: number; col: number; path?: string }[]; origins?: { at: number; line?: number; source?: string }[] };
+type RefFacts = { calls: Map<string, string>; shapes: Map<string, { g: number[]; pre: string; post: string } | false>; kinds: Map<string, string>; defs: Set<string>; labels: Map<string, string[]>; bib: Map<string, string[]>; undef: string };
 type Flow<P> = { rows: { x: number; from: number; dy: number; par: boolean; out: (P & { x: number })[] }[]; freed: number[] };
 declare global {
   interface Window {
@@ -54,6 +65,7 @@ declare global {
       sender<V>(send: (v: V) => Promise<boolean>): { put(v: V): void; flush(): Promise<void> };
       typed(text: string, at: number, c: string, inline?: string, smart?: boolean, fresh?: [number, number] | null): [number, number, string, number];
       erased(text: string, at: number, back: boolean, fresh?: [number, number] | null): [number, number];
+      cluster(text: string, at: number, back: boolean): number;
       checked(text: string, edit: [number, number, string, number?], o?: object): string | null;
       naming(text: string, at: number, fresh?: [number, number] | null): boolean;
       entries(texts: Record<string, string>, root: string, kind: string): [string, number, number, number][];
@@ -67,6 +79,11 @@ declare global {
       scan(text: string, from: number, to: number, st: object, out?: { s: number; e: number; t: string }[]): { math: string; groups: [number, string][] };
       start(): object;
       mathAt(text: string, at: number, kind: string, inline?: string): [number, number, string, number];
+      callAround(text: string, at: number): { name: string; from: number; open: number; close: number } | null;
+      styleAt(text: string, at: number): { it: boolean | null; bf: boolean | null; tt: boolean | null; size: number | null };
+      leave(text: string, at: number, step: number): number | null;
+      wordStep(text: string, at: number, step: number, why: (from: number, to: number) => string | null): number;
+      toggle(text: string, at: number, cmd: string): [number, number, string, number];
       displayEnd(text: string, at: number): boolean;
       onRow(v: Word, r: Word): boolean;
       run(line: Word[], w: Word, back?: boolean): Word[];
@@ -78,27 +95,34 @@ declare global {
       cells(text: string, at: number): { rows: [number, number][][]; r: number; c: number } | null;
       cellStep(text: string, at: number, dir: number): number | null;
       rowAfter(text: string, at: number): [number, number, string, number] | null;
+      tableOp(T: any, s: any, op: TableOp): boolean;
       verbatimAt(text: string, at: number): Verb | null;
       columns(boxes: Box[], file: string, table: Table, tables: Table[], words?: Word[]): (Placed & { approx?: boolean; measured?: boolean })[];
       measure(words: Word[], box: Box, n: number, aligns?: string): ([number, number] | null)[];
+      tableShift(words: Word[], box: Box, cols: Placed[], aligns: string, at: Word, nw: number, centered?: boolean): { k: number; a: number; delta: number; s: number; g: number; kl: number; x: (v: number) => number; left: number; own: Word[]; col: Word[]; dx: Map<Word, number>; rows: [number, number][] } | null;
       snapWidth(text: string | null, was: number, now: number, line: number, fine: boolean, conv?: { unit: string; dec: number }): string | null;
       widthBp(text: string, line: number): number | null;
       respec(align: string, width: string | null, spec?: string, h?: string): Respec | null;
       halign(spec: string): string;
-      padding(text: string, begin: number, env: string): Spacing & { name: string };
+      padding(text: string, begin: number, env: string): (Spacing & { name: string }) | null;
       gap(text: string, prev: number, next: number): Spacing | null;
       HALIGN: Record<string, string>;
       wordAt(text: string, at: number): [number, string] | null;
       argAt(text: string, name: string, line: number): number | null;
       afterCall(text: string, at: number): number | null;
+      callStart(text: string, end: number): number | null;
       apart<B extends Flat>(boxes: B[]): B[];
       relaid(row: [number, number, string][], k: number, now: string, width: (s: string) => number): [number, number, string][];
       reflow<P extends Piece>(pieces: P[], x0: number, line: Line<P>): Flow<P>;
-      prose(raw: string): Prose[];
+      prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer?: string[], sym?: (name: string) => Spelled): Prose[];
+      refFacts(rows: RefRow[], textOf: (path: string) => string | null, aux: string[]): RefFacts;
+      refSet(f: RefFacts, cmd: string, arg: string, labelled: (key: string) => boolean): RefSet;
+      auxLabels(aux: string[]): { labels: Map<string, string[]>; bib: Map<string, string[]> };
       hunks(was: string, now: string, max?: number): [number, number, string][] | null;
       fit(pieces: Piece[], first: number, width: number, tolerance?: number): { breaks: number[]; ratios: number[] } | null;
       glue(before: string, space: number): { gap: number; st: number; sh: number };
       centered(box: [number, number], row: [number, number], growth: number): number;
+      centeredAt(text: string, at: number): boolean;
       tokens(text: string, from: number, to: number): Tok[];
       unset(text: string, from: number, to: number): string;
       aligned(toks: string[], words: string[]): number[];
@@ -207,6 +231,61 @@ declare global {
     }
     return out;
   }
+  /** A table laid out again with one cell's ink `nw` bp wide: the cell of word `at` in an `l`, `c` or `r` column (`aligns`,
+   * a letter a column) of the table in `box`, its columns' places `cols` (columns). TeX sets a column as wide as its
+   * widest cell (tex.web § 801), so the column grows or shrinks by `delta`, the columns after it move by that, the
+   * column's other cells by its alignment's share (`a`: 0, ½, 1), a `centered` table by half of it back (`s`).
+   * A span (`\multicolumn`: a cell's words over two columns or more) counts for no column; one wider than its columns
+   * widens the last (§ 801), so a typed span is column `k`'s cell by what it needs past the columns before. A span keeps
+   * its place in its columns (left, centre or right, as the page sets it): its share of what they grow by.
+   * The cut `g` right of the column (in its padding, before a rule) is where the rules stretch; `x(v)` moves an edge.
+   * `left`: the edited cell's new left edge, `own` its words, `col` the words drawn again (the column's other cells and
+   * every span), `dx` every other word's move, `rows` the rows' bands. Null for another column type (`p`, `X`: their
+   * width is not their cells') or a word outside the table. */
+  function tableShift(words: Word[], box: Box, cols: Placed[], aligns: string, at: Word, nw: number, centered = false) {
+    const inside = words.filter((w) => w[0] === box.page && w[1] >= box.x - 1 && w[3] <= box.x + box.w + 1 && w[4] >= box.y - box.h - 1 && w[4] <= box.y + box.d + 1);
+    at = inside.find((w) => w[1] === at[1] && w[4] === at[4] && w[5] === at[5]) ?? at;
+    if (!inside.includes(at) || /X/.test(aligns) || !cols.length) return null;
+    const rows: Word[][] = [];
+    for (const w of [...inside].sort((p, q) => p[4] - q[4])) { const r = rows.find((r) => Math.abs(r[0]![4] - w[4]) < 2); if (r) r.push(w); else rows.push([w]); }
+    // a row's runs of words (a cell's), apart by more than a word space (measure's GAP); a run over two columns is a span
+    const span = new Map<Word, { i: number; j: number; l: number; r: number; run: Word[] }>();
+    for (const r of rows) {
+      const runs: Word[][] = [];
+      for (const w of [...r].sort((p, q) => p[1] - q[1])) { const last = runs.at(-1); if (last && w[1] - last.at(-1)![3] <= 7) last.push(w); else runs.push([w]); }
+      for (const run of runs) {
+        const l = run[0]![1], rr = Math.max(...run.map((w) => w[3])), hit = cols.filter((c) => rr > c.x + 1 && l < c.x + c.w - 1).map((c) => c.k);
+        if (hit.length > 1) for (const w of run) span.set(w, { i: Math.min(...hit), j: Math.max(...hit), l, r: rr, run });
+      }
+    }
+    const colOf = (w: Word) => { const m = (w[1] + w[3]) / 2; return [...cols].sort((p, q) => Math.max(p.x - m, m - p.x - p.w) - Math.max(q.x - m, m - q.x - q.w))[0]?.k ?? -1; };
+    const sp = span.get(at), k = sp ? sp.j : colOf(at), a = ({ l: 0, c: 0.5, r: 1 } as Record<string, number>)[aligns[k] ?? ''];
+    if (a == null) return null;
+    const of = new Map(inside.map((w) => [w, span.has(w) ? -1 : colOf(w)])), mine = rows.find((r) => r.includes(at))!;
+    const own = sp ? sp.run : mine.filter((w) => of.get(w) === k);
+    const ink = rows.map((r) => r.filter((w) => of.get(w) === k && !own.includes(w))).filter((c) => c.length), place = cols.find((c) => c.k === k)!;
+    const width = (c: Word[]) => Math.max(...c.map((w) => w[3])) - Math.min(...c.map((w) => w[1]));
+    const all = [...ink.flat(), ...(sp ? [] : own)], L = all.length ? Math.min(...all.map((w) => w[1])) : place.x, R = all.length ? Math.max(...all.map((w) => w[3])) : place.x + place.w;
+    // a span needs from column k what it is wider than the columns before it (from the span's first column's left)
+    const before = sp ? L - (cols.find((c) => c.k === sp.i)?.x ?? L) : 0, need = (n: number) => sp ? n - before : n;
+    const cells = Math.max(0, ...ink.map(width)), oldW = Math.max(R - L, need(sp ? sp.r - sp.l : 0)), newW = Math.max(cells, need(nw)), delta = newW - oldW;
+    const s = centered ? -delta / 2 : 0;
+    const next = Math.min(box.x + box.w, ...inside.filter((w) => of.get(w)! > k).map((w) => w[1])), prev = Math.max(box.x, ...inside.filter((w) => of.get(w)! < k && of.get(w)! >= 0).map((w) => w[3]));
+    const g = R + Math.min(1, Math.max(0, (next - R) / 4)), kl = L - Math.min(1, Math.max(0, (L - prev) / 4)), x = (v: number) => v + s + (v > (kl + g) / 2 ? delta : 0);
+    // a span's share: where it stands in its columns' room (its first's left to its last's right), of what that grows by
+    const lo = (q: { i: number; l: number }) => cols.find((c) => c.k === q.i)?.x ?? q.l;
+    const side = (l: number, r: number, a0: number, b0: number) => l - a0 < 1 ? 0 : b0 - r < 1 ? 1 : 0.5;
+    const share = (q: { i: number; j: number; l: number; r: number }) => {
+      if (q.j < k || q.i > k) return q.i > k ? delta : 0;
+      const c = cols.find((c) => c.k === q.j), hi = q.j === k ? L + oldW : c ? c.x + c.w : q.r;
+      return side(q.l, q.r, lo(q), hi) * delta;
+    };
+    const dx = new Map<Word, number>();
+    for (const w of inside) if (!own.includes(w)) { const j = of.get(w)!, q = span.get(w); dx.set(w, s + (q ? share(q) : j < k ? 0 : j > k ? delta : a * delta)); }
+    const bands = rows.map((r) => [Math.min(...r.map((w) => w[2])), Math.max(...r.map((w) => w[4]))] as [number, number]);
+    const left = sp ? lo(sp) + s + side(sp.l, sp.r, lo(sp), lo(sp) + before + oldW) * (before + newW - nw) : L + s + a * (newW - nw);
+    return { k, a, delta, s, g, kl, x, left, own, col: inside.filter((w) => !own.includes(w) && (of.get(w) === k || span.has(w))), dx, rows: bands };
+  }
   /** A paragraph column's horizontal alignment and the declaration array's `>{…}` puts before each of its cells
    * (`\arraybackslash` gives `\\` back its row end): `j` justified, a plain `p`. One table, read and written. */
   const HALIGN: Record<string, string> = { j: '', l: '\\raggedright', c: '\\centering', r: '\\raggedleft' };
@@ -245,7 +324,7 @@ declare global {
   /** A table's own column padding, `\setlength` of `\tabcolsep` (`\arraycolsep` for `array`) right before its
    * `\begin` at `begin`: what it is (null: none, the document's), and the edits that set it to `v` (null: drop it).
    * The setting stays local: inside the environment the table sits in, else in a `{…}` group written around the
-   * table, as a declaration inside a group is undone at its end (tex.web § 282). */
+   * table, as a declaration inside a group is undone at its end (tex.web § 282). Null where neither exists. */
   function padding(text: string, begin: number, env: string) {
     const name = env === 'array' ? 'arraycolsep' : 'tabcolsep', head = text.slice(0, begin);
     const indent = /[ \t]*$/.exec(head)![0], set = (v: string, open: string) => `${open}\\setlength{\\${name}}{${v}}${open && '%'}\n${indent}`;
@@ -259,6 +338,8 @@ declare global {
     re.lastIndex = begin;
     let close = -1;
     for (let d = 0, x; close < 0 && (x = re.exec(text));) if (!(d += x[1] === 'begin' ? 1 : -1)) close = x.index + x[0].length;
+    // no `\end` (typed half-way) and no environment around: the group's `}` has no place, the setting would leak
+    if (close < 0 && !grouped) return null;
     const wrapped = !!m?.[1] && text[close] === '}', brace = close >= 0 && (m ? wrapped : !grouped);
     return {
       name, now: m ? m[2].trim() : null,
@@ -409,6 +490,7 @@ declare global {
   /** What follows a row's `\\`: its star and its `[…]` space, each after optional spaces, as `\@ifstar` and
    * `\@ifnextchar` skip them (latex.ltx `\@tabularcr`). */
   const ROWEND = /^(\s*\*)?(\s*\[[^\]]*\])?/;
+  const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
   /** The table `at` stands in: its rows of cells, each cell's text `[from, to]` without the spaces and rules around
    * it, and the row and cell of `at`. Cells part at `&`, rows at `\\`, both at the body's own level (a `{…}`
    * holds its own). Null outside a tabular, array, tabularx, longtable or tabulary body. */
@@ -475,6 +557,66 @@ declare global {
     if (at2) return [at2, at2, `\n${amp} \\\\`, 1];
     return [end, end, ` \\\\\n${amp}`, 4];
   }
+  /** The partial rules (`\cline{a-b}`, `\cmidrule(lr){a-b}`) of table `s`, each range (1-based) renumbered by `fix`;
+   * a rule whose range `fix` makes null goes. */
+  function partial(s: any, fix: (a: number, b: number) => [number, number] | null) {
+    const re = /\\(cline|cmidrule)(\s*\([^)]*\))?\s*\{(\d+)-(\d+)\}/g;
+    const redo = (list: string[]) => list.map((x) => x.replace(re, (_, name, trim = '', a, b) => {
+      const r = fix(+a, +b);
+      return r ? `\\${name}${trim}{${r[0]}-${r[1]}}` : '';
+    })).filter((x) => x.trim());
+    for (const r of s.rows) r.before = redo(r.before);
+    s.after = redo(s.after);
+  }
+  /** Rows `a` and `a + 1` swapped (their cells already): a rule goes with the row above it (`row \\\\ \\hline`), as its
+   * row end (`\\\\[2pt]`) does; the rules over the first row and under the last stay at the table's edges. */
+  function rulesSwap(s: any, a: number) {
+    const A = s.rows[a], B = s.rows[a + 1], C = s.rows[a + 2];
+    if (C) [B.before, C.before] = [C.before, B.before];
+    if (A.end && B.end) [A.end, B.end] = [B.end, A.end];
+    return true;
+  }
+  /** Columns `a` and `a + 1` swapped (their cells and specs already): an inner rule (`|`, `@{…}`) goes with the column
+   * left of it, the table's outer edges stay; a one-column `\\cline`/`\\cmidrule` follows its column. */
+  function sepsSwap(s: any, a: number) {
+    if (a + 2 < s.cols.length) [s.seps[a + 1], s.seps[a + 2]] = [s.seps[a + 2], s.seps[a + 1]];
+    partial(s, (x, y) => x === y && x === a + 1 ? [a + 2, a + 2] : x === y && x === a + 2 ? [a + 1, a + 1] : [x, y]);
+    return true;
+  }
+  /** One structural edit of a table on the dialog's model `T` (dialogs.ts `table`), state `s` changed in place: a row or
+   * column inserted before `at`, the one at `at` deleted, or moved to `to` one step at a time. A new column takes its
+   * neighbour's kind (`X` beside `X`). False, `s` untouched, when refused: the last row or column, a move across a
+   * `\multicolumn` or `\multirow`. Pure: the server's table printer writes `s` back as one edit. */
+  function tableOp(T: any, s: any, op: TableOp): boolean {
+    const row = op.what === 'row', n = row ? s.rows.length : s.cols.length;
+    if (!Number.isInteger(op.at) || op.at < 0 || op.at > n || (op.act !== 'insert' && op.at === n)) return false;
+    if (op.act === 'insert') {
+      if (row) T.insertRow(s, op.at);
+      else {
+        const like = s.cols[op.at > 0 ? op.at - 1 : 0];
+        T.insertCol(s, op.at);
+        if (like) Object.assign(s.cols[op.at], { align: like.align, arg: like.arg });
+        // a rule over the place grows, one after it moves right
+        partial(s, (a, b) => [a > op.at ? a + 1 : a, b > op.at ? b + 1 : b]);
+      }
+      return true;
+    }
+    if (op.act === 'delete') {
+      if (row) return T.deleteRows(s, op.at, op.at);
+      if (!T.deleteCols(s, op.at, op.at)) return false;
+      // a rule over the deleted column alone goes, one reaching over it shrinks, one after it moves left
+      const K = op.at + 1;
+      partial(s, (a, b) => a === K && b === K ? null : [a > K ? a - 1 : a, b >= K ? b - 1 : b]);
+      return true;
+    }
+    const to = op.to ?? -1, d = Math.sign(to - op.at);
+    if (to < 0 || to >= n || !d) return false;
+    const was = JSON.stringify(s), back = () => { Object.assign(s, JSON.parse(was)); return false; };
+    // a `\multirow` stands over rows: a row move into or out of it is refused, as the dialog's column move across a span is
+    const tall = (k: number) => T.layout(s)[k]?.some((o: { rows: number }) => o.rows > 1);
+    for (let k = op.at; k !== to; k += d) if (row ? tall(k) || tall(k + d) || !T.moveRow(s, k, d) || !rulesSwap(s, Math.min(k, k + d)) : !T.moveCol(s, k, d) || !sepsSwap(s, Math.min(k, k + d))) return back();
+    return true;
+  }
   /** A structural token of the source: `{`, `}`, a command's option `[` and `]`, `$`, `$$`, `&`, `#`, `_`, `^`, `par` (a blank line), `%` (a comment),
    * `verb` (a verbatim body), `\begin{env}`/`\end{env}` with its name, or a control sequence as written (`\emph`, `\%`). */
   type Mark = { s: number; e: number; t: string };
@@ -527,6 +669,9 @@ declare global {
     }
     return st;
   }
+  /** Commands whose argument may hold paragraphs (LaTeX reads it `\long`: \@footnotetext, \@xmpar): Enter there
+   * starts a paragraph inside the argument. */
+  const LONG = /^(footnote|footnotetext|marginpar)$/;
   /** Groups whose text is a name, not output: keys, files, packages, environments' arguments. */
   const KEYS = /^(label|ref|eqref|pageref|autoref|[cC]ref|nameref|cite\w*|nocite|input|include|includegraphics|usepackage|documentclass|bibliography(style)?|url)$/;
   /** Why `text`'s characters `from..to` may not be edited as plain text, null when they may. The file is read up to
@@ -599,8 +744,10 @@ declare global {
     const head = scan(text, 0, L, start()), ctx = scan(text, L, a, copy(head)), l = ctx.last;
     if (l && l.t === '%' && l.s < a && l.e >= a) return 'it is a comment';
     const g = ctx.groups.at(-1)?.[1] ?? '', gAt = ctx.groups.at(-1)?.[0] ?? -1;
-    // an environment's name being typed (its `\\begin{` fresh) takes letters: Enter completes the pair (broken)
-    const naming = g === 'begin' && !!f && f[0] <= gAt && gAt < f[1] && /^[A-Za-z*@]*$/.test(body);
+    // a name being typed (its group's `{` typed since the caret was put) takes a name's characters: an environment's
+    // letters (Enter completes the pair, broken), a key's (`\\ref{sec:a}`, `\\cite{a,b}`)
+    const fresh = !!f && f[0] <= gAt && gAt < f[1];
+    const naming = fresh && (g === 'begin' ? /^[A-Za-z*@]*$/.test(body) : KEYS.test(g) && /^[^{}\\%#\n]*$/.test(body));
     if (!naming && (KEYS.test(g) || /^(begin|end)$/.test(g))) return g === 'begin' || g === 'end' ? "it is an environment's argument" : 'it is a key (a label, a reference, a citation)';
     if (ctx.opt != null && (KEYS.test(ctx.opt) || /^(begin|end)$/.test(ctx.opt))) return "it is a command's option";
     const m1: Mark[] = [], m2: Mark[] = [];
@@ -632,7 +779,8 @@ declare global {
     }
     for (const m of added) {
       // a blank line joined to the line break beside it (Enter at a line's end) is a new one, its spaces no markup
-      if (m.t === 'par' && !o.free && (ctx.groups.length || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${g ? `\\${g}{…}` : 'a group'}: Shift+Enter breaks the line`;
+      const short = ctx.groups.findLast(([, n]) => !LONG.test(n));
+      if (m.t === 'par' && !o.free && (short || ctx.math)) return ctx.math ? 'a paragraph cannot end in math' : `a paragraph cannot end inside ${short![1] ? `\\${short![1]}{…}` : 'a group'}: Shift+Enter breaks the line`;
       if (m.t === 'par') continue;
       if (!ownNow(m)) return m.t[0] === '\\' ? `it would change a command's name (${m.t})` : 'it would change the markup around it';
       if (m.t === '%') return 'it would start a comment';
@@ -668,9 +816,17 @@ declare global {
     const re = new RegExp(`(?<![\\p{L}\\p{N}\\\\])${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'gu');
     return [...line.matchAll(re)].map((m) => [m.index, m.index + bare.length]);
   }
-  /** A character typed as text, written the LaTeX way so the output shows it: `_` as `\_`, `\` as `\textbackslash{}`. */
-  const ESCAPED: Record<string, string> = { '\\': '\\textbackslash{}', '~': '\\textasciitilde{}', '^': '\\textasciicircum{}' };
-  const escaped = (c: string) => /[\\&%#_{}~^]/.test(c) ? ESCAPED[c] ?? `\\${c}` : c;
+  /** A character typed (or pasted) into prose, written as what a person typing there means. The rule, by what each
+   * special character does in a paragraph:
+   * - `~` is a tie (`See~\\ref{…}`), what a LaTeX author types it for: kept. A printed tilde is `\\textasciitilde`.
+   * - `\\` starts a command and `$` opens math (`typed` handles both before this).
+   * - `%` (a comment: the rest of the line lost), `&` (an alignment tab: an error), `#` (a parameter: an error), `_`
+   *   and `^` (scripts: math only) would silently drop text or stop the build, so they mean the printed character:
+   *   `\\%`, `\\&`, `\\#`, `\\_`, `\\textasciicircum{}`.
+   * - `{` and `}` outside a command's argument would group or unbalance the text: the printed braces `\\{`, `\\}`
+   *   (an argument's `{` after a command typed since the caret was put is `typed`'s). */
+  const ESCAPED: Record<string, string> = { '\\': '\\textbackslash{}', '^': '\\textasciicircum{}' };
+  const escaped = (c: string) => /[\\&%#_{}^]/.test(c) ? ESCAPED[c] ?? `\\${c}` : c;
   /** The inline math delimiters `text` uses most: `\(` where it has more `\(` than `$`, else `$`. */
   const inlineOf = (text: string) => (text.match(/\\\(/g)?.length ?? 0) > (text.match(/(?<![\\$])\$(?!\$)/g)?.length ?? 0) ? '\\(' : '$';
   /** A command name ending at `at` (an even run of backslashes before its `\`): its offset, else -1. */
@@ -757,7 +913,9 @@ declare global {
   function mathAt(text: string, at: number, kind: string, inline = '\\('): [number, number, string, number] {
     if (scan(text, 0, at, start()).math) return [at, at, '', 0];
     if (kind === 'inline') return typed(text, at, '$', inline);
-    const [o, c] = kind === 'align' ? ['\\begin{align*}\n', '\n\\end{align*}'] : ['\\[', '\\]'];
+    if (kind !== 'align') return [at, at, '\\[\\]', 2];
+    // an environment on lines of its own; never an empty line in it (a blank line is \par: "Paragraph ended before \align* was complete")
+    const o = `${at && text[at - 1] !== '\n' ? '\n' : ''}\\begin{align*}\n  `, c = `\\end{align*}${/^[ \t]*(\n|$)/.test(text.slice(at)) ? '' : '\n'}`;
     return [at, at, o + c, o.length];
   }
   /** What Ctrl+Backspace (`back`) or Ctrl+Delete takes: the blanks next to the caret and the word past them, as far as
@@ -772,9 +930,19 @@ declare global {
   /** What Backspace (`back`) or Delete takes at `at`: `[from, to]`, an escape or an empty pair (`$ $`, `{}`, `\(\)`)
    * whole, a formula whose last character goes with it, at a formula's `\)` (`\(` for Delete) its character inside,
    * a `\` typed with the space that kept it off a word. */
+  /** The offset one character the reader sees (a grapheme cluster, UAX #29) before or after `at`: never half a
+   * surrogate pair, a letter without its accent, half a flag. */
+  function cluster(text: string, at: number, back: boolean): number {
+    const a = Math.max(0, at - 64);
+    for (const g of GRAPHEMES.segment(text.slice(a, at + 64))) {
+      const from = a + g.index, to = from + g.segment.length;
+      if (back ? from < at && at <= to : from <= at && at < to) return back ? from : to;
+    }
+    return back ? Math.max(0, at - 1) : Math.min(text.length, at + 1);
+  }
   function erased(text: string, at: number, back: boolean, fresh: [number, number] | null = null): [number, number] {
     const v = verbatimAt(text, at);
-    if (v) return back ? (at > v.from ? [at - 1, at] : [at, at]) : (at < v.to ? [at, at + 1] : [at, at]);
+    if (v) return back ? (at > v.from ? [Math.max(v.from, cluster(text, at, true)), at] : [at, at]) : (at < v.to ? [at, Math.min(v.to, cluster(text, at, false))] : [at, at]);
     for (const pair of ['{}', '\\(\\)', '\\[\\]']) {
       const h = pair.length / 2;
       if (text.slice(at - h, at + h) === pair) return [at - h, at + h];
@@ -787,7 +955,8 @@ declare global {
     // the same at an inline `$`: its closer before the caret (Backspace), its opener after it (Delete)
     if (back && text[at - 1] === '$' && text[at - 2] !== '$' && !odd(at - 2) && scan(text, 0, at - 1, start()).math === '$') return erased(text, at - 1, true, fresh);
     if (!back && text[at] === '$' && text[at + 1] !== '$' && !odd(at - 1) && !scan(text, 0, at, start()).math) return erased(text, at + 1, false, fresh);
-    let p = back ? at - 1 : at, q = back ? at : at + 1;
+    let p = back ? cluster(text, at, true) : at, q = back ? at : cluster(text, at, false);
+    const one = (a: number, b: number) => b > a && cluster(text, b, true) === a;
     const esc = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|\\[^A-Za-z@\\])/y;
     if (back) {
       const m = /(?:\\(?:textbackslash|textasciitilde|textasciicircum)\{\}|(?:^|[^\\])(?:\\\\)*\\[^A-Za-z@\\])$/.exec(text.slice(Math.max(0, at - 20), at));
@@ -799,7 +968,7 @@ declare global {
       if (m) q = at + m[0].length;
     }
     // the only character of a formula takes the formula with it
-    if (q - p === 1) {
+    if (one(p, q)) {
       if (text[p - 1] === '$' && text[q] === '$' && text[p - 2] !== '\\' && scan(text, 0, p, start()).math === '$') return [p - 1, q + 1];
       for (const [o, c] of [['\\(', '\\)'], ['\\[', '\\]']]) if (text.slice(p - 2, p) === o && text.startsWith(c, q)) return [p - 2, q + 2];
     }
@@ -815,8 +984,39 @@ declare global {
     const v = verbatimAt(text, at);
     if (v) return v.block ? [at, at, '\n', 1] : 'inline verbatim holds one line';
     if (!shift && cells(text, at)) return rowAfter(text, at) ?? 'no row here';
-    const br = shift || scan(text, 0, at, start()).math ? '\n' : '\n\n';
+    const st = scan(text, 0, at, start()), br = shift || st.math ? '\n' : '\n\n';
+    // an inline formula stays on one source line: Enter at its end steps out past its closer, inside it does nothing
+    if (st.math === '$' || st.math === '\\(') { const m = /^[ \t]*(?:\\\)|\$)/.exec(text.slice(at)); return m ? [at, at, '', m[0].length] : 'an inline formula holds one line: Enter at its end leaves it'; }
+    if (shift || st.math) return [at, at, br, br.length];
+    // at the end of a command's argument (`\\textbf{world|}`, only spaces before its `}`): the new paragraph starts
+    // after the command, the argument keeps its text (a paragraph inside it is TeX's "Paragraph ended before … was
+    // complete"); nested arguments ended alike are left together
+    let end = at;
+    // (a `\long` command's argument keeps the new paragraph: `\footnote{text|}`)
+    for (let k = st.groups.length - 1; k >= 0 && st.groups[k]![1] && !LONG.test(st.groups[k]![1]); k--) {
+      let j = end;
+      while (text[j] === ' ' || text[j] === '\t') j++;
+      if (text[j] !== '}') break;
+      end = j + 1;
+    }
+    if (end > at) return [end, end, br, br.length];
+    // the last line of an item in a list (the rest of the source line blank): the next item, as a list's Enter does
+    const list = listAt(text, at), rest = text.slice(at, (text.indexOf('\n', at) + 1 || text.length + 1) - 1);
+    if (list && !rest.trim()) { const item = `\n\\item${list === 'description' ? '[]' : ''} `; return [at, at, item, item.length]; }
     return [at, at, br, br.length];
+  }
+  /** The list environment (`itemize`, `enumerate`, `description`) innermost around offset `at`, from its `\\begin`
+   * after its first `\\item`, else null: the environments opened and not closed before `at`. */
+  function listAt(text: string, at: number): string | null {
+    const open: string[] = [];
+    for (const m of text.slice(0, at).matchAll(/(?<!\\)%[^\n]*|\\(begin|end)\s*\{([^{}]*)\}/g)) {
+      if (!m[1]) continue;
+      if (m[1] === 'begin') open.push(m[2]!); else if (open.at(-1) === m[2]) open.pop();
+    }
+    const env = open.at(-1) ?? '';
+    if (!/^(itemize|enumerate|description)$/.test(env)) return null;
+    const b = text.lastIndexOf(`\\begin{${env}}`, at);
+    return /\\item(?![A-Za-z@])/.test(text.slice(b, at)) ? env : null;
   }
   /** A key at the caret (`Backspace`, `Delete`, `Enter`, `Shift+Enter` or a character): the edit it makes, checked,
    * or why it makes none. */
@@ -973,6 +1173,16 @@ declare global {
       e = i + 1;
     }
   }
+  /** Where the call whose last character is `text[end - 1]` starts (its `\\`): back over its brace and bracket
+   * arguments to the name (`\\greet{world}`, `\\model`). The run sets a call's output at that character (the last
+   * token TeX read), so it bounds the output in the source. Null where no call ends there (text, a group no name opens). */
+  function callStart(text: string, end: number): number | null {
+    const open = (at: number, o: string, c: string) => { for (let d = 0, i = at; i >= 0; i--) { if (text[i] === c && text[i - 1] !== '\\') d++; else if (text[i] === o && text[i - 1] !== '\\' && --d === 0) return i; } return -1; };
+    let a = end;
+    while (a > 0 && /[}\]]/.test(text[a - 1]!) && text[a - 2] !== '\\') a = text[a - 1] === '}' ? open(a - 1, '{', '}') : open(a - 1, '[', ']');
+    const m = a > 0 ? /\\[A-Za-z@]+\*?$/.exec(text.slice(Math.max(0, a - 64), a)) : null;
+    return m ? a - m[0].length : null;
+  }
   /** Where the first argument of a use of macro `name` (`\greet`) starts, on line `line` (1-based) or a neighbour.
    * None for a macro the text defines without parameters: the `{}` of `\model{}` is an empty group, no argument. */
   function argAt(text: string, name: string, line: number): number | null {
@@ -1031,7 +1241,7 @@ declare global {
     // prefix sums of widths, stretch and shrink, the glue before piece j counted from j on
     const W = [0], S = [0], H = [0];
     pieces.forEach((q, j) => { W.push(W[j]! + q.n + (j ? q.gap : 0)); S.push(S[j]! + (j ? st(q) : 0)); H.push(H[j]! + (j ? sh(q) : 0)); });
-    const can = (j: number) => j > 0 && (pieces[j]!.gap > 0 || !!pieces[j - 1]!.hy);
+    const can = (j: number) => j > 0 && (pieces[j]!.gap > 0 && !pieces[j]!.mg || !!pieces[j - 1]!.hy || pieces[j - 1]!.pen != null);
     // best[j]: least demerits of lines covering pieces 0..j-1 with a break before j (j = n: the end)
     const best: number[] = Array(n + 1).fill(Infinity), from: number[] = Array(n + 1).fill(-1), ratio: number[] = Array(n + 1).fill(0);
     best[0] = 0;
@@ -1048,7 +1258,9 @@ declare global {
         if (r < -1) continue;
         const bad = Math.min(10000, 100 * Math.abs(r) ** 3);
         if (bad > tolerance) continue;
-        const d = best[i]! + (10 + bad) ** 2 + (pieces[j - 1]?.hy && !last ? 50 ** 2 : 0);
+        // TeX's demerits (tex.web §859): a break's penalty squared, a hyphen's \\hyphenpenalty 50
+        const pen = last ? 0 : pieces[j - 1]?.hy ? 50 : Math.max(0, pieces[j - 1]?.pen ?? 0);
+        const d = best[i]! + (10 + bad) ** 2 + pen ** 2;
         if (d < best[j]!) { best[j] = d; from[j] = i; ratio[j] = r; }
       }
     }
@@ -1110,12 +1322,38 @@ declare global {
     let ri = 0, x = x0, i = 0, after: number | null = null, sunk = false, gaps = 0;
     const shrink = line.shrink ?? 0;
     const take = () => { const r = line.rows[ri]!; queue.push(...r.pieces); return { x: r.x, from: ri++ }; };
+    // (`fit`) a paragraph typed last (Enter, then its words to the end: no page row after it, no display, no `\\\\`) is set by
+    // TeX's total fit like any other, its lines justified, a formula broken at its penalties; greedy where none fits
+    const lastPar = pieces.findLastIndex((q) => q.par), tail = line.fit && lastPar > 0 && !line.rows.length ? pieces.slice(lastPar) : null;
+    const tailFit = tail && !tail.some((q, j) => q.disp != null || q.brk || j && q.par) ? fit(tail, line.right - line.left - line.indent, line.right - line.left) : null;
     const lay = () => {
       for (; i < queue.length; i++) {
         const q = queue[i]!;
         let r = rows.at(-1)!;
+        if (tailFit && i === lastPar) {
+          const starts = [0, ...tailFit.breaks];
+          starts.forEach((a, li) => {
+            const b = starts[li + 1] ?? tail!.length, out: (P & { x: number })[] = [];
+            let x = line.left + (li ? 0 : line.indent);
+            const ratio = tailFit.ratios[li]!;
+            for (let j = a; j < b; j++) {
+              const p = tail![j] as P;
+              if (j > a) x += p.gap + ratio * (ratio > 0 ? p.st ?? p.gap / 2 : p.sh ?? p.gap / 3);
+              out.push({ ...p, x });
+              x += p.n;
+            }
+            const end = tail![b - 1];
+            if (b < tail!.length && end?.hy) out.push({ gap: 0, n: end.hw ?? 0, t: '-', x } as unknown as P & { x: number });
+            rows.push({ x: line.left + (li ? 0 : line.indent), from: -1, dy: line.skip + (li ? 0 : after ?? line.parskip), par: !li, out });
+          });
+          sunk = true;
+          i = queue.length;
+          break;
+        }
         const own = q.disp != null || after != null;
-        if (own || r.out.length && (q.par || q.brk || q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
+        // (a formula breaks only after its relations and binary operators: never before a part its own space precedes)
+        const bound = !q.mg || queue[i - 1]?.pen != null;
+        if (own || r.out.length && (q.par || q.brk || bound && q.n > 0 && x + q.gap + q.n - shrink * (gaps + q.gap) > line.right + 0.5)) {
           // a `\\\\` breaks here whatever room is left: a new row at the margin, no indent nor \\parskip, no page row taken
           sunk ||= own || !!q.brk;
           const s = !q.par && !sunk && (slots.shift() ?? (ri < line.rows.length ? take() : null));
@@ -1156,6 +1394,24 @@ declare global {
   }
   /** How far a centered row moves when it grows by `growth`: half of it, for a row as far from both edges of its line
    * box `box` (more than 4 bp, within 2 bp of each other); else 0. */
+  /** Whether the source centers the line at `at`: inside `center`, after `\\centering` in the group or environment in force,
+   * or in a caption's text (a one-line caption is centered). `flushleft`, `flushright`, `minipage`, `\\raggedright` and
+   * `\\raggedleft` end it. Comments are skipped. The typing echo moves a centered row by half its change. */
+  function centeredAt(text: string, at: number): boolean {
+    const s = text.slice(0, at).replace(/(^|[^\\])%.*$/gm, (m, a) => a + ' '.repeat(m.length - a.length));
+    const stack: { env?: string; on: boolean }[] = [{ on: false }];
+    const re = /\\(begin|end)\s*\{([^{}]*)\}|\\(centering|raggedright|raggedleft)(?![A-Za-z@])|\\caption\*?\s*(?:\[[^\]]*\])?\s*\{|\\[{}]|\\[A-Za-z@]+|[{}]/g;
+    for (let m; (m = re.exec(s));) {
+      const top = stack[stack.length - 1]!, t = m[0];
+      if (m[1] === 'begin') stack.push({ env: m[2], on: m[2] === 'center' ? true : /^(flushleft|flushright|minipage|tabular\*?|tabularx|verbatim)$/.test(m[2]!) ? false : top.on });
+      else if (m[1] === 'end') { const k = stack.map((f) => f.env).lastIndexOf(m[2]); if (k > 0) stack.length = k; }
+      else if (m[3]) top.on = m[3] === 'centering';
+      else if (/^\\caption/.test(t)) stack.push({ on: true });
+      else if (t === '{') stack.push({ on: top.on });
+      else if (t === '}' && stack.length > 1 && !top.env) stack.pop();
+    }
+    return stack[stack.length - 1]!.on;
+  }
   function centered(box: [number, number], row: [number, number], growth: number): number {
     const l = row[0] - box[0], r = box[1] - row[1];
     return l > 4 && Math.abs(l - r) < 2 ? growth / 2 : 0;
@@ -1197,9 +1453,10 @@ declare global {
    * index of the page word that shows it, -1 where none does. Equal spellings pair up in order; one missing or extra
    * on either side (a macro's text, a dropped command) is skipped by looking a few words ahead; a word the page
    * hyphenated across rows (`consec-` `tetur`) is its first part; one that starts the other (`here.\footnote{A` is
-   * `here.A`, the page sets `here.` and the `A` in the footnote) pairs with it before looking ahead. */
+   * `here.A`, the page sets `here.` and the `A` in the footnote) pairs with it before looking ahead. Case aside: TeX
+   * sets a `\\MakeUppercase`d title (amsart's) in capitals its source spells in small letters. */
   function aligned(toks: string[], words: string[]): number[] {
-    const n = (t: string) => t.normalize('NFKC').replace(/[\u2010-\u2014]/g, '-');
+    const n = (t: string) => t.normalize('NFKC').replace(/[\u2010-\u2014]/g, '-').toLowerCase();
     const walk = (A: string[], B: string[], hyph: boolean) => {
       const out = A.map(() => -1), eq = (i: number, j: number) => A[i] === B[j] || hyph && B[j]!.endsWith('-') && j + 1 < B.length && A[i] === B[j]!.slice(0, -1) + B[j + 1];
       const LOOK = 4;
@@ -1327,8 +1584,12 @@ declare global {
    * words `texts` (in reading order, spaces left out too): `[word, from, to]` per word they cover, by their place in
    * the row, never by their spelling alone. The run is found with as much of its row around it as the page spells
    * the same and only once (math the page writes otherwise, `−` for `-`, stays outside); null where none is unique. */
+  const located = new WeakMap<string[], { all: string; starts: number[] }>();
   function locate(texts: string[], row: string, a: number, b: number): [number, number, number][] | null {
-    const all = texts.join(''), starts = texts.map((_, i) => texts.slice(0, i).join('').length);
+    // the words joined and where each starts, once per word list: every run of every row on a page asks with the same list
+    let joined = located.get(texts);
+    if (!joined) { let n = 0; located.set(texts, joined = { all: texts.join(''), starts: texts.map((t) => (n += t.length) - t.length) }); }
+    const { all, starts } = joined;
     for (let reach = 16; reach >= 0; reach = reach ? reach >> 1 : -1) {
       for (const [l, r] of [[reach, reach], [reach, 0], [0, reach]] as const) {
         const lo = Math.max(0, a - l), probe = row.slice(lo, b + 1 + r), at = all.indexOf(probe);
@@ -1400,24 +1661,184 @@ declare global {
     }
     return out.map((n, k) => [n, k] as const).sort((p, q) => p[0][2] - q[0][2] || p[1] - q[1]).map(([n]) => [n[0], n[1]]);
   }
+  /** A key command's arguments from `at` (right after its name): its options, then its braced key argument `arg`,
+   * `end` past its closing brace; null while the brace is not closed yet. */
+  function keyCall(raw: string, at: number): { arg: string; end: number } | null {
+    const m = /^\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)\}/.exec(raw.slice(at));
+    return m ? { arg: m[1]!, end: at + m[0].length } : null;
+  }
+  /** The `\\newlabel{key}{{number}{page}…}` and `\\bibcite{key}{label}` lines of `aux` (the run's own aux files, never
+   * LaTeX's): each key's groups. */
+  function auxLabels(aux: string[]): { labels: Map<string, string[]>; bib: Map<string, string[]> } {
+    const labels = new Map<string, string[]>(), bib = new Map<string, string[]>();
+    for (const text of aux) for (const line of text.split('\n')) {
+      const m = /^\s*\\(newlabel|bibcite)\s*\{([^{}]*)\}/.exec(line);
+      if (!m) continue;
+      const value = braced(line.slice(m[0].length))[0];
+      if (value == null) continue;
+      const parts = braced(value);
+      (m[1] === 'newlabel' ? labels : bib).set(m[2]!.trim(), parts.length ? parts : [value]);
+    }
+    return { labels, bib };
+  }
+  /** What label `key` names and where, from the run's aux files (`\\newlabel{key}{{number}{page}{title}{anchor}…}`):
+   * `Figure 1 · §2 Methodology · p. 1`. The kind is the anchor's counter (hyperref's `figure.1`), else the key's
+   * prefix by convention (`fig:`); the section is the last one the aux lists for the contents before the label, the
+   * order TeX wrote both in. Empty where the aux names no such label. */
+  function labelWhere(aux: string[], key: string): string {
+    const KIND: Record<string, string> = { figure: 'Figure', table: 'Table', equation: 'Equation', section: 'Section', subsection: 'Section', subsubsection: 'Section', chapter: 'Chapter', part: 'Part', item: 'Item', page: 'Page' };
+    const PREFIX: Record<string, string> = { fig: 'figure', tab: 'table', eq: 'equation', sec: 'section', ssec: 'subsection', chap: 'chapter', ch: 'chapter' };
+    let sec = '';
+    for (const text of aux) for (const line of text.split('\n')) {
+      const toc = /\\contentsline\s*\{(?:chapter|section)\}\{(?:\\numberline\s*\{([^{}]*)\})?([^{}]*)\}/.exec(line);
+      if (toc && /\\@writefile\s*\{toc\}/.test(line)) { sec = `§${toc[1] ? `${toc[1]} ` : ''}${toc[2]!.trim()}`; continue; }
+      const m = /^\s*\\newlabel\s*\{([^{}]*)\}/.exec(line);
+      if (!m || m[1]!.trim() !== key) continue;
+      const parts = braced(braced(line.slice(m[0].length))[0] ?? '');
+      const counter = /^([a-z]+)\./i.exec(parts[3] ?? '')?.[1] ?? PREFIX[/^([a-z]+):/i.exec(key)?.[1]?.toLowerCase() ?? ''] ?? '';
+      const what = KIND[counter] ?? '', num = parts[0] ?? '', own = /section|chapter|part/.test(counter);
+      return [what || num ? `${what}${what && num ? ' ' : ''}${num}` : '', own ? (parts[2] ?? '').trim() : sec, parts[1] ? `p. ${parts[1]}` : ''].filter(Boolean).join(' · ');
+    }
+    return '';
+  }
+  /** The braced groups `text` starts with, spaces between them skipped. */
+  function braced(text: string): string[] {
+    const out: string[] = [];
+    let i = 0;
+    for (;;) {
+      while (/\s/.test(text[i] ?? '')) i++;
+      if (text[i] !== '{') return out;
+      let d = 0, j = i;
+      for (; j < text.length; j++) { const c = text[j]; if (c === '\\') j++; else if (c === '{') d++; else if (c === '}' && !--d) break; }
+      if (j >= text.length) return out;
+      out.push(text.slice(i + 1, j));
+      i = j + 1;
+    }
+  }
+  /** What each key command's call set in the run, learned from its typeset rows (`satex/typeset`'s `keys`, `sites`,
+   * `origins`) over the source texts they were read from (`textOf`), and the labels of its own aux (`auxLabels`):
+   * `calls` the text set per `cmd\0arg`, `shapes` per command which label group it sets and the text around it
+   * (`\\eqref`: `(` and `)`), `false` where its calls disagree, `undef` the run's mark of an undefined key. */
+  function refFacts(rows: RefRow[], textOf: (path: string) => string | null, aux: string[]): RefFacts {
+    const { labels, bib } = auxLabels(aux), calls = new Map<string, string>(), kinds = new Map<string, string>(), defs = new Set<string>();
+    const seen = new Map<string, { g: number[]; pre: string; post: string } | false>();
+    let undef: string | null = null;
+    for (const r of rows) {
+      const plain = (r.marked ?? r.detail ?? '').replace(/\uE000\u0006[^\uE001]*\uE001?/gu, '').replace(/[\uE000\uE001]/gu, ''), sites = r.sites ?? [], origins = r.origins ?? [];
+      const at = <T extends { at: number }>(xs: T[], i: number) => xs.findLast((x) => x.at <= i);
+      // (offsets as playground.js `rowChars` counts them: a math note's class letters and the note marks are none)
+      // a character a macro set (the run read it from library or aux code), not the document's own text
+      const made = (i: number) => { const o = at(origins, i); return !!o && o.line != null && (o.source ?? 'document') !== 'document'; };
+      const uses = (r.keys ?? []).filter((k) => k.role === 'use' || k.role === 'def');
+      for (const [a, ks] of Map.groupBy(uses, (k) => k.at)) {
+        const nextAt = Math.min(...uses.map((k) => k.at).filter((b) => b > a), plain.length);
+        // the call: the reader stands at its closing brace, so the site of the key's first set character ends it
+        let s = a;
+        while (s < nextAt && !made(s) && /\s/.test(plain[s]!)) s++;
+        const site = at(sites, s < nextAt ? s : a), text = site && textOf(site.path ?? r.path ?? '');
+        if (!site || text == null) continue;
+        const col = (i: number) => { const x = at(sites, i); return x && x.line === site.line ? x.col + i - x.at : -1; };
+        const line = text.split('\n')[site.line - 1] ?? '', want = new Set(ks.map((k) => k.key)), end = col(s < nextAt ? s : a);
+        const all = [...line.matchAll(/\\([A-Za-z@]+)\*?\s*(?:\[[^\]]*\]\s*)*\{([^{}]*)\}/g)].filter((c) => c[2]!.split(',').some((k) => want.has(k.trim())));
+        const call = all.filter((c) => c.index + c[0].length <= end).at(-1) ?? all[0];
+        if (!call) continue;
+        const [cmd, arg] = [call[1]!, call[2]!];
+        // what it set: macro output, and the document's text it read inside the call (an option: `p.~2`), spaces
+        // between them too
+        const own = (i: number) => made(i) || col(i) > call.index && col(i) <= call.index + call[0].length;
+        let e = s;
+        while (e < nextAt && (own(e) || /\s/.test(plain[e]!) && e + 1 < nextAt && own(e + 1))) e++;
+        const set = plain.slice(s, e).trim();
+        if (ks[0]!.role === 'def') { defs.add(cmd); continue; }
+        calls.set(`${cmd}\0${arg}`, set);
+        kinds.set(cmd, ks[0]!.kind);
+        const keys = arg.split(',').map((k) => k.trim()), groups = keys.length === 1 ? (ks[0]!.kind === 'cite' ? bib : labels).get(keys[0]!) : null;
+        if (!groups) { if (keys.length === 1 && ks[0]!.kind !== 'cite' && !labels.has(keys[0]!) && set) undef ??= set; continue; }
+        // which group the call set, the text around it: candidates kept per command, narrowed by each call
+        const was = seen.get(cmd);
+        if (was === false) continue;
+        const g = groups.map((v, i) => [v, i] as const).filter(([v]) => v && set.includes(v));
+        const pick = g.find(([v]) => set.indexOf(v) >= 0);
+        if (!pick) { seen.set(cmd, false); continue; }
+        const i = set.indexOf(pick[0]), pre = set.slice(0, i), post = set.slice(i + pick[0].length);
+        const cand = g.filter(([v]) => set.slice(0, set.indexOf(v)) === pre && set.slice(set.indexOf(v) + v.length) === post).map(([, i]) => i);
+        if (!was) seen.set(cmd, { g: cand, pre, post });
+        else if (was.pre !== pre || was.post !== post || !was.g.some((x) => cand.includes(x))) seen.set(cmd, false);
+        else was.g = was.g.filter((x) => cand.includes(x));
+      }
+    }
+    return { calls, shapes: seen, kinds, defs, labels, bib, undef: undef ?? '??' };
+  }
+  /** What `\\cmd{arg}` sets as the run would: the run's own text for this call, else its command's shape over the key's
+   * label, else the label's first group as a guess (`sure` false), `…` for a key the text labels (`labelled`) that the
+   * run has not seen yet, the run's undefined mark for any other key. A `\\label` (a key's definition) sets nothing. */
+  function refSet(f: RefFacts, cmd: string, arg: string, labelled: (key: string) => boolean): RefSet {
+    // a key not typed yet sets nothing yet
+    if (!arg.trim()) return { t: '', sure: true };
+    const exact = f.calls.get(`${cmd}\0${arg}`);
+    if (exact != null) return { t: exact, sure: true };
+    // what kind of key the command reads: as the run recorded its calls, else by its name's convention (`…cite…`,
+    // `…ref`); any other key command (a `\\label`, a file's name) sets no text
+    const kind = f.kinds.get(cmd) ?? (/cite/i.test(cmd) ? 'cite' : /ref$/i.test(cmd) ? 'ref' : null);
+    if (!kind || f.defs.has(cmd)) return { t: '', sure: true };
+    const keys = arg.split(',').map((k) => k.trim()), cite = kind === 'cite';
+    const values = keys.map((k) => (cite ? f.bib : f.labels).get(k));
+    if (keys.length === 1 && values[0]) {
+      const shape = f.shapes.get(cmd), g = values[0];
+      if (shape && g[shape.g[0]!] != null) return { t: shape.pre + g[shape.g[0]!] + shape.post, sure: shape.g.length === 1 };
+      return { t: g[0] ?? '', sure: false };
+    }
+    if (keys.some(labelled)) return { t: '…', sure: false };
+    if (keys.length === 1 && !cite) return { t: f.undef, sure: true };
+    // several keys: their labels in the command's shape, a guess (the separator is the style's)
+    const shape = f.shapes.get(cmd), first = (v: string[] | undefined) => shape ? v?.[shape.g[0]!] : v?.[0];
+    return { t: values.every(Boolean) ? `${shape ? shape.pre : ''}${values.map(first).join(', ')}${shape ? shape.post : ''}` : '?', sure: false };
+  }
+  /** An environment's arguments after its `\\begin{name}`: brackets and braces (two levels nested), none between. */
+  const ENV_ARGS = /(?:\[[^\]]*\]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*/y;
   /** The pieces prose `raw` sets, as the echo lays them out: markup dropped, a word split where its context changes. Each
    * piece its text, whether a space stands before it (`gap`), a blank line (`par`), a `\\\\` (`brk`), and its context `ctx`: the command
    * whose braced argument holds it (`textbf` of `\\textbf{…}`), else the last command before it in its group (`bfseries`
    * of `{\\bfseries …}`: whatever state that command left), else ''. Which font that is the run tells (the playground's `pdfCtxFont`), never a name table.
    * An environment's `\\begin{name}`/`\\end{name}` sets no word (the kernel reads `name` as a csname, ltmiscen.dtx).
-   * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space). */
-  function prose(raw: string): Prose[] {
+   * The first piece has no gap and may be empty, as may the last (the caret's empty word after a space).
+   * A control word eats the spaces after it, one line end among them (TeX's state S); one `sym` spells (`\\S`: §)
+   * sets that glyph; one it gives a box (`\\TeX` as the run set it) is a piece of its own holding that box. */
+  function prose(raw: string, refs?: (cmd: string, arg: string) => RefSet, outer: string[] = [], sym?: (name: string) => Spelled): Prose[] {
     const re = /(?<!\\)(%[^\n]*)|(\\\\\*?(?:\s*\[[^\]]*\])?)|\\(?:begin|end)\s*\{[^{}]*\}|\\([A-Za-z@]+)\*?\s*\{|\\([A-Za-z@]+)\*?|\\(?=[^A-Za-z@\s])|[{}$^_]|[\s~]+|[^]/gu;
     // per open group: its context
-    const groups = [{ ctx: '' }], out: Prose[] = [];
-    let cur: Prose = { t: '', gap: false, par: false, ctx: '' };
+    // (`outer`: the contexts of the groups `raw` starts in, closed by its unmatched `}`)
+    const groups = [{ ctx: '' }, ...outer.map((ctx) => ({ ctx }))], out: Prose[] = [];
+    let cur: Prose = { t: '', gap: false, par: false, ctx: groups.at(-1)!.ctx };
     const top = () => groups.at(-1)!, next = (gap: boolean) => { out.push(cur); cur = { t: '', gap, par: false, ctx: top().ctx }; };
-    for (const m of raw.matchAll(re)) {
+    for (let m; (m = re.exec(raw));) {
       const [x, com, brk, arg, cmd] = m;
+      // a key's command (`\\label`, `\\ref`, `\\cite[p.~2]`…): its key is a name, never text; what the call sets
+      // is what the run set for it (`refs`), nothing while its key is still typed (no closing brace)
+      const name = arg ?? cmd;
+      if (name && KEYS.test(name)) {
+        const call = keyCall(raw, m.index + x.length - (arg ? 1 : 0));
+        re.lastIndex = call?.end ?? raw.length;
+        const set = call && refs ? refs(name, call.arg) : null;
+        if (set?.t) {
+          // set in the font around it; one not sure (a guess from the label) is a piece of its own, drawn as one
+          if (!set.sure) { if (cur.t) next(false); cur.t = set.t; cur.ctx = top().ctx; cur.dim = true; next(false); }
+          else { if (cur.t && cur.ctx !== top().ctx) next(false); if (!cur.t) cur.ctx = top().ctx; cur.t += set.t; }
+        }
+        continue;
+      }
       // `\\\\` (its `*` and `[len]` too) ends the row: the next piece starts the next one (ltspace.dtx `\\@normalcr`)
       if (brk) { if (cur.t || cur.brk || !out.length) next(false); cur.brk = true; continue; }
+      // an environment's arguments (`[ht]`, a tabular's `{l>{…}p{3.9cm}r}`) are read by its `\\begin`, never set as text:
+      // the brackets and braces right after it
+      if (/^\\begin/.test(x)) { ENV_ARGS.lastIndex = re.lastIndex; ENV_ARGS.exec(raw); re.lastIndex = ENV_ARGS.lastIndex; continue; }
       if (com || x[0] === '\\' && !arg && !cmd) continue;
-      if (arg) groups.push({ ctx: arg });
+      if (cmd) { const sp = /[ \t]*(?:\n(?![ \t]*\n))?[ \t]*/y; sp.lastIndex = re.lastIndex; sp.exec(raw); re.lastIndex = sp.lastIndex; }
+      // a box the run set for the command alone (`\\TeX{}`): it reads no argument, its braces are a group of their own
+      const glyph = sym?.(cmd ?? arg ?? ''), boxed = !!glyph && typeof glyph === 'object';
+      if (boxed) { if (cur.t) next(false); Object.assign(cur, { t: glyph.t, box: glyph.box, ctx: top().ctx }); next(false); if (arg) groups.push({ ctx: top().ctx }); }
+      else if (arg) groups.push({ ctx: arg });
+      else if (glyph) { if (cur.t && cur.ctx !== top().ctx) next(false); if (!cur.t) cur.ctx = top().ctx; cur.t += glyph; }
       else if (cmd) top().ctx = cmd;
       else if (x === '{') groups.push({ ctx: top().ctx });
       else if (x === '}') { if (groups.length > 1) groups.pop(); }
@@ -1477,12 +1898,32 @@ declare global {
   /** A footer cell's text `t` as set on page `page`: the page number for `\thepage` (`\pagemark`), other commands dropped. */
   const footShown = (t: string, page: string) => t.replace(/\\(?:thepage|pagemark)(?:\{\}|(?![A-Za-z@])\s*)/g, '\u0001').replace(/\\([^A-Za-z@])/g, '$1')
     .replace(/\\[A-Za-z@]+\*?\s*/g, '').replace(/[{}]/g, '').replace(/~/g, ' ').replace(/\u0001/g, page);
+  /** The notes (`\\footnote`, `\\footnotetext`, `\\marginpar`) written in `text`'s `from..to`: each its argument's text span. */
+  function notes(text: string, from: number, to: number): [number, number][] {
+    return [...text.slice(from, to).matchAll(/\\(?:footnote|footnotetext|marginpar)\s*(?:\[[^\]]*\])?\{/g)].flatMap((m) => {
+      const c = callAround(text, from + m.index! + m[0].length);
+      return c ? [[c.open + 1, c.close] as [number, number]] : [];
+    });
+  }
+  /** The note whose argument holds offset `at` (the innermost), as its text span; null outside one. A note is set at
+   * the page's foot (or margin), apart from the paragraph it is written in: the Type caret's paragraph there is the note. */
+  function noteAt(text: string, at: number): [number, number] | null {
+    for (let c = callAround(text, at); c; c = callAround(text, c.from)) if (LONG.test(c.name)) return [c.open + 1, c.close];
+    return null;
+  }
+  /** Whether a page row of `words` sets note text `arg`: its letters and digits, the note's mark aside, are part of it. */
+  function noteRow(arg: string, words: string[]): boolean {
+    const flat = (t: string) => t.normalize('NFKC').replace(/\\[A-Za-z@]+/g, '').replace(/[^\p{L}\p{N}]/gu, '');
+    const row = flat(words.join('')).replace(/^\d+(?=\D)/, ''), a = flat(arg);
+    return row.length >= 3 && a.length >= 3 && a.includes(row);
+  }
   /** Where a click on empty page space puts the caret: `rows` the page's lines (`t`, `d`, `base`, `l`, `r` in bp, `line`
-   * the 1-based line of `text` SyncTeX sets each from), `(x, y)` the click. `{kind: 'end' | 'start' | 'near', row}` on
+   * the 1-based line of `text` SyncTeX sets each from, `words` its page words), `(x, y)` the click. Below a footnote's
+   * row: `{kind: 'end', row}`, that row's end. `{kind: 'end' | 'start' | 'near', row}` on
    * or between a paragraph's lines (its end, its start, the nearest word); `{kind: 'new', at, body, caret, ghost}` a
    * new paragraph the first key writes (`body` at `at`, the caret at `caret`): after the paragraph above (a heading's
    * line, a float's `\end`), before the page's first one; `ghost` where its first line starts (`x`, `base`, `h`). */
-  function blankPlace(text: string, rows: { t: number; d: number; base: number; l: number; r: number; line: number }[], x: number, y: number) {
+  function blankPlace(text: string, rows: { t: number; d: number; base: number; l: number; r: number; line: number; words?: Word[] }[], x: number, y: number) {
     const rs = [...rows].sort((a, b) => a.base - b.base);
     if (!rs.length) return null;
     const starts = [0];
@@ -1506,7 +1947,10 @@ declare global {
     const indent = med(rs.map((r) => r.l - left).filter((d) => d > 3 && d < 40), 15);
     const on = rs.find((r) => y >= r.t && y <= r.d);
     if (on) return { kind: x > on.r ? 'end' : x < on.l ? 'start' : 'near', row: rows.indexOf(on) };
-    const i = rs.findLastIndex((r) => r.d < y), above = rs[i], below = rs[i + 1];
+    const i = rs.findLastIndex((r) => r.d < y), above = rs[i];
+    let below = rs[i + 1];
+    // a note's row (noteRow): a click below one goes to that row's end, never to a new paragraph in the body
+    const note = (r: typeof rs[0]) => { const [a, b] = para(r); return notes(text, a, b).some((n) => noteRow(text.slice(...n), (r.words ?? []).map((w) => w[5]))); };
     const near = (r: typeof rs[0]) => ({ kind: 'near', row: rows.indexOf(r) });
     if (!above) {
       // above the page's first line: a new paragraph before it where one starts there (a heading, an indented line)
@@ -1514,6 +1958,9 @@ declare global {
       const p0 = para(below!)[0];
       return { kind: 'new', at: p0, body: '\n\n', caret: p0, ghost: { x: left + indent, base: below!.base - skip, h: below!.d - below!.t } };
     }
+    if (note(above)) return { kind: 'end', row: rows.indexOf(above) };
+    // the notes under the body text are no part of its paragraph's lines: a click above them is below the body
+    if (below && note(below)) below = undefined;
     // between two lines of one paragraph: its nearest line
     const f = floatEnd(above), end = f >= 0 ? f : para(above)[1];
     if (below && f < 0 && !heading(above) && para(below)[0] === para(above)[0]) return near(y - above.d < below.t - y ? above : below);
@@ -1543,7 +1990,115 @@ declare global {
     const m = /(\\\]|\$\$|\\end\{([A-Za-z]+)\*?\})[ \t]*$/.exec(text.slice(Math.max(0, at - 40), at));
     return !!m && (!m[2] || MATH.test(m[2]) && m[2] !== 'math');
   }
-  self.satexPdfEdit = { onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, defining, relaid, reflow, prose, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace };
+  /** The command whose braced argument holds `at` innermost (`\\textbf{wo|rld}`): its name, start, the `{` and the `}`
+   * offsets; null in no argument. Options (`\\textcolor[rgb]{…}`) and earlier arguments are not looked through. */
+  function callAround(text: string, at: number) {
+    let d = 0;
+    for (let i = at - 1; i >= 0; i--) {
+      const c = text[i];
+      if (text[i - 1] === '\\' && (c === '{' || c === '}')) continue;
+      if (c === '}') d++;
+      else if (c === '{' && d-- === 0) {
+        const m = /\\([A-Za-z@]+)\*?$/.exec(text.slice(Math.max(0, i - 64), i));
+        if (!m) return null;
+        let e = 0, close = -1;
+        for (let j = i; j < text.length && close < 0; j++) { if (text[j] === '\\') { j++; continue; } if (text[j] === '{') e++; else if (text[j] === '}' && --e === 0) close = j; }
+        return close < at ? null : { name: m[1]!, from: i - m[0].length, open: i, close };
+      }
+    }
+    return null;
+  }
+  /** The text style at `at` as the source sets it: the calls around it (`\textit{`, `\emph{`, `\section{` …) and the
+   * switches before it in its group (`\itshape`, `\small`, `\fontsize{14pt}`), the nearest of each kind winning.
+   * `size` in pt (normalsize 10), `null` where nothing sets it. The typing echo draws in it until the build lands. */
+  const STYLE_CALL: Record<string, Partial<PeStyle>> = { textit: { it: true }, emph: { it: true }, textsl: { it: true }, textbf: { bf: true }, texttt: { tt: true }, textrm: { it: false, bf: false, tt: false }, textup: { it: false }, textmd: { bf: false }, textnormal: { it: false, bf: false, tt: false },
+    part: { bf: true, size: 24.88 }, chapter: { bf: true, size: 20.74 }, section: { bf: true, size: 14.4 }, subsection: { bf: true, size: 12 }, subsubsection: { bf: true, size: 10 }, paragraph: { bf: true }, title: { size: 17.28 } };
+  const STYLE_SWITCH: Record<string, Partial<PeStyle>> = { itshape: { it: true }, em: { it: true }, slshape: { it: true }, upshape: { it: false }, bfseries: { bf: true }, mdseries: { bf: false }, ttfamily: { tt: true }, rmfamily: { tt: false }, normalfont: { it: false, bf: false, tt: false },
+    tiny: { size: 5 }, scriptsize: { size: 7 }, footnotesize: { size: 8 }, small: { size: 9 }, normalsize: { size: 10 }, large: { size: 12 }, Large: { size: 14.4 }, LARGE: { size: 17.28 }, huge: { size: 20.74 }, Huge: { size: 24.88 } };
+  type PeStyle = { it: boolean | null; bf: boolean | null; tt: boolean | null; size: number | null };
+  function styleAt(text: string, at: number): PeStyle {
+    const s: PeStyle = { it: null, bf: null, tt: null, size: null };
+    const take = (o: Partial<PeStyle>) => { for (const k of Object.keys(o) as (keyof PeStyle)[]) if (s[k] === null) (s as any)[k] = o[k]; };
+    const pt = (v: string) => { const m = /^\s*([\d.]+)\s*(pt|bp|mm|cm|in)?/.exec(v); return m ? +m[1]! * ({ pt: 1, bp: 1.00375, mm: 2.845, cm: 28.45, in: 72.27 } as Record<string, number>)[m[2] ?? 'pt']! : null; };
+    let d = 0;
+    for (let i = at - 1; i >= Math.max(0, at - 4000); i--) {
+      const c = text[i];
+      if (text[i - 1] === '\\' && (c === '{' || c === '}')) continue;
+      if (c === '}') { d++; continue; }
+      if (c === '{') {
+        if (d > 0) { d--; continue; }
+        const m = /\\([A-Za-z@]+)\*?\s*(?:\[[^\]]*\])?$/.exec(text.slice(Math.max(0, i - 80), i));
+        if (m && STYLE_CALL[m[1]!]) take(STYLE_CALL[m[1]!]!);
+        continue;
+      }
+      if (d === 0 && c === '\\') {
+        const m = /^\\([A-Za-z]+)/.exec(text.slice(i, i + 24));
+        if (m?.[1] === 'fontsize' && s.size === null) s.size = pt(/^\\fontsize\s*\{([^}]*)\}/.exec(text.slice(i, i + 40))?.[1] ?? '');
+        else if (m && STYLE_SWITCH[m[1]!]) take(STYLE_SWITCH[m[1]!]!);
+        if (m?.[1] === 'begin' && /^\\begin\s*\{document\}/.test(text.slice(i, i + 20))) break;
+      }
+    }
+    return s;
+  }
+  /** Right at the end of a command's argument leaves the command (the caret after its `}`), Left at its start leaves before
+   * it (before its `\\`): the caret's next place, null when `at` is at neither. */
+  function leave(text: string, at: number, step: number) {
+    const c = callAround(text, at);
+    if (!c) return null;
+    if (step > 0 && at === c.close) return c.close + 1;
+    if (step < 0 && at === c.open + 1) return c.from;
+    return null;
+  }
+  /** Ctrl+Right (`step` 1) or Ctrl+Left (-1) as an editor moves: past the blanks, markup and lines before the next word
+   * to that word's end (its start going left). A word is a run of letters and digits the reader sees: `why(from, to)`
+   * (pdfWhy) null or math for its first letter, so command names, keys and comments are crossed as markup, never
+   * stopped in. No word that way: the caret stays. */
+  function wordStep(text: string, at: number, step: number, why: (from: number, to: number) => string | null): number {
+    const W = /[\p{L}\p{N}]/u, back = step < 0, char = (i: number) => text[back ? i - 1 : i] ?? '';
+    const seen = (i: number) => {
+      const k = back ? i - 1 : i;
+      if (!W.test(text[k] ?? '')) return false;
+      // a letter of a `\name` is code (cheap before the scan `why` makes)
+      if (/\\[A-Za-z@]*$/.test(text.slice(Math.max(0, k - 64), k)) && /[A-Za-z@]/.test(text[k]!)) return false;
+      const w = why(k, k + 1);
+      return !w || /math/.test(w);
+    };
+    let i = at;
+    const end = back ? 0 : text.length, go = () => { i = back ? i - 1 : i + 1; };
+    while (i !== end && !seen(i)) go();
+    if (i === end) return at;
+    // the word: letters only (a run's first letter decided for it), so `bo\textbf{ld}` stops at `bo|`
+    while (i !== end && W.test(char(i))) go();
+    return i;
+  }
+  /** Left (`step` -1) or Right (1) in math through the slots of `_{…}` and `^{…}`, as an editor moves: a brace is crossed
+   * alone, a script's `_` or `^` together with its `{`, so the caret stops inside each group, an empty one too
+   * (`^{|}`). Null outside math or where no brace or script is next. */
+  function slotStep(text: string, at: number, step: number): number | null {
+    if (!scan(text, 0, at, start()).math) return null;
+    const script = (i: number) => text[i] === '_' || text[i] === '^';
+    if (step < 0) {
+      const c = text[at - 1];
+      if (c === '{' && script(at - 2)) return at - 2;
+      return c === '{' || c === '}' || script(at - 1) ? at - 1 : null;
+    }
+    const c = text[at];
+    if (script(at) && text[at + 1] === '{') return at + 2;
+    return c === '{' || c === '}' || script(at) ? at + 1 : null;
+  }
+  /** Ctrl+B (`textbf`) or Ctrl+I (`textit`) without a selection, as [from, to, text, caret] (the caret from `from`): in such
+   * a command's argument at its end the caret leaves after it, at its start before it, in its middle the argument splits
+   * (`\\textbf{wo}|\\textbf{rld}`, the caret between, upright); outside one an empty call starts with the caret in it. */
+  function toggle(text: string, at: number, cmd: string): [number, number, string, number] {
+    const c = callAround(text, at);
+    if (c?.name === cmd) {
+      if (at === c.close) return [at, at, '', 1];
+      if (at === c.open + 1) return [c.from, c.from, '', 0];
+      return [at, at, `}\\${cmd}{`, 1];
+    }
+    return [at, at, `\\${cmd}{}`, cmd.length + 2];
+  }
+  self.satexPdfEdit = { tableOp, callAround, styleAt, centeredAt, leave, wordStep, toggle, onRow, run, displayEnd, offsetAt, units, treeNodes, naming, entries, shortTitle, bothTitles, renamed, leaders, checked, grow, key, broken, scan, start, cells, cellStep, rowAfter, verbatim, verbatimAt, nearest, bands, joined, place, extent, failNote, room, form, measure, tableShift, respec, halign, HALIGN, padding, gap, widthBp, snapWidth, resized, stepped, plain, editable, spans, sender, typed, erased, cluster, mathAt, boundaries, boundaryAt, inkSnap, locate, columns, wordAt, argAt, afterCall, callStart, defining, relaid, reflow, prose, refFacts, refSet, auxLabels, hunks, fit, glue, centered, apart, tokens, unset, aligned, changed, paragraph, mathRuns, footArg, footBack, footShown, blankPlace, notes, noteAt, noteRow, slotStep, labelWhere };
 })();
 
 // TikZ nodes moved by drag: where each `\node` and path label stands in the source, and the statement a drag

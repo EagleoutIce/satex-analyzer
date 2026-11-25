@@ -7,10 +7,12 @@
 //! lists them.
 
 mod bibliography;
+mod class;
 pub(super) use bibliography::op as bib_op;
 mod color;
 mod environment;
 mod float;
+mod font;
 mod forest;
 mod frame;
 mod glossary;
@@ -19,6 +21,7 @@ mod image;
 pub(super) mod incremental;
 mod index;
 mod keys;
+mod labelled;
 mod language;
 pub(super) mod listing;
 mod overlay;
@@ -53,6 +56,11 @@ pub(super) struct Cx<'a> {
 impl Cx<'_> {
     pub fn cfg(&self) -> &TypePlugins {
         &self.analysis.settings.type_plugins
+    }
+
+    /// The run's id of the document's file: what run facts about it are keyed by.
+    pub fn file(&self) -> Option<crate::engine::tex::FileId> {
+        super::type_at::file_of(self.analysis, self.path)
     }
 
     /// The LSP URI of the document, for edits.
@@ -150,10 +158,13 @@ pub(super) static PLUGINS: &[&dyn TypePlugin] = &[
     &bibliography::Bibliography,
     &index::Index,
     &theorem::Theorem,
+    &labelled::Labelled,
     &overlay::Overlay,
     &frame::Frame,
     &page::Page,
+    &font::Font,
     &tagging::Tagged,
+    &class::Class,
     &incremental::CommentEdit,
     &incremental::WhitespaceEdit,
     &incremental::Typing,
@@ -257,9 +268,14 @@ pub(super) fn views(analysis: &Analysis, doc: &Text, path: &str, pos: Pos) -> Ve
     out
 }
 
+/// What a feature asked at no typed place sees.
+fn no_types() -> At {
+    At { hits: Vec::new(), place: None, item: super::type_at::Item { typed: String::new(), col: 1 } }
+}
+
 /// `satex/view` with a plugin and no position: its manager.
 pub(super) fn manager(analysis: &Analysis, doc: &Text, path: &str, name: &str) -> Option<Json> {
-    let at = At { hits: Vec::new(), place: None, item: super::type_at::Item { typed: String::new(), col: 1 } };
+    let at = no_types();
     let cx = context(analysis, doc, path, Pos::new(1, 1), &at);
     let mut v = on(analysis).find(|p| p.name() == name)?.manage(&cx)?;
     v["plugin"] = json!(name);
@@ -285,7 +301,7 @@ pub(super) fn lenses(analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLen
         let text = doc.body();
         for name in names {
             if let Some((at, ..)) = page::calls(text, name, 0, text.len()).first() {
-                out.push(lens(doc, path, doc.pos(*at).line, title, p.name()));
+                out.push(lens(doc, path, (doc.pos(*at).line, 1), title, p.name()));
             }
         }
     }
@@ -388,46 +404,43 @@ pub(super) fn ensure_package(
     name: &str,
     options: &str,
 ) -> Result<Option<TextEdit>, String> {
-    let text = doc.body();
-    // each line without its comment, at its offset
-    let lines = text.split_inclusive('\n').scan(0, |at, l| {
-        let start = *at;
-        *at += l.len();
-        Some((start, l.match_indices('%').find(|(i, _)| !l[..*i].ends_with('\\')).map_or(l, |(i, _)| &l[..i])))
-    });
-    let mut begin = None;
-    for (at, code) in lines {
-        if code.contains("\\begin{document}") {
-            begin = Some(at);
-            break;
-        }
-        let loads = ["\\usepackage", "\\RequirePackage"].iter().any(|c| {
-            code.match_indices(c).any(|(i, _)| {
-                let rest = code[i + c.len()..].trim_start();
-                let rest = if rest.starts_with('[') { rest.find(']').map_or("", |j| &rest[j + 1..]) } else { rest }
-                    .trim_start();
-                rest.strip_prefix('{')
-                    .and_then(|r| r.split('}').next())
-                    .is_some_and(|list| list.split(',').any(|p| p.trim() == name))
-            })
-        });
-        if loads {
-            return Ok(None);
-        }
-    }
     if crate::linter::shared::loaded(analysis, name) {
         return Ok(None);
     }
-    let at = begin.ok_or_else(|| format!("needs \\usepackage{{{name}}} in the preamble"))?;
+    let Some((at, new_text)) = crate::linter::shared::preamble_load(doc.body(), "usepackage", &[name], options)? else {
+        return Ok(None);
+    };
     let p = super::handlers::to_lsp(doc, doc.pos(at));
-    let options = if options.is_empty() { String::new() } else { format!("[{options}]") };
-    Ok(Some(TextEdit { range: Range { start: p, end: p }, new_text: format!("\\usepackage{options}{{{name}}}\n") }))
+    Ok(Some(TextEdit { range: Range { start: p, end: p }, new_text }))
+}
+
+/// Whether the run read `file` in the document's body: an `\input` after `\begin{document}`, itself or through the
+/// files that read it (a chapter's blank line takes a new picture as the root's body does).
+fn read_in_body(analysis: &Analysis, file: crate::engine::tex::FileId) -> bool {
+    let Some(begin) = crate::linter::shared::document_start(analysis) else { return false };
+    let mut f = file;
+    // loads form a tree: at most one step per file
+    for _ in 0..analysis.files.len() {
+        let Some(load) = analysis.facts.loads.iter().find(|l| l.file == Some(f) && l.span.file != f) else {
+            return false;
+        };
+        if load.span.file == begin.file {
+            return (load.span.line, load.span.col) > (begin.line, begin.col);
+        }
+        f = load.span.file;
+    }
+    false
 }
 
 pub(super) fn blank(cx: &Cx, env: &str, package: &str) -> Option<New> {
     let line = cx.pos.line;
     let inside = |(b, e): &(&Occurrence, &Occurrence)| b.span.line < line && line < e.span.line;
-    pairs(cx.analysis, cx.path, "document").into_iter().find(inside)?;
+    let documents = pairs(cx.analysis, cx.path, "document");
+    let body = documents.iter().any(inside)
+        || (documents.is_empty() && cx.file().is_some_and(|f| read_in_body(cx.analysis, f)));
+    if !body {
+        return None;
+    }
     if !cx.doc.line(line).trim().is_empty() || pairs(cx.analysis, cx.path, env).iter().any(inside) {
         return None;
     }
@@ -450,12 +463,12 @@ pub(super) fn env_lenses(
     title: &str,
     plugin: &str,
 ) -> Vec<CodeLens> {
-    pairs(analysis, path, env).into_iter().map(|(b, _)| lens(doc, path, b.span.line, title, plugin)).collect()
+    pairs(analysis, path, env).into_iter().map(|(b, _)| lens(doc, path, (b.span.line, 1), title, plugin)).collect()
 }
 
-/// A lens `title` on `line`, opening `plugin`'s view there.
-pub(super) fn lens(doc: &Text, path: &str, line: u32, title: &str, plugin: &str) -> CodeLens {
-    let at = super::handlers::to_lsp(doc, Pos::new(line, 1));
+/// A lens `title` on `line`, opening `plugin`'s view at its column `col`.
+pub(super) fn lens(doc: &Text, path: &str, (line, col): (u32, u32), title: &str, plugin: &str) -> CodeLens {
+    let at = super::handlers::to_lsp(doc, Pos::new(line, col));
     let command = Command {
         title: title.into(),
         command: "satex.openView".into(),
@@ -578,13 +591,32 @@ pub fn list(analysis: &Analysis) -> Vec<crate::queries::query::Record> {
 /// A code action that replaces `range` of the document with `text`.
 pub(super) fn rewrite(cx: &Cx, title: String, edits: Vec<lsp_types::TextEdit>) -> CodeAction {
     let mut changes = std::collections::HashMap::new();
-    changes.insert(cx.uri(), edits);
+    changes.insert(cx.uri(), super::writing::clean_lsp(cx.analysis, cx.doc, cx.file(), edits));
     CodeAction {
         title,
         kind: Some(lsp_types::CodeActionKind::REFACTOR_REWRITE),
         edit: Some(lsp_types::WorkspaceEdit { changes: Some(changes), ..Default::default() }),
         ..Default::default()
     }
+}
+
+/// [`rewrite`] that also writes the root's preamble loads (`roots`, [`snapshot::RootLoad`]): a picture inserted in an
+/// `\\input` file loads its package in the root, which the action's workspace edit changes too.
+pub(super) fn rewrite_rooted(
+    cx: &Cx,
+    title: String,
+    edits: Vec<lsp_types::TextEdit>,
+    roots: Vec<super::snapshot::RootLoad>,
+) -> CodeAction {
+    let mut action = rewrite(cx, title, edits);
+    if let Some(changes) = action.edit.as_mut().and_then(|e| e.changes.as_mut()) {
+        for r in roots {
+            let at = lsp_types::Position::new(r.line, r.character);
+            let edit = TextEdit { range: Range { start: at, end: at }, new_text: r.text };
+            changes.entry(super::handlers::path_uri(&r.path)).or_default().push(edit);
+        }
+    }
+    action
 }
 
 /// A view's button: an action's title and its edits, as the view JSON writes them.
@@ -615,6 +647,17 @@ pub(super) fn range(doc: &Text, line: u32, from: u32, to: u32) -> lsp_types::Ran
         start: super::handlers::to_lsp(doc, Pos::new(line, from)),
         end: super::handlers::to_lsp(doc, Pos::new(line, to)),
     }
+}
+
+/// "Browse all labels…" for a reference's key at `pos`, when the labels plugin is on.
+pub(super) fn label_browser(
+    analysis: &Analysis,
+    path: &str,
+    pos: lsp_types::Position,
+    typed: &str,
+) -> Option<CompletionItem> {
+    let on = analysis.settings.type_plugins.labels.enabled;
+    on.then(|| labelled::browse(super::handlers::path_uri(path).as_str(), pos, typed))
 }
 
 /// Every color the run defined, for a key's value: none when the color plugin is off.

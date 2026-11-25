@@ -18,8 +18,9 @@ declare global {
       indentOf(r: { indented?: boolean; indent?: number; parindent?: number }): number | null;
       glueShort(spec: string): string;
       runsBy<T>(items: T[], key: (x: T) => string | null | undefined): [string, number, number][];
-      mathSpans(boxes: Box[]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
+      mathSpans(boxes: Box[], displays?: [string, number, number][]): { page: number; l: number; t: number; r: number; d: number; file: string; line: number }[];
       fitLabels(labels: Rect[], fixed: Rect[], ink: Rect[]): (number | null)[];
+      lineMap(from: string, to: string): ((n: number) => number) & { changed(n: number): boolean };
       SHOW: Record<string, [string, string, boolean, boolean]>;
       showClasses(on: On): string[]; showDefaults(): On; showHtml(on: On): string;
     };
@@ -128,7 +129,7 @@ declare global {
       t.setAttribute('aria-expanded', String(open));
       if (open) onFold?.();
     });
-    const draw = () => { const n = Object.values(on).filter(Boolean).length; summary.innerHTML = `&#x25A4; <span>${n ? `layers ${n}` : 'layers'}</span>`; };
+    const draw = () => { const n = Object.values(on).filter(Boolean).length; summary.innerHTML = `&#x25A4; <span>View</span>${n ? ` <b class="count" title="${n} layers on">${n}</b>` : ''}`; };
     list.addEventListener('change', draw);
     draw();
     return draw;
@@ -176,18 +177,31 @@ declare global {
   /** Inline math as SyncTeX records it: a `$` record where math begins and one where it ends, in the order TeX shipped
    * them. One span per pair on a line, from the first to the second; math broken over lines runs to the first line's end
    * and from the next line's start. Its height is the line box's, a 7bp ascent and 2bp descent where none is found. */
-  function mathSpans(boxes: Box[]) {
-    const lines = boxes.filter((b) => b.kind === '(' && b.w > 0), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
-    const lineOf = (b: Box) => lines.find((o) => o.page === b.page && Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
+  function mathSpans(boxes: Box[], displays: [string, number, number][] = []) {
+    // a mark's line is on its page: looked for among that page's lines (all lines per mark is quadratic in the document)
+    const lines = Map.groupBy(boxes.filter((b) => b.kind === '(' && b.w > 0), (b) => b.page), out: ReturnType<Window['satexLayers']['mathSpans']> = [];
+    const lineOf = (b: Box) => lines.get(b.page)?.find((o) => Math.abs(o.y - b.y) < 0.5 && o.x - 0.5 <= b.x && b.x <= o.x + o.w + 0.5);
     const put = (b: Box, l: number, r: number) => { const o = lineOf(b); if (r > l) out.push({ page: b.page, l, r, t: b.y - (o?.h || 7), d: b.y + (o?.d || 2), file: b.file, line: b.line }); };
-    const marks = boxes.filter((b) => b.kind === '$');
+    const marks = boxes.flatMap((b, at) => b.kind === '$' ? [{ b, at }] : []);
     for (let i = 0; i + 1 < marks.length; i += 2) {
-      const [a, b] = [marks[i]!, marks[i + 1]!];
+      const [{ b: a, at: from }, { b, at: to }] = [marks[i]!, marks[i + 1]!];
       if (a.page !== b.page) continue;
+      // a box filling the math is text set in math mode, not a formula: `tabular` is built in `$…$` (`\@tabular`),
+      // so `\maketitle`'s author block is no math
+      if (boxes.slice(from + 1, to).some((o) => o.kind === '(' && o.w >= 0.9 * Math.abs(b.x - a.x) && o.w > 0)) continue;
       if (Math.abs(a.y - b.y) < 0.5) { put(a, a.x, b.x); continue; }
       const la = lineOf(a), lb = lineOf(b);
       put(a, a.x, la ? la.x + la.w : a.x);
       put(b, lb ? lb.x : b.x, b.x);
+    }
+    // a displayed formula leaves no `$` record: its boxes from its source lines (`displays`: file, first and last line),
+    // per page, without the widest where others stand in it (the display's line, out to its equation number)
+    for (const [file, from, to] of displays ?? []) {
+      const own = boxes.filter((b) => b.kind === '(' && b.w > 0 && b.line >= from && b.line <= to && (b.file === file || b.file.endsWith(`/${file}`) || file.endsWith(`/${b.file}`)));
+      for (const [page, bs] of Map.groupBy(own, (b) => b.page)) {
+        const wide = bs.length > 1 ? bs.reduce((m, b) => b.w > m.w ? b : m) : null, kept = bs.filter((b) => b !== wide);
+        out.push({ page, l: Math.min(...kept.map((b) => b.x)), r: Math.max(...kept.map((b) => b.x + b.w)), t: Math.min(...kept.map((b) => b.y - b.h)), d: Math.max(...kept.map((b) => b.y + b.d)), file, line: from });
+      }
     }
     return out;
   }
@@ -197,5 +211,17 @@ declare global {
     items.forEach((x, i) => { const k = key(x), o = out.at(-1); if (!k) return; if (o && o[0] === k && o[2] === i - 1) o[2] = i; else out.push([k, i, i]); });
     return out;
   }
-  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans, runsBy };
+  /** Where the lines of the text `from` stand in the text `to` (1-based): the same line while the two agree from the
+   * top, the same counted from the end while they agree from the bottom, and between (the edit) the nearest line of
+   * the edit in `to`; `changed(n)`: line `n` is of the edit. A layer places a run's facts on a build's pages with
+   * it: the run's text and the built one differ while a build lands under the keys, or a run before its build. */
+  function lineMap(from: string, to: string) {
+    const a = from === to ? [] : from.split('\n'), b = from === to ? [] : to.split('\n');
+    let top = 0, end = 0;
+    while (top < a.length && top < b.length && a[top] === b[top]) top++;
+    while (end < a.length - top && end < b.length - top && a[a.length - 1 - end] === b[b.length - 1 - end]) end++;
+    const changed = (n: number) => from !== to && n > top && n <= a.length - end;
+    return Object.assign((n: number) => from === to || n <= top ? n : n > a.length - end ? n + b.length - a.length : Math.min(n, Math.max(top + 1, b.length - end)), { changed });
+  }
+  self.satexLayers = { GROUPS, LAYERS, groups, html, state, wire, count, menu, length, SHOW, showClasses, showDefaults, showHtml, indentOf, glueShort, fitLabels, mathSpans, runsBy, lineMap };
 })();

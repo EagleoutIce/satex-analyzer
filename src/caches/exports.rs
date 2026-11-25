@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 5;
+const VERSION: u32 = 8;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -17,7 +17,13 @@ pub struct Exports {
     pub files: Vec<String>,
     /// Name (no backslash) to defining files.
     defines: HashMap<String, Vec<u32>>,
+    /// Name a document can write (no `@`, `_`, `:`) to files where it stands right after a command
+    /// that starts its line and that the index knows as no definer (url's `\\DeclareUrlCommand\\url`): candidates a run confirms.
+    mentions: HashMap<String, Vec<u32>>,
     loads: Vec<Vec<u32>>,
+    /// Per name, the shipped index's other packages that may provide it (`+name` in `exports.tsv`).
+    #[serde(skip)]
+    alternatives: HashMap<String, Vec<u32>>,
     /// Per file, the files that load it: `loads` reversed, made once.
     #[serde(skip)]
     loaded_by: std::sync::OnceLock<Vec<Vec<u32>>>,
@@ -36,7 +42,7 @@ pub struct Exports {
 /// `\\endx`, ltdefns.dtx) is listed once more with it, after a space:
 /// `newenvironment end`.
 pub fn written(
-    defs: &[crate::analysis::facts::Definition],
+    defs: &crate::fixed::Chunked<crate::analysis::facts::Definition>,
     interner: &crate::engine::tex::Interner,
     path: impl Fn(crate::engine::tex::FileId) -> Option<String>,
 ) -> Vec<String> {
@@ -54,6 +60,11 @@ pub fn written(
             continue;
         }
         let (by, name) = (interner.name(def.by).to_string(), interner.name(def.name));
+        // a name no file can write as one control word (ltcmd's `\x code`) is the definer's own
+        // helper, made from the given name: it says nothing of where the definer puts that name
+        if name.contains(' ') {
+            continue;
+        }
         let next = pairs.contains(&(def.span.line, by.clone(), name.to_string()));
         // a name the call made from its given one: the prefix it put before it
         let given = pairs.iter().filter(|(line, cmd, _)| *line == def.span.line && *cmd == by);
@@ -151,7 +162,8 @@ pub fn definers(analysis: &crate::analysis::machine::Analysis, extra: &[String])
     };
     let mut out = written(&analysis.facts.defs, &analysis.interner, path);
     out.extend(analysis.format.iter().flat_map(|f| f.definers.iter().cloned()));
-    out.extend(extra.iter().cloned());
+    // written as in a document (`\\defmacro`) or as the index keeps them
+    out.extend(extra.iter().map(|d| d.trim_start_matches('\\').to_string()));
     out.sort();
     out.dedup();
     out
@@ -184,6 +196,8 @@ impl Exports {
         );
         let position: HashMap<String, u32> =
             found.iter().enumerate().map(|(i, (name, _))| (name.clone(), i as u32)).collect();
+        let code: HashMap<String, PathBuf> =
+            crate::caches::distribution::files_with(roots, ".code.tex").into_iter().collect();
         let definers: HashSet<&str> = definers.iter().map(String::as_str).collect();
         for (i, (name, path)) in found.iter().enumerate() {
             exports.files.push(name.clone());
@@ -192,17 +206,51 @@ impl Exports {
                 continue;
             };
             let text = String::from_utf8_lossy(&bytes);
-            let (mut defined, loaded) = scan(&text, &definers);
+            let (mut defined, loaded, mentioned) = scan(&text, &definers);
             if name.ends_with(".code.tex") {
                 defined.extend(declared(&text));
             }
-            for name in defined {
-                let files = exports.defines.entry(name).or_default();
-                if files.last() != Some(&(i as u32)) {
-                    files.push(i as u32);
+            if let Some(stem) = name.strip_suffix(".sty").filter(|_| math_font(&text)) {
+                defined.push(format!("mathfont:{stem}"));
+            }
+            // what the code files it inputs define is the package's own, as far as they input more
+            let mut inputs: Vec<String> = loaded.iter().filter(|l| l.ends_with(".code.tex")).cloned().collect();
+            let mut read: HashSet<String> = HashSet::default();
+            while let Some(input) = inputs.pop() {
+                let Some(path) = code.get(&input).filter(|_| read.insert(input.clone())) else { continue };
+                let Ok(bytes) = std::fs::read(path) else { continue };
+                let (more, also, _) = scan(&String::from_utf8_lossy(&bytes), &definers);
+                defined.extend(more);
+                inputs.extend(also.into_iter().filter(|l| l.ends_with(".code.tex")));
+            }
+            for (into, names) in [(&mut exports.defines, defined), (&mut exports.mentions, mentioned)] {
+                for name in names {
+                    let files = into.entry(name).or_default();
+                    if files.last() != Some(&(i as u32)) {
+                        files.push(i as u32);
+                    }
                 }
             }
             exports.loads.push(loaded.iter().filter_map(|l| position.get(l).copied()).collect());
+        }
+        // the OpenType math fonts (`\setmathfont`): one file a family, its regular face where it has one
+        let mut families: HashMap<String, (u32, bool)> = HashMap::default();
+        for (name, path) in crate::engine::tfm::font_files(roots, ".otf") {
+            if !name.to_ascii_lowercase().contains("math") {
+                continue;
+            }
+            let Some((family, regular)) = std::fs::read(&path).ok().as_deref().and_then(otf_math_family) else {
+                continue;
+            };
+            if families.get(&family).is_some_and(|&(_, r)| r || !regular) {
+                continue;
+            }
+            families.insert(family, (exports.files.len() as u32, regular));
+            exports.files.push(name);
+            exports.loads.push(Vec::new());
+        }
+        for (family, (i, _)) in families {
+            exports.defines.insert(format!("mathfont:{family}"), vec![i]);
         }
         if let Some(file) = file
             && let Ok(bytes) = postcard::to_allocvec(&exports)
@@ -295,12 +343,28 @@ impl Exports {
         let definers: Vec<u32> = files.iter().copied().filter(sty).collect();
         let mut all = definers.clone();
         all.extend(definers.iter().flat_map(|&f| self.loaded_by()[f as usize].iter().copied()).filter(sty));
+        all.extend(self.alternatives.get(name).into_iter().flatten().copied());
         all.sort_unstable();
         all.dedup();
         let mut ranked: Vec<_> =
             all.into_iter().map(|f| (std::cmp::Reverse(self.users(f)), &self.files[f as usize])).collect();
         ranked.sort();
         ranked.into_iter().map(|(_, f)| f.clone()).collect()
+    }
+
+    /// The packages that name `name` after a command the index knows as no definer and that more
+    /// files load than `pick` ([`Exports::package_for`]'s), most loaded first: a run of each says
+    /// whether it defines it.
+    pub fn proposed(&self, name: &str, pick: Option<&str>) -> Vec<String> {
+        let Some(files) = self.mentions.get(name) else { return Vec::new() };
+        let floor = pick.and_then(|p| self.position().get(&format!("{p}.sty"))).map_or(0, |&f| self.users(f));
+        let mut ranked: Vec<_> = (files.iter().copied())
+            .filter(|&f| self.files[f as usize].ends_with(".sty"))
+            .map(|f| (std::cmp::Reverse(self.users(f)), &self.files[f as usize]))
+            .filter(|(users, _)| users.0 > floor)
+            .collect();
+        ranked.sort();
+        ranked.into_iter().map(|(_, f)| f.trim_end_matches(".sty").to_string()).collect()
     }
 
     /// How many files load `file`, directly or through others.
@@ -331,13 +395,27 @@ impl Exports {
     /// The names a document can write (no `@` or `_`: no internals), each with the file to load
     /// for it: [`Exports::package_for`]'s package, else the library that declares it. This is
     /// what the playground ships ([`Exports::of_names`]): the browser has no installation to read.
-    pub fn names(&self) -> Vec<(String, String)> {
+    /// With them, up to `alternatives` other packages that may provide a name ([`Exports::candidates`]):
+    /// a call the usual one rejects (graphics' `\includegraphics[width=…]`) is tried with those.
+    pub fn names(&self, alternatives: usize) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = (self.defines.iter())
             .filter(|(name, _)| !name.contains(['@', '_']))
-            .filter_map(|(name, files)| {
-                let library =
-                    || files.iter().map(|&f| &self.files[f as usize]).find(|f| f.ends_with(".code.tex")).cloned();
-                Some((name.clone(), self.package_for(name).map(|p| format!("{p}.sty")).or_else(library)?))
+            .flat_map(|(name, files)| {
+                // a library, or a font that declares itself (an OpenType math font)
+                let library = || {
+                    let own = |f: &&String| f.ends_with(".code.tex") || f.ends_with(".otf");
+                    files.iter().map(|&f| &self.files[f as usize]).find(own).cloned()
+                };
+                let first = self.package_for(name).map(|p| format!("{p}.sty")).or_else(library);
+                let others: Vec<String> = self
+                    .candidates(name)
+                    .into_iter()
+                    .filter(|c| Some(c) != first.as_ref())
+                    .take(alternatives)
+                    .collect();
+                // an alternative is marked `+`: tried for a call the usual one rejects, never offered first
+                let first = first.into_iter().map(|f| (name.clone(), f));
+                first.chain(others.into_iter().map(|f| (format!("+{name}"), f))).collect::<Vec<_>>()
             })
             .collect();
         out.sort();
@@ -345,7 +423,8 @@ impl Exports {
     }
 
     /// The index of [`Exports::names`] written one file a line, its names after it:
-    /// `file<TAB>name<TAB>name…`. Each name is defined by its one file.
+    /// `file<TAB>name<TAB>name…`. Each name is defined by its one file; `+name` names another
+    /// package that may provide it.
     pub fn of_names(text: &str) -> Exports {
         let mut exports = Exports { version: VERSION, ..Exports::default() };
         for line in text.lines() {
@@ -354,7 +433,13 @@ impl Exports {
             let i = exports.files.len() as u32;
             exports.files.push(file.to_string());
             exports.loads.push(Vec::new());
-            fields.for_each(|name| _ = exports.defines.insert(name.to_string(), vec![i]));
+            for name in fields {
+                match name.strip_prefix('+') {
+                    // another package that may provide it ([`Exports::names`]' alternatives)
+                    Some(name) => exports.alternatives.entry(name.to_string()).or_default().push(i),
+                    None => _ = exports.defines.insert(name.to_string(), vec![i]),
+                }
+            }
         }
         exports
     }
@@ -411,13 +496,16 @@ impl Exports {
     }
 }
 
-/// Names defined after one of `definers`, and files loaded.
-/// Whether the text of `file` defines `name` with one of `definers`: its names read once per process.
+/// Whether the text of `file` defines `name` with one of `definers`: its names read once per
+/// process for each set of definers, so what one run's definers found never answers another's.
 pub fn defined_in(file: &Path, definers: &HashSet<&str>, name: &str) -> bool {
     type Names = std::sync::Arc<HashSet<String>>;
-    static READ: std::sync::Mutex<Option<HashMap<PathBuf, Names>>> = std::sync::Mutex::new(None);
+    type Memo = HashMap<(PathBuf, Vec<String>), Names>;
+    static READ: std::sync::Mutex<Option<Memo>> = std::sync::Mutex::new(None);
+    let mut by: Vec<String> = definers.iter().map(|d| d.to_string()).collect();
+    by.sort_unstable();
     let Ok(mut read) = READ.lock() else { return false };
-    let names = read.get_or_insert_with(HashMap::default).entry(file.to_path_buf()).or_insert_with(|| {
+    let names = read.get_or_insert_with(HashMap::default).entry((file.to_path_buf(), by)).or_insert_with(|| {
         let text = std::fs::read(file).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
         std::sync::Arc::new(scan(&text, definers).0.into_iter().collect())
     });
@@ -429,7 +517,9 @@ pub fn defines(text: &str, definers: &HashSet<&str>) -> Vec<String> {
     scan(text, definers).0
 }
 
-fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
+/// Names defined after one of `definers`, files loaded, and the names a document can write that
+/// stand after another command that starts its line.
+fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>, Vec<String>) {
     use crate::engine::tex::Tok;
     let (tokens, names) = tokenize(text);
     // `newenvironment end`: the definer also makes `end` + the name ([`written`])
@@ -439,25 +529,55 @@ fn scan(text: &str, definers: &HashSet<&str>) -> (Vec<String>, Vec<String>) {
         made.entry(by).or_default().push(prefix);
     }
     made.values_mut().for_each(|p| p.sort_unstable());
-    let defined: Vec<String> = pairs(&tokens, &names)
-        .flat_map(|(_, cmd, name)| {
-            let prefixes = made.get(names.name(cmd)).map_or(&[][..], Vec::as_slice);
-            prefixes.iter().map(move |p| format!("{p}{name}")).collect::<Vec<_>>()
-        })
-        .collect();
+    // the command each line starts with: where a package's definitions stand
+    let mut first: HashMap<u32, Option<crate::engine::tex::Sym>> = HashMap::default();
+    for t in &tokens {
+        first.entry(t.span.line).or_insert(if let Tok::Cs(cs) = t.tok { Some(cs) } else { None });
+    }
+    let (mut defined, mut mentioned) = (Vec::new(), Vec::new());
+    for (line, cmd, name) in pairs(&tokens, &names) {
+        match made.get(names.name(cmd)) {
+            Some(prefixes) => defined.extend(prefixes.iter().map(|p| format!("{p}{name}"))),
+            None if first.get(&line) == Some(&Some(cmd)) && !name.is_empty() && !name.contains(['@', '_', ':']) => {
+                mentioned.push(name)
+            }
+            None => {}
+        }
+    }
     let mut loaded = Vec::new();
     for (i, t) in tokens.iter().enumerate() {
         let ext = match t.tok {
             Tok::Cs(cs) => match names.name(cs) {
                 "LoadClass" => ".cls",
                 "RequirePackage" | "usepackage" | "RequirePackageWithOptions" => ".sty",
+                // a code file the package reads as its own text (`tikz.sty`'s `\input{tikz.code.tex}`)
+                "input" => {
+                    let braced = group(&tokens[i + 1..]);
+                    let bare = || -> String {
+                        (tokens[i + 1..]
+                            .iter()
+                            .skip_while(|t| matches!(t.tok, Tok::Chr(_, crate::engine::tex::Catcode::Space))))
+                        .map_while(|t| match t.tok {
+                            Tok::Chr(c, crate::engine::tex::Catcode::Letter | crate::engine::tex::Catcode::Other) => {
+                                Some(c)
+                            }
+                            _ => None,
+                        })
+                        .collect()
+                    };
+                    let name = if braced.is_empty() { bare() } else { braced };
+                    if name.ends_with(".code.tex") {
+                        loaded.push(name.trim().to_string());
+                    }
+                    continue;
+                }
                 _ => continue,
             },
             _ => continue,
         };
         loaded.extend(group(&tokens[i + 1..]).split(',').map(|n| format!("{}{ext}", n.trim())));
     }
-    (defined, loaded)
+    (defined, loaded, mentioned)
 }
 
 /// The names a pgf or TikZ library declares besides macros: arrow tips
@@ -482,6 +602,29 @@ fn declared(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether a package's text sets math fonts: it declares the symbol fonts letters, operators or
+/// large symbols come from (fntguide § 4.4), as newtxmath, eulervm and mathpazo do.
+fn math_font(text: &str) -> bool {
+    static FORM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\\DeclareSymbolFont\s*\{\s*(?:letters|operators|largesymbols)\s*\}")
+            .expect("math font regex")
+    });
+    FORM.is_match(text)
+}
+
+/// An OpenType font's family and whether the file is its regular face, when it has a `MATH` table.
+fn otf_math_family(data: &[u8]) -> Option<(String, bool)> {
+    use ttf_parser::name_id;
+    let face = ttf_parser::Face::parse(data, 0).ok()?;
+    face.tables().math?;
+    let name = |ids: [u16; 2]| {
+        ids.iter().find_map(|&id| face.names().into_iter().find(|n| n.name_id == id && n.is_unicode())?.to_string())
+    };
+    let family = name([name_id::TYPOGRAPHIC_FAMILY, name_id::FAMILY])?;
+    let regular = name([name_id::TYPOGRAPHIC_SUBFAMILY, name_id::SUBFAMILY]).is_some_and(|s| s == "Regular");
+    Some((family, regular))
+}
+
 /// The text of the group after `[options]` that `tokens` start with; a
 /// name in it, which a macro makes, stays a backslash that matches no file.
 fn group(tokens: &[crate::engine::tex::Token]) -> String {
@@ -502,13 +645,57 @@ fn group(tokens: &[crate::engine::tex::Token]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The names a file defines depend on the definers asked with: a second
+    /// run that knows `\newcommand` finds `\a`, though a first run that knew
+    /// only `\def` read the file. Pins a process-wide memo keyed by the file
+    /// alone, whose answer was the first caller's in every later run.
+    #[test]
+    fn a_file_is_read_again_for_other_definers() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/scratch/defined-in-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("p{}.sty", std::process::id()));
+        std::fs::write(&file, "\\newcommand\\a{}\\def\\b{}").unwrap();
+        let def = ["def"].into_iter().collect();
+        let both = ["def", "newcommand"].into_iter().collect();
+        assert!(super::defined_in(&file, &def, "b") && !super::defined_in(&file, &def, "a"));
+        assert!(super::defined_in(&file, &both, "a"), "the second set's answer, not the first's");
+        let _ = std::fs::remove_file(&file);
+    }
+
     #[test]
     fn definitions_and_loads_are_read_off_the_text() {
         let definers = ["def", "newcommand", "newrobustcmd"].into_iter().collect();
         let text = "\\RequirePackage[x]{a, b}\\def\\one{}\\newcommand*{\\two}{}\\newrobustcmd*\\three{}\n% \\def\\no{}\n\\let\\four";
-        let (defined, loaded) = super::scan(text, &definers);
+        let (defined, loaded, _) = super::scan(text, &definers);
         assert_eq!(defined, ["one", "two", "three"]);
         assert_eq!(loaded, ["a.sty", "b.sty"]);
+    }
+
+    /// Intuition: a name a document can write right after a command that starts its line and that the
+    /// index knows as no definer is a candidate, not a definition: url's `\\DeclareUrlCommand\\url`. Internals (`\\x@y`) are none. Pins
+    /// the index losing url.sty for `\\url` when the run never used url's definer.
+    #[test]
+    fn names_after_unknown_definers_are_candidates() {
+        let definers = ["def"].into_iter().collect();
+        let (defined, _, mentioned) =
+            super::scan("\\DeclareUrlCommand\\url{}\n\\let\\a@b\\relax\n\\def\\path{}\\x\\y", &definers);
+        assert_eq!(defined, ["path"]);
+        assert_eq!(mentioned, ["url"]);
+    }
+
+    /// Intuition: the playground's index ships one file per name, plus `+name` for another
+    /// package that may provide it. Pins graphicx being no candidate there for
+    /// `\\includegraphics[width=…]` (the snapshot printer loaded graphics, the build failed), and
+    /// an alternative never becoming the usual provider (`tikzpicture` stays tikz's).
+    #[test]
+    fn the_shipped_index_keeps_alternatives_apart() {
+        let e = super::Exports::of_names(
+            "graphics.sty\tincludegraphics\ngraphicx.sty\t+includegraphics\ntikz.sty\ttikzpicture\nforest.sty\t+tikzpicture\n",
+        );
+        assert_eq!(e.provider("includegraphics").as_deref(), Some("graphics.sty"));
+        assert_eq!(e.candidates("includegraphics"), ["graphics.sty", "graphicx.sty"]);
+        assert_eq!(e.provider("tikzpicture").as_deref(), Some("tikz.sty"));
+        assert!(e.names(0).iter().all(|(n, _)| !n.starts_with('+')));
     }
 
     /// Intuition: `\\newenvironment{align}` defines `\\align` and `\\endalign` (ltdefns.dtx), learned from runs as
@@ -518,7 +705,7 @@ mod tests {
     fn braced_names_and_their_prefixed_partners_are_read_off_the_text() {
         let definers = ["newenvironment", "newenvironment end"].into_iter().collect();
         let text = "\\newenvironment{align*}{}{}\\newenvironment{a\\x}{}{}\\newenvironment {gather}";
-        let (defined, _) = super::scan(text, &definers);
+        let (defined, ..) = super::scan(text, &definers);
         assert_eq!(defined, ["align*", "endalign*", "gather", "endgather"]);
     }
 }

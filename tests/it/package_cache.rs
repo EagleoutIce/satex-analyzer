@@ -320,6 +320,22 @@ fn an_own_package_replays_every_fact_reading_it_records() {
     assert_eq!(differing_facts(&read, &replayed), Vec::<String>::new());
 }
 
+/// A package the document opened with `\\openin` before loading it is still a package: older
+/// kernels' `\\IfFileExists` open each file so, and the load kept the kind of that first read
+/// (input), so the run stopped charging the load's lines to it and no segment was ever stored.
+#[test]
+fn a_package_opened_before_its_load_is_cached() {
+    if !installed() {
+        return;
+    }
+    let dir = project("opened-first");
+    let document = preamble("\\newread\\probe \\openin\\probe=outer.sty \\closein\\probe");
+    let read = run(&dir, &document);
+    let replayed = run(&dir, &document);
+    assert_eq!(served(&read, "outer"), Some(false), "{:?}", read.package_caches);
+    assert_eq!(served(&replayed, "outer"), Some(true), "{:?}", replayed.package_caches);
+}
+
 /// A replayed load that set nothing on the main vertical list keeps its tail: `\\lastkern`
 /// after it reads the kern before it, served or read.
 #[test]
@@ -368,7 +384,11 @@ fn a_register_assigned_in_the_served_front_keys_the_recorded_rest_as_it_stands()
 
 /// tagpdf replays whole: the random ids (`\\int_rand:n`) its namespaces
 /// get fork, and their paths leave fewer finished input levels below the
-/// file than it opened on. The replay reports what reading it did.
+/// file than it opened on. The replay reports what reading it did. Run 2
+/// still reads the request lines of tagpdf's nested loads (their caches
+/// only exist from run 1 on) and stores them with the loads they serve, so
+/// run 3 is the one that serves nearly all of it (TeX Live 2019's tagpdf
+/// requests more packages than a newer one).
 #[test]
 fn tagpdf_replays_whole_and_reports_the_same() {
     if !installed() {
@@ -379,9 +399,36 @@ fn tagpdf_replays_whole_and_reports_the_same() {
     let first = run(&dir, document);
     let second = run(&dir, document);
     assert_eq!(served(&second, "tagpdf"), Some(true), "{:?}", second.package_caches);
-    assert!(second.served_steps * 10 > second.load_steps * 9, "{} of {}", second.served_steps, second.load_steps);
-    assert_eq!(first.steps, second.steps);
-    same_facts(&first, &second);
+    let third = run(&dir, document);
+    assert_eq!(served(&third, "tagpdf"), Some(true), "{:?}", third.package_caches);
+    assert!(third.served_steps * 10 > third.load_steps * 9, "{} of {}", third.served_steps, third.load_steps);
+    assert_eq!(first.steps, third.steps);
+    same_facts(&first, &third);
+}
+
+/// Intuition: TeX counts errors (tex.web § 82) and gives up at the hundredth, so a replayed
+/// load leaves the count a read leaves. A package of 60 errors, then 60 in the document: the
+/// document's 40th is the hundredth, cold and warm alike. Bug: a replay left the count where
+/// it was, so the warm run never reached a hundred (TeX Live 2022's tagpdf without
+/// `\DocumentMetadata`: 51 errors in pdflatex, and its warm run loaded two packages the cold
+/// run never reached).
+#[test]
+fn a_replayed_load_counts_its_errors_toward_the_hundred() {
+    if !installed() {
+        return;
+    }
+    let dir = project("error-count");
+    let errors: String = (0..60).map(|_| "\\count255=\\relax\n").collect();
+    std::fs::write(dir.join("erra.sty"), format!("\\ProvidesPackage{{erra}}\n{errors}")).expect("the package");
+    let document = format!(
+        "\\documentclass{{article}}\n\\usepackage{{erra}}\n{errors}\\begin{{document}}\nx\n\\end{{document}}\n"
+    );
+    let cold = run(&dir, &document);
+    let warm = run(&dir, &document);
+    assert_eq!(served(&warm, "erra"), Some(true), "{:?}", warm.package_caches);
+    let stops = |a: &Analysis| a.facts.diagnostics.iter().filter(|d| d.code == "too-many-errors").count();
+    assert_eq!(stops(&cold), 1, "a hundred errors in the cold run");
+    assert_eq!(stops(&warm), stops(&cold), "the warm run counts the replayed errors");
 }
 
 /// Runs 2 and 3 of `document` on one cache rebuild nothing: every key a
@@ -392,11 +439,20 @@ fn rebuilds_nothing_warm(name: &str, document: &str) -> Option<(PathBuf, Analysi
     }
     let dir = project(name);
     run(&dir, document);
+    // A file TeX itself writes into the user's TEXMFVAR keys a rebuild rightly once it changed. On
+    // an image that lacks a format, another test's TeX run regenerates `language.dat` there (its
+    // date line), and a satex that read the old one may write its cache after this one.
+    let var = std::process::Command::new("kpsewhich").arg("-var-value=TEXMFVAR").output();
+    let var = var.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let generated = |line: &str| {
+        let file = line.split_once("content changed: ").map(|(_, f)| f.trim_end_matches(')'));
+        !var.is_empty() && file.is_some_and(|f| Path::new(f).starts_with(&var))
+    };
     let mut last = None;
     for warm in [2, 3] {
         let analysis = run(&dir, document);
         let report = analysis.cache_report();
-        let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt")).collect();
+        let rebuilt: Vec<_> = report.iter().filter(|l| l.contains("rebuilt") && !generated(l)).collect();
         assert!(rebuilt.is_empty(), "run {warm}: {rebuilt:?}");
         last = Some(analysis);
     }
@@ -706,6 +762,37 @@ fn a_stream_the_package_never_reads_does_not_key_its_cache() {
     let warm = run(&dir, &other);
     assert_eq!(served(&warm, "outer"), Some(true), "{:?}", warm.package_caches);
     same_facts(&run_cold(&dir, &other), &warm);
+}
+
+/// Intuition: a package that opens, tests and closes a stream of its own (TeX Live 2022's
+/// `\IfFileExists` is `\openin`+`\ifeof`) reads only what it set itself, so another stream the
+/// document holds open does not key its cache, and the replay closes its stream as reading does.
+/// Bug: any use of any stream keyed the load on every stream's state.
+#[test]
+fn a_package_testing_its_own_stream_is_served_where_another_is_open() {
+    let dir = project("own-stream");
+    std::fs::write(
+        dir.join("own.sty"),
+        "\\ProvidesPackage{own}\n\\openin14=own.sty \\ifeof14 \\def\\ownmissing{}\\else\\closein14 \\def\\ownfound{}\\fi\n",
+    )
+    .expect("own.sty");
+    let document = |pre: &str| {
+        format!(
+            "\\documentclass{{article}}\n{pre}\\usepackage{{own}}\n\\ifeof14 \\def\\shut{{}}\\fi\\ifeof15 \\def\\atend{{}}\\fi\n\\begin{{document}}\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document(""));
+    let open = document("\\openin15=doc.tex\n");
+    let warm = run(&dir, &open);
+    assert_eq!(served(&warm, "own"), Some(true), "{:?}", warm.package_caches);
+    assert!(defined(&warm, "ownfound") && defined(&warm, "shut") && undefined(&warm, "atend"));
+    same_facts(&run_cold(&dir, &open), &warm);
+    // Its own stream open before: the replay closes it, as the recording ended with it closed.
+    let reopened = document("\\openin14=doc.tex\n");
+    let again = run(&dir, &reopened);
+    assert_eq!(served(&again, "own"), Some(true), "{:?}", again.package_caches);
+    assert!(defined(&again, "shut"), "the replay left stream 14 open");
+    same_facts(&run_cold(&dir, &reopened), &again);
 }
 
 /// The other side: a package that tests a stream recorded with every stream
@@ -1320,7 +1407,7 @@ fn aged(path: &Path, bytes: u64) {
 fn own_package_cache(cache: &Path) -> String {
     files_of(cache)
         .into_iter()
-        .find(|n| n.starts_with("package-outer-v") && n.ends_with(".postcard"))
+        .find(|n| n.starts_with("package-outer-") && n.ends_with(".postcard"))
         .expect("outer cached")
 }
 
@@ -1333,16 +1420,16 @@ fn a_write_removes_what_another_build_or_encoding_left() {
     run_latex(&dir, DOCUMENT, true);
     let cache = dir.join("cache");
     let own = own_package_cache(&cache);
-    let (family, rest) = own.split_once("-v").unwrap();
-    let (version, tail) = rest.split_once('-').unwrap();
-    let (_digest, key) = tail.split_once('-').unwrap();
-    let foreign = format!("{family}-v{version}-deadbeefdeadbeef-{key}");
-    let old_encoding = format!("{family}-v1-{}", tail);
+    let (rest, hash) = own.rsplit_once('-').unwrap();
+    let (family, key) = rest.rsplit_once('-').unwrap();
+    let foreign = format!("{family}-deadbeefdeadbeef-{hash}");
+    // A name from before keys replaced encoding versions.
+    let old_encoding = format!("{family}-v16-s2{key}-{hash}");
     for name in [&foreign, &old_encoding] {
         aged(&cache.join(name), 10);
         aged(&cache.join(name.replace(".postcard", ".lock")), 0);
     }
-    let orphan = "package-gone-v1-0123456789abcdef-0123456789abcdef.lock";
+    let orphan = "package-gone-d0123456789abcdef-0123456789abcdef.lock";
     aged(&cache.join(orphan), 0);
     // A change to a package makes the next run write a cache.
     std::fs::write(dir.join("inner.sty"), "\\ProvidesPackage{inner}\n\\def\\innermacro#1{}\n").unwrap();
@@ -1354,7 +1441,7 @@ fn a_write_removes_what_another_build_or_encoding_left() {
         assert!(!left.contains(gone), "{gone} survived a write: {left:?}");
     }
     assert!(!left.iter().any(|n| n == orphan), "a lock nothing holds survived: {left:?}");
-    assert!(left.contains(&own) || left.iter().any(|n| n.starts_with("package-outer-v")), "{left:?}");
+    assert!(left.contains(&own) || left.iter().any(|n| n.starts_with("package-outer-")), "{left:?}");
 }
 
 #[test]
@@ -1367,12 +1454,10 @@ fn the_cache_directory_stays_within_its_size_bound() {
     run_latex(&dir, DOCUMENT, true);
     let cache = dir.join("cache");
     let own = own_package_cache(&cache);
-    let (family, tail) = own.split_once("-v").unwrap();
-    let (version, rest) = tail.split_once('-').unwrap();
-    let (digest, _) = rest.split_once('-').unwrap();
+    let (prefix, _) = own.rsplit_once('-').unwrap();
     // Older neighbours of this build, big enough to burst the bound.
     for (i, age) in [3000u64, 2000, 1000].iter().enumerate() {
-        let name = format!("{family}-v{version}-{digest}-{i:016x}.postcard");
+        let name = format!("{prefix}-{i:016x}.postcard");
         let path = cache.join(&name);
         aged(&path, 1_000_000);
         let file = std::fs::File::options().append(true).open(&path).unwrap();
@@ -1406,31 +1491,40 @@ fn the_cache_directory_stays_within_its_size_bound() {
 /// A class that assigns only the value of a register (a box, an uccode) is
 /// read again by the next segment from the state replayed so far: the
 /// replay agrees with the live run, so runs after the first reuse the cache
-/// whole and the cache file stops growing.
+/// whole and the caches stop growing. Each run adds the request lines of the
+/// nested loads the run before served whole first (a bridge needs the load it
+/// serves cached whole), one nesting level a run: the caches stop growing
+/// within as many runs as the class has loads.
 #[test]
 fn a_class_assigning_register_values_is_reused_whole() {
     let dir = project("register-values");
     let cfg = latex(&dir);
     let source = "\\documentclass{scrbook}\n\\begin{document}x\\end{document}\n";
-    let class_file = |dir: &Path| -> (PathBuf, u64) {
+    // What the package caches hold: a run that adds nothing leaves the next alike.
+    let stored_bytes = |dir: &Path| -> u64 {
         std::fs::read_dir(dir.join("cache"))
             .unwrap()
             .flatten()
-            .filter(|e| e.file_name().to_string_lossy().starts_with("package-scrbook.cls-"))
+            .filter(|e| e.file_name().to_string_lossy().starts_with("package-"))
             .filter(|e| e.file_name().to_string_lossy().ends_with(".postcard"))
-            .map(|e| (e.path(), e.metadata().unwrap().len()))
-            .next()
-            .expect("the class cache file")
+            .map(|e| e.metadata().unwrap().len())
+            .sum()
     };
     let first = analyze(&dir, source, &cfg);
-    let (_, stored) = class_file(&dir);
     assert_eq!(served(&first, "scrbook"), Some(false), "{:?}", first.package_caches);
-    for run in 2..=3 {
+    let loads: std::collections::HashSet<&str> = first.package_caches.iter().map(|(n, ..)| n.as_str()).collect();
+    let (mut stored, mut run) = (stored_bytes(&dir), 1);
+    loop {
+        run += 1;
         let again = analyze(&dir, source, &cfg);
         let state = again.package_caches.iter().rev().find(|(n, ..)| n == "scrbook").map(|(.., s)| s.clone());
         assert_eq!(state.as_deref(), Some("cached"), "run {run}: {:?}", again.package_caches);
-        let (_, size) = class_file(&dir);
-        assert_eq!(size, stored, "run {run}: the cache file grew");
+        let size = stored_bytes(&dir);
+        if size == stored {
+            break;
+        }
+        assert!(run <= loads.len(), "run {run}: the caches still grow ({stored} to {size})");
+        stored = size;
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1575,26 +1669,27 @@ fn an_imported_cache_is_rebuilt_when_the_tree_differs() {
     assert!(report.iter().any(|l| l.contains("package demo: rebuilt (content changed: ")), "{report:?}");
 }
 
-/// An archive of another semantic version is skipped, with a line saying so.
+/// An archive in another layout (one written before keys replaced versions, or a damaged one)
+/// is skipped whole with a line saying so, never a crash, and the kernel is built again.
 #[test]
-fn an_archive_of_another_semantic_version_is_skipped() {
+fn an_archive_in_another_layout_is_skipped() {
     let p = Portable::new("archive-version");
     let cfg = p.built();
     p.export(&cfg);
-    // The version is the first field after the magic string.
+    // The key's length is the first byte after the magic string.
     let mut bytes = std::fs::read(&p.archive).expect("archive");
     let at = bytes.windows(19).position(|w| w == b"satex-cache-archive").expect("magic") + 19;
     bytes[at] = bytes[at].wrapping_add(1);
     std::fs::write(&p.archive, bytes).expect("archive");
     std::fs::remove_dir_all(&p.cache).expect("cache wiped");
     let said = p.import(&cfg);
-    assert!(said.contains("skipped ") && said.contains("built for semantic version"), "{said}");
+    assert!(said.contains("skipped "), "{said}");
     assert!(said.contains("imported 0 cache file(s)"), "{said}");
     let report = p.run(&cfg).cache_report();
     assert!(report.iter().any(|l| l.contains("kernel pdftex: rebuilt")), "{report:?}");
 }
 
-/// An archive of another satex build (the same semantic version, another key: what a site build
+/// An archive of another satex build (another key: what a site build
 /// shipped from a last bundle after the interpreter changed) is skipped whole, never loaded; the
 /// kernel is built again. The bug: the playground built its kernel for minutes on a first visit.
 #[test]
@@ -1956,4 +2051,123 @@ fn a_package_loaded_in_a_group_is_cached_with_its_locals_local() {
     }
     assert_eq!(served(&first, "grouped"), Some(false), "{:?}", first.package_caches);
     assert_eq!(served(&second, "grouped"), Some(true), "{:?}", second.package_caches);
+}
+
+/// A kernel cut short by `limits.format_steps` is never cached, and the run starts the document
+/// from the same state with a cache directory or without one: the same call graph and facts.
+/// Pins the kernel's graph built as vertices only whenever a cache directory was set, but
+/// dropped and its calls replayed only when the kernel was stored, so a truncated kernel with a
+/// cache directory lost every kernel call the uncached run kept.
+#[test]
+fn a_truncated_kernel_starts_the_document_alike_with_or_without_a_cache() {
+    if !installed() {
+        return;
+    }
+    let dir = project("truncated-kernel");
+    let source = "\\def\\a{\\b}\\def\\b{x}\\a\n";
+    // a directory of its own: a seeded full kernel would be read instead
+    let mut cached = Config {
+        cache: Cache { dir: Some(dir.join("fresh")), document: false, ..Default::default() },
+        ..crate::support::config()
+    };
+    cached.limits.format_steps = cached.limits.format_steps.min(20_000);
+    let mut bare = cached.clone();
+    bare.cache.enabled = false;
+    let (a, b) = (Machine::analyze(source, None, &cached), Machine::analyze(source, None, &bare));
+    assert!(a.format.as_ref().is_some_and(|f| f.cache.is_some()), "the kernel run had a cache directory");
+    // The format ends at the cut: the document is its one line, fewer steps than the cut
+    // kernel took. Bug: the kernel's open files were read on as the document's text until
+    // `limits.steps` (TeX Live 2022: more than 17 minutes).
+    for x in [&a, &b] {
+        let kernel = x.format.as_ref().map_or(0, |f| f.steps);
+        assert!(x.steps <= 2 * kernel, "the document read on in the kernel: {} steps, the kernel {kernel}", x.steps);
+    }
+    let calls = |x: &Analysis| -> std::collections::BTreeSet<(String, String)> {
+        let name = |i: usize| x.interner.name(x.calls.nodes[i]).to_string();
+        (0..x.calls.nodes.len()).flat_map(|i| x.calls.edges[i].iter().map(move |&j| (name(i), name(j)))).collect()
+    };
+    let (ca, cb) = (calls(&a), calls(&b));
+    assert!(!ca.is_empty(), "the kernel's macros call others");
+    assert_eq!(ca, cb, "the call graphs differ");
+    same_facts(&a, &b);
+}
+
+/// The state a run reports for a package's cache.
+fn cache_state<'a>(analysis: &'a Analysis, package: &str) -> Option<&'a str> {
+    analysis.package_caches.iter().rfind(|(name, ..)| name == package).map(|(.., state)| state.as_str())
+}
+
+/// A package copies a preamble macro, whose tokens stand in the document.
+/// Lines added above both move that text, not what it says: the copy is
+/// served, and its tokens point where the text stands now. Pins the cache
+/// keyed by the positions of document tokens a package read (TeX Live
+/// 2019's `\@currname` is such a copy, so every edit above a load missed).
+#[test]
+fn a_package_copying_document_text_that_moved_is_served_where_it_stands() {
+    if !installed() {
+        return;
+    }
+    let dir = project("moved-text");
+    std::fs::write(dir.join("copier.sty"), "\\ProvidesPackage{copier}\n\\edef\\copied{\\mytext}\n")
+        .expect("copier.sty");
+    let document = |above: &str| {
+        format!(
+            "\\documentclass{{article}}\n{above}\\def\\mytext{{abc}}\n\\usepackage{{copier}}\n\\begin{{document}}\\copied\\end{{document}}\n"
+        )
+    };
+    run(&dir, &document(""));
+    let moved = document("%\n%\n");
+    let warm = run(&dir, &moved);
+    assert_eq!(cache_state(&warm, "copier"), Some("cached"), "{:?}", warm.package_caches);
+    assert_eq!(differing_facts(&run_cold(&dir, &moved), &warm), Vec::<String>::new());
+}
+
+/// A package whose last line inputs a project file through a macro: the
+/// file's commands are read on no call's behalf, so the package ends with
+/// no call charged. Its end is at rest all the same and the package replays
+/// whole. Pins the end-of-file checkpoint that wanted the charged call of
+/// the load's start back (TeX Live 2019's `\InputIfFileExists`).
+#[test]
+fn a_package_ending_in_an_input_file_replays_whole() {
+    if !installed() {
+        return;
+    }
+    let dir = project("ends-in-input");
+    std::fs::write(dir.join("part.tex"), "\\def\\frompart{x}\n").expect("part.tex");
+    std::fs::write(dir.join("ender.sty"), "\\ProvidesPackage{ender}\n\\def\\inp{\\input{part.tex}}\n\\inp\n")
+        .expect("ender.sty");
+    let document = "\\documentclass{article}\n\\usepackage{ender}\n\\begin{document}\\frompart\\end{document}\n";
+    run(&dir, document);
+    let warm = run(&dir, document);
+    assert_eq!(cache_state(&warm, "ender"), Some("cached"), "{:?}", warm.package_caches);
+    assert_eq!(differing_facts(&run_cold(&dir, document), &warm), Vec::<String>::new());
+}
+
+/// A package that requests cached packages from its own lines: each request line is the
+/// kernel's work around a served load. The second run records each line with the load it
+/// serves (the nested caches only exist from the first run on), the third replays the
+/// package whole and serves nearly all of the load.
+#[test]
+fn request_lines_of_cached_children_replay_with_their_parent() {
+    if !installed() {
+        return;
+    }
+    let dir = project("request-lines");
+    let children = ["ca", "cb", "cc", "cd", "ce", "cf"];
+    for c in children {
+        std::fs::write(dir.join(format!("{c}.sty")), format!("\\ProvidesPackage{{{c}}}\n\\def\\{c}macro{{}}\n"))
+            .expect("child");
+    }
+    let lines: String = children.iter().map(|c| format!("\\RequirePackage{{{c}}}\n")).collect();
+    std::fs::write(dir.join("many.sty"), format!("\\ProvidesPackage{{many}}\n{lines}\\def\\manydone{{}}\n"))
+        .expect("many");
+    let document = "\\documentclass{article}\n\\usepackage{many}\n\\begin{document}x\\end{document}\n";
+    run(&dir, document);
+    let second = run(&dir, document);
+    assert!(children.iter().all(|c| served(&second, c) == Some(true)), "{:?}", second.package_caches);
+    let third = run(&dir, document);
+    assert_eq!(cache_state(&third, "many"), Some("cached"), "{:?}", third.package_caches);
+    assert!(children.iter().all(|c| served(&third, c) == Some(true)), "{:?}", third.package_caches);
+    assert!(third.served_steps * 20 > third.load_steps * 19, "{} of {}", third.served_steps, third.load_steps);
+    assert_eq!(differing_facts(&run_cold(&dir, document), &third), Vec::<String>::new());
 }

@@ -21,6 +21,9 @@ pub struct Limits {
     /// Packages a write may try for a name it adds that the run lacks, most loaded first, each a
     /// small run of the call ([`crate::linter::shared::provider_for`]). 0: the most loaded, untried.
     pub provider_probes: u32,
+    /// Tokens one such run may read: past them the package counts as not taking the call. The
+    /// probe's bound, the same on every machine; `probe_seconds` only stops a stuck one.
+    pub provider_steps: u64,
     pub format_steps: u64,
     /// How deep `\input` may nest.
     pub file_depth: u16,
@@ -50,6 +53,9 @@ pub struct Limits {
     /// Map entries a join, compare or resume of paths walks per step charged
     /// to the line: work between steps counts against `line_steps` too.
     pub walk_per_step: u64,
+    /// Texts the walks inside one step may open (macro bodies, one-of members): past them a
+    /// walk reads what is left as unknown. A walk is not a step, so it is bounded here.
+    pub walk_texts: u64,
     /// Steps a line a run wrote may take where satex replays it to see
     /// what it names (labels, keys). Past them that line names nothing.
     pub replay_steps: u64,
@@ -65,6 +71,10 @@ pub struct Limits {
     /// Seconds a run waits for another process that builds the same cache before it builds
     /// the cache itself. The wait counts toward no step budget, so it is bounded here.
     pub lock_seconds: u64,
+    /// Wall-clock seconds one probe document may take (a package tried for a command the run
+    /// lacks): a backstop past `provider_steps`. A probe it stops counts as untried, and is
+    /// tried again by a later ask. 0 for no limit.
+    pub probe_seconds: u64,
     /// How many undecided `\if` one command may split into paths. Past them
     /// the command's result is unknown text, reported as an `assumption`.
     /// Higher keeps more combinations apart and costs time.
@@ -82,6 +92,11 @@ pub struct Limits {
     /// compares or prints the count, and forks more for wide ranges
     /// (`\int_rand:n {16777215}`).
     pub digit_lengths: u8,
+    /// How many lines of a `\parshape` satex keeps, each its indent and
+    /// length. TeX reads every line the count names (tex.web § 1248). The
+    /// lines past these are read but unknown. A count no budget reads
+    /// to its end leaves the shape unknown. Higher keeps long shapes.
+    pub parshape_lines: u32,
     /// How many alternative paths satex keeps at once. Past them the two
     /// oldest at one place are merged into one. Higher is more precise,
     /// slower and takes more memory.
@@ -111,6 +126,9 @@ pub struct Limits {
     /// reach the files' fixpoint; past them what still changes is unknown.
     /// 1 runs once, with no file of an earlier run.
     pub build_runs: u16,
+    /// The build run after which a file whose lines a run changed again is read as the join of
+    /// both texts. 1 widens what the second run changed: a run fewer, less exact.
+    pub build_widen_after: u16,
     /// How deep a macro that calls itself while an `\if` is undecided is
     /// followed before the recursion is assumed to end there.
     pub recursion_depth: u16,
@@ -136,14 +154,19 @@ pub struct Limits {
     pub call_memo_steps: u32,
     /// A run longer than this keeps no effect, and stops being recorded.
     pub call_memo_longest: u64,
+    /// Writes logged since the last token read from a file before the log
+    /// is folded to one entry per name and group depth.
+    pub write_log: u64,
     /// Runs of one definition that may stay below `call_memo_steps` or
     /// unclean before its calls are no longer recorded, until it is probed
     /// again after `probes << n` such calls (`n`: times it ran out).
     pub call_memo_probes: u16,
     /// Kept effects per code and arguments, one per state met.
     pub call_memo_variants: u16,
-    /// Kept effects in all; past it no more are kept.
+    /// Calls met once that are remembered, to record a call only when met again.
     pub call_memo_entries: u32,
+    /// What the kept effects may hold in all: past it they are dropped and kept anew.
+    pub call_memo_bytes: bytesize::ByteSize,
     /// Debug: a hit runs the call for real and reports where its writes
     /// differ from the kept ones. 0 off.
     pub call_memo_verify: u8,
@@ -166,7 +189,9 @@ pub struct Limits {
     pub join_names: u16,
     /// How many control sequences typed unknown text names: a widened
     /// list of names (`\@elt\bx@A…`) keeps which it may hold. Past them
-    /// it may hold any control sequence.
+    /// it may hold any control sequence. Also how many names with a
+    /// meaning a definition of a name of unknown text may reach (each may
+    /// then mean it too): past them the name is assumed to be a new one.
     pub text_names: u16,
     /// How many exact values a count or length keeps after branches merge.
     /// Past them only its range is kept, so `{1, 5}` becomes `1..5`. Also
@@ -204,6 +229,26 @@ pub struct Limits {
     /// Ceilings on what the run records.
     pub vertices: usize,
     pub facts: usize,
+    /// Words whose hyphenation points a language's patterns keep once found: a paragraph's
+    /// words are hyphenated for its marks and its line breaks, and words recur. Memory only.
+    pub hyph_words: usize,
+    /// Items of the lists the run records to break lines and set boxes
+    /// (`crate::engine::linebreak::Arena`; equal lists share theirs). Past it a list is not
+    /// recorded. Past half of it a run after an edit keeps its own numbering (`Arena::grown`):
+    /// it cannot take the last run's rest and runs to the document's end.
+    pub list_items: usize,
+    /// Items of one recorded list (a paragraph, a box, the page's marks). Past it that list is
+    /// not recorded: its lines and size stay unknown.
+    pub paragraph_items: usize,
+    /// How deeply steps nest inside scans, and quantities inside quantities, before the
+    /// nesting is widened (`nesting-widened`): wasm's stack has no address to ask.
+    pub nesting: u32,
+    /// Environments a completion's probe tries a command in when alone it raises an error
+    /// before reading its arguments (`\caption` outside a float). Editor only.
+    pub probe_contexts: usize,
+    /// Macros the table plugin follows through the run's calls from an environment to find the code
+    /// that splits its body at `&` (tabularray's): an editor feature, no effect on the analysis.
+    pub table_reach: usize,
     pub trace: usize,
     /// Dev mode: the most entries each list of a step's state holds.
     pub trace_state: usize,
@@ -269,14 +314,17 @@ impl Limits {
             "output_forks" => self.output_forks,
             "line_overruns" => self.line_overruns.into(),
             "walk_per_step" => self.walk_per_step,
+            "walk_texts" => self.walk_texts,
             "probe_steps" => self.probe_steps,
             "provider_probes" => self.provider_probes.into(),
+            "provider_steps" => self.provider_steps,
             "replay_steps" => self.replay_steps,
             "repeat_failures" => self.repeat_failures.into(),
             "seconds" => self.seconds,
             "choices" => self.choices.into(),
             "site_forks" => self.site_forks.into(),
             "digit_lengths" => self.digit_lengths.into(),
+            "parshape_lines" => self.parshape_lines.into(),
             "paths" => self.paths.into(),
             "alike" => self.alike.into(),
             "heads_apart" => self.heads_apart.into(),
@@ -290,9 +338,11 @@ impl Limits {
             "call_learn_forks" => self.call_learn_forks.into(),
             "call_memo_steps" => self.call_memo_steps.into(),
             "call_memo_longest" => self.call_memo_longest,
+            "write_log" => self.write_log,
             "call_memo_probes" => self.call_memo_probes.into(),
             "call_memo_variants" => self.call_memo_variants.into(),
             "call_memo_entries" => self.call_memo_entries.into(),
+            "call_memo_bytes" => self.call_memo_bytes.as_u64(),
             "call_memo_verify" => self.call_memo_verify.into(),
             "may_run_depth" => self.may_run_depth.into(),
             "cycle_after" => self.cycle_after.into(),
@@ -303,6 +353,12 @@ impl Limits {
             "expansion_stack" => self.expansion_stack as u64,
             "vertices" => self.vertices as u64,
             "facts" => self.facts as u64,
+            "hyph_words" => self.hyph_words as u64,
+            "list_items" => self.list_items as u64,
+            "paragraph_items" => self.paragraph_items as u64,
+            "nesting" => self.nesting.into(),
+            "probe_contexts" => self.probe_contexts as u64,
+            "table_reach" => self.table_reach as u64,
             "trace" => self.trace as u64,
             "trace_state" => self.trace_state as u64,
             "save_stack" => self.save_stack as u64,
@@ -336,6 +392,8 @@ impl Default for Limits {
             steps: 4_000_000_000,
             probe_steps: 2_000_000,
             provider_probes: 4,
+            // Measured: tikz with a `\node` reads 8M tokens on a cold cache.
+            provider_steps: 100_000_000,
             // The real expl3 reads the Unicode data files while the kernel
             // is built; that is done once and then cached.
             format_steps: 9_000_000_000,
@@ -356,6 +414,8 @@ impl Default for Limits {
             // Measured on a thesis stalled at 60 waiting paths: an entry walked
             // takes ~300 ns, a step ~150 ns, so one entry costs at least a step.
             walk_per_step: 1,
+            // Real walks open a few dozen texts in a step; past this many they take ~0.1 s.
+            walk_texts: 100_000,
             // Measured: a `\newlabel` or `\@writefile` line takes a few
             // thousand steps; one of unknown text may take any number.
             replay_steps: 50_000,
@@ -364,8 +424,9 @@ impl Default for Limits {
             // document needed more than a few before the path repeated
             // itself.
             repeat_failures: 8,
-            seconds: 300,
+            seconds: 600,
             lock_seconds: 60,
+            probe_seconds: 20,
             choices: 8,
             site_forks: 64,
             // Measured: `\the` of a count below 1000 reads apart into one,
@@ -373,6 +434,8 @@ impl Default for Limits {
             // when merged); a 24-bit random number into eight would fork
             // past `site_forks`.
             digit_lengths: 3,
+            // `\list` sets one line per nesting level, wrapfig a few dozen.
+            parshape_lines: 64,
             paths: 16,
             alike: 8,
             heads_apart: 32,
@@ -380,6 +443,7 @@ impl Default for Limits {
             widen_after: 3,
             loop_entries: 256,
             build_runs: 5,
+            build_widen_after: 2,
             recursion_depth: 100,
             loop_heads: 512,
             call_summary_after: 2,
@@ -388,9 +452,11 @@ impl Default for Limits {
             call_learn_forks: 2,
             call_memo_steps: 200,
             call_memo_longest: 200_000,
+            write_log: 1 << 20,
             call_memo_probes: 8,
             call_memo_variants: 4,
             call_memo_entries: 100_000,
+            call_memo_bytes: bytesize::ByteSize::mib(256),
             call_memo_verify: 0,
             may_run_depth: 3,
             cycle_after: 2,
@@ -410,6 +476,12 @@ impl Default for Limits {
             expansion_stack: 4_000,
             vertices: 1_000_000,
             facts: 2_000_000,
+            hyph_words: 50_000,
+            list_items: 1 << 23,
+            paragraph_items: 4_000,
+            nesting: 300,
+            probe_contexts: 4,
+            table_reach: 4_000,
             trace: 200_000,
             trace_state: 32,
             save_stack: 2_000_000,
@@ -468,11 +540,17 @@ pub struct TypesetSwitches {
     pub hyphenate: bool,
     /// `satex/break`: a paragraph's lines from the run's fonts and parameters.
     pub linebreak: bool,
+    /// `satex/mathwidths`: math symbols' widths from the run's math fonts.
+    pub mathwidths: bool,
+    /// `satex/commandText`: what a control word typesets alone, from a sandbox of the run.
+    pub commands: bool,
+    /// `satex/fontAt`: the font the run set the character before a place in.
+    pub fonts: bool,
 }
 
 impl Default for TypesetSwitches {
     fn default() -> TypesetSwitches {
-        TypesetSwitches { hyphenate: true, linebreak: true }
+        TypesetSwitches { hyphenate: true, linebreak: true, mathwidths: true, commands: true, fonts: true }
     }
 }
 
@@ -686,17 +764,29 @@ pub struct CompileConfig {
     /// Whether the build's messages are explained by a full analysis. Off,
     /// the build waits for none and explains by the message's rule only.
     pub explain: bool,
+    /// Whether `satex compile` waits for the analysis that explains the build's messages. Off, it
+    /// returns with the PDF, explains by rules and by what the last analysis said of the same
+    /// messages, and a detached satex analyzes for the next call.
+    pub wait: bool,
     /// Engine passes at most of the `satex` build, until the build files rest.
     pub passes: u32,
     /// The `satex` build keeps a warm engine for the next build: pdfTeX on its format, waiting to
-    /// open the main file, a named pipe in its place between builds (`src/cli/warm.rs`). For a
-    /// build directory of its own (the playground's), never a project's: the main file is a pipe then.
+    /// open a named pipe under `.satex-build` that it reads in the main file's stead
+    /// (`src/cli/warm.rs`). No file of the project is touched. The engine is of use to a build in
+    /// the clock minute it started in and ends with that minute.
     pub warm: bool,
     /// The clock a document may read, for the `satex` build's skip: a build whose read files, the
     /// directories it looked in and this clock are as its last one left them is not run again.
     /// `minute` (TeX's `\time`, sound), `day` (assumes only `\today` reads it). A fixed clock
     /// (`SOURCE_DATE_EPOCH` with `FORCE_SOURCE_DATE=1`) never parts builds.
     pub clock: String,
+    /// The `satex` build extracts memoize's externs itself between passes, with memoize's own
+    /// TeX method, and tells memoize not to (`src/plugins/memoize`): no shell escape, no Perl or
+    /// Python module. Off, memoize extracts as the document says.
+    pub memoize: bool,
+    /// Seconds a build asked for by a page (`satex gui`, the playground's server) may run before
+    /// the server stops it with every process it started. 0: no limit.
+    pub timeout: u32,
     /// A PDF viewer to open after a build: `none`, `auto` (the system's
     /// default opener), or a program. Only the user's own config sets it.
     pub viewer: String,
@@ -708,9 +798,12 @@ impl Default for CompileConfig {
             system: "auto".into(),
             viewer: "none".into(),
             explain: true,
+            wait: false,
             passes: 4,
-            warm: false,
+            warm: true,
+            timeout: 600,
             clock: "minute".into(),
+            memoize: true,
         }
     }
 }
@@ -730,11 +823,29 @@ pub struct LspConfig {
     /// How long a run goes on at most before it pauses to answer the editor's requests
     /// from the last finished run.
     pub pause_ms: u64,
+    /// A build's run that another run follows publishes all its findings, each one a later run
+    /// may change marked provisional: the editor shows them before the build's fixpoint.
+    pub provisional: bool,
+    /// Only a run that took at least this long does ([`LspConfig::provisional`]): a short run's
+    /// final findings come soon, the extra rules' time would delay them.
+    pub provisional_after_ms: u64,
+    /// The Typeset view's rows go out in messages of at most this many (`satex/typesetRows`),
+    /// each built, sent and dropped before the next, so the server never holds a whole
+    /// document's rows. 0 sends them in one message.
+    pub rows_per_message: usize,
 }
 
 impl Default for LspConfig {
     fn default() -> LspConfig {
-        LspConfig { port: None, host: "127.0.0.1".into(), debounce_ms: 100, pause_ms: 10 }
+        LspConfig {
+            port: None,
+            host: "127.0.0.1".into(),
+            debounce_ms: 100,
+            pause_ms: 10,
+            provisional: true,
+            provisional_after_ms: 2000,
+            rows_per_message: 256,
+        }
     }
 }
 
@@ -758,13 +869,16 @@ pub struct TypePlugins {
     pub bibliography: Switch,
     pub index: Switch,
     pub theorem: Switch,
+    pub labels: Switch,
     pub savebox: Switch,
     pub history: HistoryPlugin,
     pub pretty: PrettyPlugin,
     pub overlay: Switch,
     pub frame: Switch,
     pub page: Switch,
+    pub font: FontPlugin,
     pub tagging: Switch,
+    pub class: Switch,
     pub comment_edit: Switch,
     pub whitespace_edit: Switch,
     pub typing: TypingPlugin,
@@ -896,6 +1010,43 @@ impl Default for UnitsPlugin {
     }
 }
 
+/// `type_plugins.font:` the document's font and base size.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct FontPlugin {
+    pub enabled: bool,
+    /// The base sizes offered, as class options.
+    pub sizes: Vec<String>,
+    /// The fonts offered: a name, then the package pdfLaTeX loads, the font fontspec names, and
+    /// `sans` for a sans serif face that becomes the default family. pdfLaTeX offers those whose
+    /// package is installed, fontspec those with a font name. An empty entry offers it on neither.
+    pub fonts: BTreeMap<String, Vec<String>>,
+}
+
+impl Default for FontPlugin {
+    fn default() -> Self {
+        let fonts = [
+            ("EB Garamond", &["ebgaramond", "EB Garamond"][..]),
+            ("Fira Sans", &["FiraSans", "Fira Sans", "sans"]),
+            ("Kp Fonts", &["kpfonts", ""]),
+            ("Latin Modern", &["lmodern", "Latin Modern Roman"]),
+            ("Libertinus", &["libertinus", "Libertinus Serif"]),
+            ("Noto Serif", &["noto-serif", "Noto Serif"]),
+            ("Source Serif", &["sourceserifpro", "Source Serif Pro"]),
+            ("STIX Two", &["stix2", "STIX Two Text"]),
+            ("TeX Gyre Heros", &["tgheros", "TeX Gyre Heros", "sans"]),
+            ("TeX Gyre Pagella", &["tgpagella", "TeX Gyre Pagella"]),
+            ("TeX Gyre Termes", &["tgtermes", "TeX Gyre Termes"]),
+            ("XCharter", &["XCharter", "XCharter"]),
+        ];
+        Self {
+            enabled: true,
+            sizes: strs(&["10pt", "11pt", "12pt"]),
+            fonts: fonts.iter().map(|(k, v)| (k.to_string(), strs(v))).collect(),
+        }
+    }
+}
+
 /// `type_plugins.color:` color names and color expressions.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -964,6 +1115,72 @@ pub struct SliceConfig {
 impl Default for SliceConfig {
     fn default() -> Self {
         Self { trim: true, standalone: true }
+    }
+}
+
+/// `templates:` in `satex.yaml`: where `satex new` and the New document dialog get the provider
+/// files the TeX installation lacks, and what an imported archive may hold.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TemplatesConfig {
+    /// Fetches a template's files from its provider and an archive from its URL (HTTPS). Off,
+    /// only the cache and the TeX installation serve.
+    pub fetch: bool,
+    /// Days a fetched template is used before it is fetched again; offline the cache serves.
+    pub refresh_days: u32,
+    /// Seconds a download may take before it is given up.
+    pub timeout: u32,
+    /// The most an archive may unpack to.
+    pub max_bytes: bytesize::ByteSize,
+    /// The most files an archive may hold.
+    pub max_files: usize,
+}
+
+impl Default for TemplatesConfig {
+    fn default() -> Self {
+        Self { fetch: true, refresh_days: 7, timeout: 20, max_bytes: bytesize::ByteSize::mib(50), max_files: 2000 }
+    }
+}
+
+/// `updates:` in `satex.yaml`: how `satex updates` learns the newest release of each package the
+/// document loads, and whether it runs that release to tell what changed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UpdatesConfig {
+    /// Asks `index` and `archives` over HTTPS. Off, only the cache and `file://` sources serve.
+    pub fetch: bool,
+    /// The release record of package `{name}`: CTAN's JSON API, or a `file://` path.
+    pub index: String,
+    /// Where a release's files come from, tried in order: `{install}` and `{path}` are the
+    /// record's `install` and `ctan.path`. A zip, or a `file://` folder.
+    pub archives: Vec<String>,
+    /// Runs the newest release of each outdated package and lists what it defines differently.
+    pub changes: bool,
+    /// Days a fetched record counts as current. Past that a package is never reported current.
+    pub refresh_days: u32,
+    /// Seconds a download may take.
+    pub timeout: u32,
+    /// The most a release archive may unpack to.
+    pub max_bytes: bytesize::ByteSize,
+    /// The most files a release archive may hold.
+    pub max_files: usize,
+}
+
+impl Default for UpdatesConfig {
+    fn default() -> Self {
+        Self {
+            fetch: false,
+            index: "https://ctan.org/json/2.0/pkg/{name}".into(),
+            archives: vec![
+                "https://mirrors.ctan.org/install{install}".into(),
+                "https://mirrors.ctan.org{path}.zip".into(),
+            ],
+            changes: false,
+            refresh_days: 1,
+            timeout: 20,
+            max_bytes: bytesize::ByteSize::mib(50),
+            max_files: 5000,
+        }
     }
 }
 
@@ -1049,7 +1266,7 @@ impl Default for PlaygroundConfig {
             math_inline: "\\(".into(),
             smart_scripts: true,
             tex_breaks: false,
-            smart_wrap: false,
+            smart_wrap: true,
         }
     }
 }
@@ -1368,8 +1585,8 @@ pub struct Conventions {
     /// out of listings, completion and the public-name lints.
     pub internal: Vec<String>,
     /// Commands besides those satex finds in the kernel whose next control
-    /// sequence is the name they define, as the package files on disk are
-    /// read for what they define.
+    /// sequence (or braced word) is the name they define, as the package files on disk are
+    /// read for what they define. `X end`: `X` also defines `end` + that name.
     pub definers: Vec<String>,
     /// What each letter after the `:` of an expl3 name says of its argument (interface3,
     /// "Function and variable names"): offered when such a name is typed.
@@ -1386,6 +1603,7 @@ pub struct Conventions {
     pub math: MathConventions,
     pub csname: Csname,
     pub fonts: Fonts,
+    pub writing: Writing,
     /// Primitives LaTeX has a command for (chktex's `Primitives`), with it.
     pub alternatives: BTreeMap<String, String>,
     pub completion: Completion,
@@ -1527,6 +1745,9 @@ area! {
         near: usize = 400,
         /// How far past a display the sentence's punctuation is looked for.
         after: usize = 24,
+        /// The inline delimiters satex writes around math: `\\(`, `$`, or `auto`: `$` without a
+        /// LaTeX kernel (no `\\(` defined) or in a file that uses `$` and no `\\(`, else `\\(`.
+        inline: String = "auto".into(),
     }
 }
 
@@ -1554,6 +1775,16 @@ area! {
 }
 
 area! {
+    /// How the LaTeX a widget writes reads the document's own.
+    Writing {
+        /// Text that is the whole body of a document's command without arguments is written as that command.
+        macros: bool = false,
+        /// Characters a written call must have for a note when it then stands twice, to extract it.
+        repeat_min: usize = 16,
+    }
+}
+
+area! {
     Completion {
         /// Items one answer lists: commands, and the packages, files, labels or citations found.
         shown: usize = 300,
@@ -1577,10 +1808,16 @@ area! {
         unloaded_min: usize = 3,
         /// Expansions a command's body is followed to find math-only material, which ranks it first in math.
         math_depth: u8 = 2,
+        /// A math-only command completed in text is set in math (`conventions.math.inline`), the caret inside.
+        wrap_math: bool = true,
         /// Environments whose body is math, where completion ranks math commands first.
         math_environments: Vec<String> = strs(&["equation", "align", "gather", "multline", "flalign", "alignat", "eqnarray", "math", "displaymath", "dmath"]),
         /// Characters of an undocumented body its hover shows as what it expands to.
         body: usize = 80,
+        /// Commands authors type most, most first: among names equally close to what is typed and used equally
+        /// often in the document, these lead (`\textb` takes `\textbf` before `\textbackslash`). A seed: the
+        /// document's own uses rank before it.
+        common: Vec<String> = strs(&["textbf", "emph", "textit", "section", "subsection", "label", "ref", "cite", "begin", "end", "item", "includegraphics", "caption", "centering", "usepackage", "footnote", "url", "href", "frac", "sqrt", "sum", "int", "alpha", "beta", "mathbf", "mathrm", "texttt", "textsc", "newcommand", "hline", "vspace", "hspace", "noindent", "paragraph", "chapter", "subsubsection", "eqref", "cref", "left", "right"]),
         /// Commands whose argument is a name to pick from a list.
         pick: Vec<String> = strs(&["begin", "end", "usepackage", "documentclass", "ref", "cref", "cite"]),
         /// Environments whose `\begin` reads arguments through an inner macro, with how many.
@@ -1640,7 +1877,17 @@ impl Default for Conventions {
         ];
         Conventions {
             internal: vec!["@".into(), "^__".into(), "_.*:".into()],
-            definers: Vec::new(),
+            // ltcmd's environment definers (usrguide, "Creating document commands and environments"):
+            // the kernel never calls them itself, so no run of a document without them shows them
+            definers: [
+                "NewDocumentEnvironment",
+                "RenewDocumentEnvironment",
+                "ProvideDocumentEnvironment",
+                "DeclareDocumentEnvironment",
+            ]
+            .into_iter()
+            .flat_map(|d| [d.to_string(), format!("{d} end")])
+            .collect(),
             math_symbols: [
                 (0x000, 'Γ'),
                 (0x001, 'Δ'),
@@ -1774,6 +2021,7 @@ impl Default for Conventions {
             math: MathConventions::default(),
             csname: Csname::default(),
             fonts: Fonts::default(),
+            writing: Writing::default(),
             alternatives: pairs(
                 &[
                     ("above", r"`\frac`"),
@@ -1817,6 +2065,11 @@ pub struct Load {
     /// Find what a package or class file expects loaded from the names it
     /// uses and the packages on disk that define them.
     pub expect_detect: bool,
+    /// The class a package analyzed alone is loaded under. Such a file is
+    /// read as a document loads it: a package by `\usepackage` under this
+    /// class, a class by `\documentclass`, then an empty document body.
+    /// Empty reads the file by itself, with no document around it.
+    pub alone: String,
     /// Read the files an earlier build wrote (`build_extensions`) as they
     /// are on disk. Off, they count as absent: the run over-approximates
     /// them by what it writes itself.
@@ -1849,6 +2102,7 @@ impl Default for Load {
             skip: Vec::new(),
             expect: Vec::new(),
             expect_detect: true,
+            alone: "article".into(),
             build_files: false,
             build_extensions: [
                 "aux",
@@ -1948,6 +2202,9 @@ pub struct Cache {
     /// Keep each document's whole analysis: a rerun of a document whose
     /// text, settings and every file it read are unchanged executes nothing.
     pub document: bool,
+    /// Experimental: a build's rerun keeps the saved states of the run before and compares its
+    /// own with them between paragraphs. `-vv` says how they differ. Nothing is reused yet.
+    pub reruns: bool,
     /// Whether satex prepares the kernels and installed packages in a
     /// low-priority background process (`satex cache build --background`).
     /// `ask` asks once, at the first interactive start or in the editor, and
@@ -1976,6 +2233,7 @@ impl Default for Cache {
             index: CacheIndex::default(),
             tail: 256,
             document: true,
+            reruns: false,
             background: Background::Ask,
         }
     }
@@ -2025,6 +2283,10 @@ pub struct AnalysisConfig {
     /// its type, and raises nothing. Reported as `call-learned-effect`.
     /// `false` walks every such call.
     pub assume_call_learned_effect: bool,
+    /// Assumes a widened expl3 variable (`\l_x_fp`) holds a value of its
+    /// kind: the ends its kind's constants share stay around typed text.
+    /// Reported as `variable-kind-shape`. `false` widens it to any text.
+    pub assume_variable_kind_shape: bool,
 }
 
 impl Default for AnalysisConfig {
@@ -2039,6 +2301,7 @@ impl Default for AnalysisConfig {
             assume_messages_output_only: true,
             assume_unknown_char_catcode: true,
             assume_call_learned_effect: true,
+            assume_variable_kind_shape: true,
         }
     }
 }
@@ -2294,6 +2557,12 @@ pub struct Config {
     /// What `satex slice` leaves out.
     #[serde(default)]
     pub slice: SliceConfig,
+    /// Where `satex new` gets provider files, and what an imported archive may hold.
+    #[serde(default)]
+    pub templates: TemplatesConfig,
+    /// Where `satex updates` learns of new releases and gets them.
+    #[serde(default)]
+    pub updates: UpdatesConfig,
     #[serde(default)]
     pub playground: PlaygroundConfig,
     /// The editor features each type plugin adds.
@@ -2358,6 +2627,8 @@ impl Default for Config {
             compile: CompileConfig::default(),
             docs: DocsConfig::default(),
             slice: SliceConfig::default(),
+            templates: TemplatesConfig::default(),
+            updates: UpdatesConfig::default(),
             playground: PlaygroundConfig::default(),
             type_plugins: TypePlugins::default(),
             l3build: L3buildConfig::default(),
@@ -2579,7 +2850,11 @@ impl Default for Profiles {
     /// all: a package or class is read as its author sees it — `@` a
     /// letter, its own definitions not flagged for missing a use outside
     /// what it defines, and the lints that only make sense for a document
-    /// with a build of its own to check turned off. A `.dtx`/`.ins` unpacks
+    /// with a build of its own to check turned off. So are those that read
+    /// a library as a document: it programs in TeX's primitives, states
+    /// each package it needs itself and loads them for the macros its users
+    /// call, defines colors for them, and repeats code where a macro would
+    /// change when it expands. A `.dtx`/`.ins` unpacks
     /// to one of those, so it gets the same defaults. Plain TeX has no
     /// LaTeX packages or classes to follow, and none of its own labels or
     /// microtype to suggest.
@@ -2589,9 +2864,10 @@ impl Default for Profiles {
         }
         let package = parse(
             "at_letter: true\n\
-             lints: {unused-definition: {report_public: false}}\n\
+             lints: {unused-definition: {report_public: false}, clones: {enabled: false}}\n\
              lint_off: [analysis-imprecision, unused-label, microtype-available, preamble-cost, \
-               comment-marker, \
+               comment-marker, primitive-tex-command, unused-package, redundant-package-load, unused-color, \
+               unintended-escape, \
                user-pattern, unreferenced-numbered-display, build-shell-escape-missing, \
              build-shell-escape-unneeded, build-engine-mismatch, build-bibliography-disabled, \
              build-bibliography-unneeded, build-missing-custom-dependency, \
@@ -2629,6 +2905,7 @@ pub struct Lints {
     pub itemize_described: ItemizeDescribed,
     pub package_successor: PackageSuccessor,
     pub clones: Clones,
+    pub spelled_out_macro: SpelledOutMacro,
     pub quiet_arguments: QuietArguments,
     /// When an editor asks whether a frequent finding is the project's style.
     pub style_prompt: StylePrompt,
@@ -2814,6 +3091,22 @@ pub struct IndistinctColors {
 impl Default for IndistinctColors {
     fn default() -> IndistinctColors {
         IndistinctColors { below: 15.0, apart: 30.0 }
+    }
+}
+
+/// `lints.spelled-out-macro:` in `satex.yaml`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
+pub struct SpelledOutMacro {
+    /// When a typed word is the command's word ([`crate::util::equiv::Level`]).
+    pub equivalence: crate::util::equiv::Level,
+    /// Words shorter than this are left alone.
+    pub min_length: usize,
+}
+
+impl Default for SpelledOutMacro {
+    fn default() -> SpelledOutMacro {
+        SpelledOutMacro { equivalence: crate::util::equiv::Level::Glyphs, min_length: 3 }
     }
 }
 
@@ -3045,11 +3338,16 @@ impl Default for WrongDash {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct UnusedDefinition {
-    /// Whether the rule also reports a name with no `@` and no
-    /// expl3-style `module_function:signature`. The package and class
-    /// profiles turn it off, since such a name is the package's public
-    /// interface, and the caller, not this run, is the one to use it.
+    /// Whether the rule also reports a name that is not `private`. The
+    /// package and class profiles turn it off, since such a name is the
+    /// package's public interface, and the caller, not this run, is the one
+    /// to use it.
     pub report_public: bool,
+    /// Regexes on the name (no backslash) of what is private: an `@`
+    /// (source2e `classes.dtx`), expl3's `__` (interface3, "The naming
+    /// scheme": `\__module_function:n`, `\l__module_name_tl`). A public
+    /// expl3 function (`\module_function:n`) is other packages' interface.
+    pub private: Vec<String>,
     /// Regexes on the name as written (`\\my@hook`). A match is never reported.
     pub ignore: Vec<String>,
     /// Whether the rule also reports a pgf key nothing uses. Off by
@@ -3059,7 +3357,12 @@ pub struct UnusedDefinition {
 
 impl Default for UnusedDefinition {
     fn default() -> UnusedDefinition {
-        UnusedDefinition { report_public: true, ignore: Vec::new(), pgf_keys: false }
+        UnusedDefinition {
+            report_public: true,
+            private: vec!["@".into(), "__".into()],
+            ignore: Vec::new(),
+            pgf_keys: false,
+        }
     }
 }
 
@@ -3235,6 +3538,71 @@ fn read_config_value(path: &Path) -> Result<serde_yaml_ng::Value, String> {
 }
 
 impl Config {
+    /// What of the configuration changes the interpretation, the rest at its
+    /// default: the key every cache of interpreted code (the kernel, a
+    /// package) is stored under. `local` writes a path as the cache's trees
+    /// do, and `shell_escape` is the `\write18` access in effect.
+    pub fn interpretation(&self, local: &dyn Fn(&PathBuf) -> PathBuf, shell_escape: ShellEscape) -> Config {
+        let mut settings = self.clone();
+        settings.source = None;
+        settings.cache = crate::project::config::Cache::default();
+        // Only what changes the interpretation keys a cache: not how a
+        // run reports, lints or traces, not its resource limits, and not
+        // the engine as configured (the engine in effect is keyed above).
+        let defaults = crate::project::config::Config::default();
+        settings.verbose = 0;
+        settings.timings = false;
+        settings.gaps = defaults.gaps.clone();
+        settings.lint_off = Vec::new();
+        settings.lints = defaults.lints.clone();
+        settings.latex_alternatives = Default::default();
+        // conventions past these steer only reports and completion
+        let c = settings.conventions;
+        settings.conventions = crate::project::config::Conventions {
+            internal: c.internal,
+            definers: c.definers,
+            signatures: c.signatures,
+            ..defaults.conventions.clone()
+        };
+        settings.profile = None;
+        settings.profiles = defaults.profiles.clone();
+        settings.depp = defaults.depp.clone();
+        settings.lsp = defaults.lsp.clone();
+        // Which files the project takes as given steers reports and fixes only
+        // (`linter::Frozen`); its globs are absolute, so they would key a cache by the folder.
+        // The build, the documentation shown and slices are tools after the run.
+        settings.project = defaults.project.clone();
+        (settings.compile, settings.docs, settings.slice) =
+            (defaults.compile.clone(), defaults.docs.clone(), defaults.slice.clone());
+        // kept call arguments are a report (completion reads them), not interpretation
+        settings.record_arguments = false;
+        settings.engine = None;
+        // the `\write18` access in effect, which build files may set (`\shellescape`)
+        settings.shell_escape = Some(shell_escape);
+        // a segment keys on what it makes of the clock, not on the setting: one tree
+        // serves every date
+        settings.clock = Default::default();
+        // Where the trees are is no part of what a package does: each
+        // segment checks its lookups and file contents itself.
+        settings.texlive.root = None;
+        settings.texmf.bundle = None;
+        settings.texmf.roots.clear();
+        settings.search_paths = settings.search_paths.iter().map(local).collect();
+        settings.preload = settings.preload.as_ref().map(local);
+        (settings.trace, settings.trace_lines, settings.trace_col, settings.trace_file) = (false, None, 0, None);
+        (settings.trace_end_col, settings.trace_steps) = (0, None);
+        // `*` opens only the document's own switches, never the kernel's or a package's
+        settings.opaque_conditionals.retain(|n| n != EVERY_SWITCH);
+        // tracing watches the run, it changes nothing it does
+        (settings.trace_document_only, settings.trace_state, settings.trace_stop) = (false, false, None);
+        let l = &mut settings.limits;
+        (l.seconds, l.memory, l.threads, l.cache_size) = (0, Default::default(), 0, Default::default());
+        (l.degrade_at_percent, l.facts, l.vertices, l.trace, l.steps) = (0, 0, 0, 0, 0);
+        // the editor's probes only: no part of what a package does
+        l.probe_contexts = 0;
+        settings
+    }
+
     pub fn distribution_request(&self) -> crate::caches::distribution::Request {
         crate::caches::distribution::Request {
             roots: self.texmf.roots.clone(),

@@ -99,6 +99,12 @@ test('math layer: spans from the SyncTeX math records', async () => {
   const boxes = [B('(', 70, 100, 300, 7, 2), B('(', 70, 112, 300, 7, 2), B('$', 100, 100), B('$', 130, 100), B('$', 340, 100), B('$', 90, 112)];
   assert.deepEqual(L.mathSpans(boxes).map((s) => [s.l, s.r, s.t, s.d]), [[100, 130, 93, 102], [340, 370, 93, 102], [70, 90, 105, 114]]);
   assert.deepEqual(L.mathSpans([B('$', 10, 50)]), [], 'an unpaired record: no span');
+  // `\maketitle`'s author: a `tabular` LaTeX builds in `$…$`, its box fills the math: text, no span (user 2026-11-22: the author tinted math)
+  assert.deepEqual(L.mathSpans([B('$', 200, 150), B('(', 200, 150, 120, 8, 3), B('$', 320, 150)]), []);
+  // a display has no `$` records (user 2026-11-22: an equation stayed untinted): its source lines' boxes, the widest
+  // (the display's line out to its number) dropped
+  const D = (x, y, w, line) => ({ page: 2, file: 'ch/a.tex', line, kind: '(', x, y, w, h: 8, d: 3 });
+  assert.deepEqual(L.mathSpans([D(70, 200, 300, 33), D(150, 200, 100, 33), D(160, 195, 20, 33), D(70, 300, 300, 40)], [['a.tex', 31, 33]]).map((s) => [s.page, s.l, s.r, s.t, s.d]), [[2, 150, 250, 187, 203]]);
 });
 // The legend (user 2026-11-19): every layer's switch shows a swatch in its colour, read from a theme token so it follows
 // light and dark as its overlay does (pins: no layer without a `.sw-<id>` rule, no swatch with a bare hex colour).
@@ -116,4 +122,27 @@ test('runs of one key', async () => {
   const L = self.satexLayers;
   assert.deepEqual(L.runsBy(['inline', 'inline', null, 'display', 'display', 'inline'], (x) => x), [['inline', 0, 1], ['display', 3, 4], ['inline', 5, 5]]);
   assert.deepEqual(L.runsBy([null, ''], (x) => x), []);
+});
+// The layers place a run's facts (lines of the run's text) on a build's pages (lines of the built text). The two
+// differ while a build lands under the keys: the environments went from the pages when the editor wrapped a typed line
+// (their lines one off), the origins until the keys rested (typeswap 2026-11-22). Pins lineMap: lines above an edit
+// keep their number, lines below move by the lines the edit added or took, the edit's own lines are `changed`.
+test('a line of one text in another: above, below and inside an edit', async () => {
+  const { lineMap } = self.satexLayers, text = (...l) => l.join('\n');
+  const from = text('a', 'b', 'c', 'd', 'e'), same = lineMap(from, from);
+  assert.deepEqual([1, 3, 5].map((n) => [same(n), same.changed(n)]), [[1, false], [3, false], [5, false]], 'the same text: every line its own');
+  // a line typed in and wrapped: one line became two
+  const grown = lineMap(from, text('a', 'b', 'c typed', 'and wrapped', 'd', 'e'));
+  assert.deepEqual([1, 2, 3, 4, 5].map(grown), [1, 2, 3, 5, 6]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(grown.changed), [false, false, true, false, false]);
+  // lines taken out: those below move up, the ones gone stand at the nearest line left
+  const cut = lineMap(from, text('a', 'e'));
+  assert.deepEqual([1, 2, 3, 4, 5].map(cut), [1, 2, 2, 2, 2]);
+  assert.deepEqual([1, 2, 3, 4, 5].map(cut.changed), [false, true, true, true, false]);
+  // an edit inside one line: no line moves
+  const typed = lineMap(from, text('a', 'b', 'c!', 'd', 'e'));
+  assert.deepEqual([2, 3, 4].map((n) => [typed(n), typed.changed(n)]), [[2, false], [3, true], [4, false]]);
+  // repeated lines around the edit: the count of lines is kept from both ends
+  const rep = lineMap(text('x', 'x', 'x'), text('x', 'x', 'x', 'x'));
+  assert.ok([1, 2, 3].every((n) => rep(n) >= n && rep(n) <= n + 1), 'a line among equals stays or moves by the one added');
 });

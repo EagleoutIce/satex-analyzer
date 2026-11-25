@@ -503,10 +503,7 @@ fn engines_needed(analysis: &Analysis) -> Vec<(Engine, String)> {
             .collect();
     let mut out: Vec<(Engine, String)> = Vec::new();
     for expansion in &analysis.facts.expansions {
-        if !matches!(
-            expansion.meaning,
-            crate::analysis::facts::MeaningKind::Undefined | crate::analysis::facts::MeaningKind::UndefinedApproximated
-        ) {
+        if !expansion.meaning.undefined() {
             continue;
         }
         let name = analysis.interner.name(expansion.name);

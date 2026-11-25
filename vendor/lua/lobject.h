@@ -187,7 +187,8 @@ extern char satex_unknown_tag;
 #define satex_isunknown(o) \
   (ttislightuserdata(o) && pvalue(o) == (void *)&satex_unknown_tag)
 LUAI_FUNC l_noret satex_unknown (struct lua_State *L);
-#define l_isfalseL(L,o)	(satex_isunknown(o) ? (satex_unknown(L), 0) : l_isfalse(o))
+LUAI_FUNC int satex_choose (struct lua_State *L);
+#define l_isfalseL(L,o)	(satex_isunknown(o) ? satex_choose(L) : l_isfalse(o))
 
 
 #define iscollectable(o)	(rttype(o) & BIT_ISCOLLECTABLE)
@@ -355,6 +356,7 @@ typedef union UTString {
 typedef struct Udata {
   CommonHeader;
   lu_byte ttuv_;  /* user value's tag */
+  unsigned int satex_epoch;  /* satex: the epoch it was made in */
   struct Table *metatable;
   size_t len;  /* number of bytes */
   union Value user_;  /* user value */
@@ -508,6 +510,7 @@ typedef struct Table {
   lu_byte flags;  /* 1<<p means tagmethod(p) is not present */
   lu_byte lsizenode;  /* log2 of size of 'node' array */
   unsigned int sizearray;  /* size of 'array' array */
+  unsigned int satex_epoch;  /* satex: the epoch it was made in */
   TValue *array;  /* array part */
   Node *node;
   Node *lastfree;  /* any free position is before this position */

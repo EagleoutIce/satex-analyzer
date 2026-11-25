@@ -254,3 +254,90 @@ fn clones_are_never_offered_as_style() {
     let prompt = satex::project::config::StylePrompt { min_findings: 1, ..Default::default() };
     assert!(satex::linter::style_candidates(&records, &prompt).iter().all(|c| c["code"] != "clones"));
 }
+
+/// Intuition: a name the document keeps in one command, typed out by hand
+/// elsewhere, is a copy that stays behind when the name changes. Pins the
+/// `spelled-out-macro` info for a one-word macro and a glossary entry's name,
+/// and silence for the uses that go through the command.
+#[test]
+fn a_word_a_command_sets_typed_out_is_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{glossaries}\n\\makenoidxglossaries\n\
+        \\newglossaryentry{cellr}{name={cellR},description={a cell}}\n\\newcommand\\model{TinyNet}\n\
+        \\makeatletter\\def\\@tempa{beats}\\makeatother\n\\newcommand\\unused{uses}\n\\newcommand\\branch{main}\n\\begin{document}\n\\model{} beats \\gls{cellr} on \\branch.\nTinyNet uses cellR too, the main one.\n\\end{document}\n";
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &crate::support::config());
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("spelled-out-macro"))
+        .filter_map(|f| f.get("message").and_then(|m| m.as_str()).map(str::to_string))
+        .collect();
+    assert_eq!(found.len(), 2, "{found:?}");
+    // never an everyday word a macro holds (`\\branch` = `main`)
+    assert!(!found.iter().any(|m| m.contains("main")), "{found:?}");
+    // never an internal scratch macro that happens to hold a word of the text (`\\reserved@a`, `\\@tempa`)
+    assert!(!found.iter().any(|m| m.contains('@')), "{found:?}");
+    assert!(found.iter().any(|m| m.contains("`\\model{}`")), "{found:?}");
+    assert!(found.iter().any(|m| m.contains("`\\gls{cellr}`")), "{found:?}");
+    // in a caption that goes to the list of figures (a moving argument) glossaries advises
+    // `\\glsentrytext`; with a short title only that goes there and `\\gls` stands
+    let caption = |cap: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\n\\usepackage{{glossaries}}\n\\makenoidxglossaries\n\\newglossaryentry{{cellr}}{{name={{cellR}},description={{a cell}}}}\n\\begin{{document}}\n\\gls{{cellr}}\n\\begin{{figure}}\\caption{cap}\\end{{figure}}\n\\listoffigures\n\\end{{document}}\n"
+        );
+        let analysis = satex::analysis::machine::Machine::analyze(&source, None, &crate::support::config());
+        satex::linter::lint(&analysis)
+            .iter()
+            .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("spelled-out-macro"))
+            .filter_map(|f| f.get("message").and_then(|m| m.as_str()).map(str::to_string))
+            .collect::<Vec<_>>()
+    };
+    let long = caption("{Runs of cellR}");
+    assert!(long.len() == 1 && long[0].contains("\\glsentrytext{cellr}"), "{long:?}");
+    let short = caption("[Runs]{Runs of cellR}");
+    assert!(short.len() == 1 && short[0].contains("`\\gls{cellr}`"), "{short:?}");
+}
+
+/// Intuition: the fix of `spelled-out-macro` writes the command in prose,
+/// where `_` and `:` are not letters. Pins silence for an expl3-style name
+/// the document wrote under `\ExplSyntaxOn` (`\my_word:`): the fix
+/// `\my_word:{}` would break the line, the bug was an internal name shown
+/// to the author.
+#[test]
+fn a_word_set_by_a_name_the_prose_cannot_write_is_not_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\\def\\my_word:{Gamma}\\ExplSyntaxOff\n\\begin{document}\n\
+        \\ExplSyntaxOn\\my_word:\\ExplSyntaxOff{} and Gamma again.\n\\end{document}\n";
+    let analysis = satex::analysis::machine::Machine::analyze(source, None, &crate::support::config());
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("spelled-out-macro"))
+        .filter_map(|f| f.get("message").and_then(|m| m.as_str()).map(str::to_string))
+        .collect();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+/// Intuition: a file a script writes, only definitions (`stats.tex`: one number per macro), is data:
+/// its unused names are one finding, its look-alike lines and equal values no clones. Pins 1289
+/// unused-definition and 334 clone findings on one thesis's generated statistics file.
+#[test]
+fn a_file_of_definitions_is_one_finding_and_no_clones() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("data-file"));
+    let stats: String =
+        (0..25).map(|i| format!("\\newcommand{{\\StatRun{}Value}}{{{}}}\n", (b'A' + i as u8) as char, i % 3)).collect();
+    std::fs::write(dir.join("stats.tex"), stats).unwrap();
+    let main = "\\documentclass{article}\n\\input{stats}\n\\begin{document}\nRuns: \\StatRunAValue.\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let analysis = Machine::analyze(main, Some(&dir.join("main.tex")), &crate::support::config());
+    let rows = satex::linter::lint(&analysis);
+    let unused: Vec<&str> =
+        (rows.iter()).filter(|r| r["code"] == "unused-definition").filter_map(|r| r["message"].as_str()).collect();
+    assert!(unused.len() == 1 && unused[0].starts_with("24 names stats.tex defines"), "{unused:?}");
+    assert!(!rows.iter().any(|r| r["code"] == "clones"), "{rows:?}");
+}

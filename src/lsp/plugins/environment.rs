@@ -111,5 +111,5 @@ fn edits(cx: &Cx, pair: &Pair, env: &str) -> Vec<TextEdit> {
     }
     n.args.extend((kept..wants).map(|_| snapshot::Arg::text('{', "")));
     n.name = env.into();
-    snapshot::edits(cx.analysis, cx.doc, &[n])
+    snapshot::edits(cx.analysis, cx.doc, cx.file(), &[n])
 }

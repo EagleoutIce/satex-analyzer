@@ -110,6 +110,11 @@ fn names_by_pattern(text: &str, stem: &str, name: &str) -> bool {
     static ARG: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let arg = ARG.get_or_init(|| regex::Regex::new(r"\{([^{}\s]*#[1-9][^{}\s]*)\}").expect("valid regex"));
     arg.captures_iter(text).any(|c| {
+        // a name around the parameter (`fancyqr-style-#1.code`): a bare `{#1}` is a macro's argument
+        // and would name every file
+        if !c[1].chars().any(|ch| ch.is_alphanumeric() && !c[1].contains(&format!("#{ch}"))) {
+            return false;
+        }
         let pattern = regex::escape(&c[1]).replace(r"\#", "#");
         let pattern = regex::Regex::new(r"#[1-9]").expect("valid regex").replace_all(&pattern, "[^/{}]+");
         regex::Regex::new(&format!("^{pattern}$")).is_ok_and(|re| re.is_match(name) || re.is_match(stem))
@@ -293,6 +298,27 @@ impl Discovery {
         roots
     }
 
+    /// The documents that name `file` anywhere in their text, directly or through inputs that do,
+    /// nearest first: [`Self::candidate_roots`] reads only a file's head, where a chapter's
+    /// `\\input` may stand far below. For one question about one file (the CLI given an input).
+    pub fn naming_roots(&self, file: &Path) -> Vec<PathBuf> {
+        let full = |p: &Path| std::fs::read_to_string(p).unwrap_or_default();
+        let files: Vec<(&PathBuf, String)> = self.documents.iter().chain(&self.inputs).map(|p| (p, full(p))).collect();
+        let mut set = vec![file.to_path_buf()];
+        let mut next = 0;
+        while next < set.len() {
+            let named = set[next].clone();
+            next += 1;
+            for (path, text) in &files {
+                if !set.iter().any(|s| crate::project::paths::same_file(s, path)) && names(text, &named) {
+                    set.push(path.to_path_buf());
+                }
+            }
+        }
+        // nearest first: the document that names the file itself before one naming that document
+        set.into_iter().filter(|p| self.documents.contains(p)).collect()
+    }
+
     /// `seeds` and the project files they name, transitively (`forward`),
     /// or those naming them.
     fn reach(&self, mut set: Vec<PathBuf>, forward: bool) -> Vec<PathBuf> {
@@ -384,6 +410,14 @@ impl Discovery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A macro's bare `{#1}` names no file; a part pattern around it (`{fancyqr-style-#1.code}`) does.
+    /// Pins expand.tex's `\\def\\x#1{#1}` counted as reading `chapter.tex`.
+    #[test]
+    fn a_bare_parameter_names_no_file() {
+        assert!(!names_by_pattern("\\def\\twice#1{#1#1}", "chapter", "chapter.tex"));
+        assert!(names_by_pattern("\\input{fancyqr-style-#1.code}", "fancyqr-style-x", "fancyqr-style-x.code"));
+    }
 
     /// A vendored bundle's `build.lua` names its own examples: only the
     /// project's top-level build files hint at the root, so the thesis at the

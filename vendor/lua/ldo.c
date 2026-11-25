@@ -649,6 +649,7 @@ LUA_API int lua_resume (lua_State *L, lua_State *from, int nargs) {
   int status;
   unsigned short oldnny = L->nny;  /* save "number of non-yieldable" calls */
   lua_lock(L);
+  satex_write(L, L);  /* satex: a coroutine's stack is state */
   if (L->status == LUA_OK) {  /* may be starting a coroutine */
     if (L->ci != &L->base_ci)  /* not in base level? */
       return resume_error(L, "cannot resume non-suspended coroutine", nargs);

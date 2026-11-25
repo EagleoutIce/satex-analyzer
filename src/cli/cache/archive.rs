@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::caches::format::{HASHES_FILE, SEMANTIC_VERSION, cache_holds, cache_key, is_current_cache};
+use crate::caches::format::{HASHES_FILE, cache_holds, cache_key, is_current_cache};
 
 const MAGIC: &str = "satex-cache-archive";
 
@@ -17,7 +17,6 @@ pub const BUNDLE_ARCHIVE: &str = "satex-cache.bin";
 #[derive(Serialize, Deserialize)]
 struct Archive {
     magic: String,
-    semantic: u32,
     key: String,
     entries: Vec<(String, Vec<u8>)>,
 }
@@ -59,7 +58,7 @@ pub fn export(
     let count = entries.len();
     let holds: std::collections::BTreeMap<_, _> =
         entries.iter().filter_map(|(n, _)| Some((n.clone(), cache_holds(n)?.to_string()))).collect();
-    let archive = Archive { magic: MAGIC.into(), semantic: SEMANTIC_VERSION, key: cache_key().into(), entries };
+    let archive = Archive { magic: MAGIC.into(), key: cache_key().into(), entries };
     let bytes = postcard::to_allocvec(&archive).map_err(|e| e.to_string())?;
     std::fs::write(&target, &bytes).map_err(|e| format!("{}: {e}", target.display()))?;
     if json {
@@ -84,10 +83,9 @@ pub fn import(directory: &Path, source: &Path, json: bool, out: &mut impl Write)
     match postcard::from_bytes::<Archive>(&bytes) {
         Err(e) => skipped.push(format!("{}: not a cache archive ({e})", source.display())),
         Ok(a) if a.magic != MAGIC => skipped.push(format!("{}: not a cache archive", source.display())),
-        Ok(a) if a.semantic != SEMANTIC_VERSION || a.key != cache_key() => skipped.push(format!(
-            "{}: built for semantic version {} (key {}), this build is {SEMANTIC_VERSION} (key {})",
+        Ok(a) if a.key != cache_key() => skipped.push(format!(
+            "{}: built by another satex build (key {}), this build is key {}",
             source.display(),
-            a.semantic,
             a.key,
             cache_key()
         )),

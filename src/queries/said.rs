@@ -41,10 +41,13 @@ pub struct Said {
     pub tried: Vec<String>,
 }
 
+/// How [`Said::none`] begins: a hover that says it depends on manuals not mined yet.
+pub const NONE: &str = "No documentation found";
+
 impl Said {
     /// "No documentation found" with the sources asked.
     pub fn none(&self) -> String {
-        format!("No documentation found (tried {}).", self.tried.join(", "))
+        format!("{NONE} (tried {}).", self.tried.join(", "))
     }
 }
 

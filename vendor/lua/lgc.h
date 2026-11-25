@@ -119,7 +119,7 @@
 	(iscollectable(v) && isblack(p) && iswhite(gcvalue(v))) ?  \
 	luaC_barrier_(L,obj2gco(p),gcvalue(v)) : cast_void(0))
 
-#define luaC_barrierback(L,p,v) (  \
+#define luaC_barrierback(L,p,v) (  satex_write(L,p),  /* every table store */ \
 	(iscollectable(v) && isblack(p) && iswhite(gcvalue(v))) ? \
 	luaC_barrierback_(L,p) : cast_void(0))
 

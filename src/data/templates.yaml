@@ -1,0 +1,469 @@
+# Provider templates: `satex new --template ID`, the editor's and the playground's New document
+# dialog. Each one follows its provider's own sample, with anonymous placeholder text.
+#   load      the class (`class:`) or package (`package:`) whose options the dialog offers
+#   hint      a few common choices, shown first; the run reads the full set from the code
+#   fetch     where a file TeX Live does not ship comes from (HTTPS). `{year}` tries the coming
+#             year back to `since`, so a new release is found by itself. `known` pins the
+#             SHA-256 of the archives checked when the catalog was written.
+#   files     the files beside the main one; `main` is written as `main.tex`
+bib: &bib |
+  @article{example,
+    author  = {Author, Anonymous},
+    title   = {A Placeholder Title},
+    journal = {Journal of Examples},
+    year    = {2026},
+  }
+
+templates:
+  - id: acm-sigconf
+    name: ACM conference paper (sigconf)
+    provider: ACM
+    class: acmart
+    hint: [sigconf, review, anonymous, authorversion, nonacm, screen]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[sigconf]{acmart}
+
+      \setcopyright{acmlicensed}
+      \copyrightyear{2026}
+      \acmYear{2026}
+      \acmDOI{XXXXXXX.XXXXXXX}
+      \acmConference[Conference acronym 'XX]{Make sure to enter the correct
+        conference title from your rights confirmation email}{June 03--05,
+        2026}{Woodstock, NY}
+      \acmISBN{978-1-4503-XXXX-X/2026/06}
+
+      \begin{document}
+
+      \title{Title of the Paper}
+
+      \author{Anonymous Author}
+      \affiliation{%
+        \institution{Institution}
+        \city{City}
+        \country{Country}}
+      \email{author@example.org}
+
+      \begin{abstract}
+        A short summary of the paper.
+      \end{abstract}
+
+      \keywords{first keyword, second keyword}
+
+      \maketitle
+
+      \section{Introduction}
+      Text of the paper, citing a work~\cite{example}.
+
+      \bibliographystyle{ACM-Reference-Format}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: acm-journal
+    name: ACM journal article (acmsmall)
+    provider: ACM
+    class: acmart
+    hint: [acmsmall, acmlarge, acmtog, review, anonymous, authorversion, screen]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[acmsmall]{acmart}
+
+      \setcopyright{acmlicensed}
+      \copyrightyear{2026}
+      \acmYear{2026}
+      \acmDOI{XXXXXXX.XXXXXXX}
+      \acmJournal{JACM}
+      \acmVolume{37}
+      \acmNumber{4}
+      \acmArticle{111}
+      \acmMonth{8}
+
+      \begin{document}
+
+      \title{Title of the Article}
+
+      \author{Anonymous Author}
+      \affiliation{%
+        \institution{Institution}
+        \city{City}
+        \country{Country}}
+      \email{author@example.org}
+
+      \begin{abstract}
+        A short summary of the article.
+      \end{abstract}
+
+      \keywords{first keyword, second keyword}
+
+      \maketitle
+
+      \section{Introduction}
+      Text of the article, citing a work~\cite{example}.
+
+      \bibliographystyle{ACM-Reference-Format}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: ieee-conference
+    name: IEEE conference paper
+    provider: IEEE
+    class: IEEEtran
+    hint: [conference, journal, compsoc, a4paper, letterpaper, draftclsnofoot]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[conference]{IEEEtran}
+
+      \begin{document}
+
+      \title{Title of the Paper}
+
+      \author{\IEEEauthorblockN{Anonymous Author}
+      \IEEEauthorblockA{Institution\\
+      City, Country\\
+      author@example.org}}
+
+      \maketitle
+
+      \begin{abstract}
+      A short summary of the paper.
+      \end{abstract}
+
+      \begin{IEEEkeywords}
+      first keyword, second keyword
+      \end{IEEEkeywords}
+
+      \section{Introduction}
+      Text of the paper, citing a work~\cite{example}.
+
+      \bibliographystyle{IEEEtran}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: ieee-journal
+    name: IEEE journal article
+    provider: IEEE
+    class: IEEEtran
+    hint: [journal, compsoc, comsoc, transmag, a4paper, letterpaper, draftclsnofoot]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[journal]{IEEEtran}
+
+      \begin{document}
+
+      \title{Title of the Article}
+
+      \author{Anonymous Author,~\IEEEmembership{Member,~IEEE}%
+      \thanks{The author is with the Institution, City, Country
+      (e-mail: author@example.org).}}
+
+      \markboth{Journal of Examples,~Vol.~1, No.~1, January~2026}%
+      {Author: Title of the Article}
+
+      \maketitle
+
+      \begin{abstract}
+      A short summary of the article.
+      \end{abstract}
+
+      \begin{IEEEkeywords}
+      first keyword, second keyword
+      \end{IEEEkeywords}
+
+      \section{Introduction}
+      \IEEEPARstart{T}{ext} of the article, citing a work~\cite{example}.
+
+      \bibliographystyle{IEEEtran}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: lncs
+    name: Springer LNCS proceedings paper
+    provider: Springer
+    class: llncs
+    hint: [runningheads, orivec]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[runningheads]{llncs}
+
+      \begin{document}
+
+      \title{Title of the Paper}
+      \author{Anonymous Author\orcidID{0000-0000-0000-0000}}
+      \authorrunning{A. Author}
+      \institute{Institution, City, Country\\
+      \email{author@example.org}}
+
+      \maketitle
+
+      \begin{abstract}
+      A short summary of the paper.
+
+      \keywords{First keyword \and Second keyword.}
+      \end{abstract}
+
+      \section{Introduction}
+      Text of the paper, citing a work~\cite{example}.
+
+      \bibliographystyle{splncs04}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: elsarticle
+    name: Elsevier article (elsarticle)
+    provider: Elsevier
+    class: elsarticle
+    hint: [preprint, review, 1p, 3p, 5p, twocolumn, 12pt, authoryear]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[preprint,12pt]{elsarticle}
+
+      \usepackage{amssymb}
+      \usepackage{amsmath}
+
+      \journal{Journal of Examples}
+
+      \begin{document}
+
+      \begin{frontmatter}
+
+      \title{Title of the Article}
+
+      \author{Anonymous Author}
+      \affiliation{organization={Institution},
+                  city={City},
+                  country={Country}}
+
+      \begin{abstract}
+      A short summary of the article.
+      \end{abstract}
+
+      \begin{keyword}
+      first keyword \sep second keyword
+      \end{keyword}
+
+      \end{frontmatter}
+
+      \section{Introduction}
+      Text of the article, citing a work~\cite{example}.
+
+      \bibliographystyle{elsarticle-num}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: elsevier-cas
+    name: Elsevier CAS article, double column
+    provider: Elsevier
+    class: cas-dc
+    hint: [a4paper, fleqn, longmktitle]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[a4paper,fleqn]{cas-dc}
+      \usepackage[numbers]{natbib}
+
+      \begin{document}
+
+      \shorttitle{Title of the Article}
+      \shortauthors{A. Author}
+
+      \title[mode = title]{Title of the Article}
+
+      \author[1]{Anonymous Author}[orcid=0000-0000-0000-0000]
+      \ead{author@example.org}
+      \affiliation[1]{organization={Institution},
+                  city={City},
+                  country={Country}}
+
+      \begin{abstract}
+      A short summary of the article.
+      \end{abstract}
+
+      \begin{keywords}
+      first keyword \sep second keyword
+      \end{keywords}
+
+      \maketitle
+
+      \section{Introduction}
+      Text of the article, citing a work~\cite{example}.
+
+      \bibliographystyle{cas-model2-names}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: aps-revtex
+    name: APS journal article (REVTeX)
+    provider: APS
+    class: revtex4-2
+    hint: [aps, prl, pra, prb, twocolumn, preprint, reprint]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[aps,prl,reprint]{revtex4-2}
+
+      \begin{document}
+
+      \title{Title of the Article}
+
+      \author{Anonymous Author}
+      \email{author@example.org}
+      \affiliation{Institution, City, Country}
+
+      \begin{abstract}
+      A short summary of the article.
+      \end{abstract}
+
+      \maketitle
+
+      \section{Introduction}
+      Text of the article, citing a work~\cite{example}.
+
+      \bibliography{references}
+
+      \end{document}
+
+  - id: acl
+    name: ACL conference paper (*ACL, EMNLP, NAACL)
+    provider: ACL
+    package: acl
+    hint: [review, final, preprint]
+    fetch:
+      url: https://codeload.github.com/acl-org/acl-style-files/zip/HEAD
+      files: [acl.sty, acl_natbib.bst]
+    files: { references.bib: *bib }
+    main: |
+      \documentclass[11pt]{article}
+
+      \usepackage[review]{acl}
+
+      \usepackage{times}
+      \usepackage{latexsym}
+      \usepackage[T1]{fontenc}
+      \usepackage[utf8]{inputenc}
+      \usepackage{microtype}
+
+      \title{Title of the Paper}
+
+      \author{Anonymous Author \\
+        Institution \\
+        \texttt{author@example.org}}
+
+      \begin{document}
+      \maketitle
+
+      \begin{abstract}
+      A short summary of the paper.
+      \end{abstract}
+
+      \section{Introduction}
+      Text of the paper, citing a work~\citep{example}.
+
+      \bibliography{references}
+
+      \end{document}
+
+  - id: neurips
+    name: NeurIPS conference paper
+    provider: NeurIPS
+    package: neurips_{year}
+    hint: [preprint, final, nonatbib]
+    fetch:
+      url: https://media.neurips.cc/Conferences/NeurIPS{year}/Styles.zip
+      files: ["neurips_{year}.sty"]
+      since: 2024
+      known: { "2025": 72032130232955b785cd622b7c52d893e3166f30a90e1e6279d0a28e8373beef }
+    files: { references.bib: *bib }
+    main: |
+      \documentclass{article}
+
+      \usepackage[preprint]{neurips_{year}}
+
+      \usepackage[utf8]{inputenc}
+      \usepackage[T1]{fontenc}
+      \usepackage{hyperref}
+      \usepackage{url}
+      \usepackage{booktabs}
+      \usepackage{amsfonts}
+      \usepackage{nicefrac}
+      \usepackage{microtype}
+      \usepackage{xcolor}
+
+      \title{Title of the Paper}
+
+      \author{Anonymous Author \\
+        Institution \\
+        \texttt{author@example.org}}
+
+      \begin{document}
+
+      \maketitle
+
+      \begin{abstract}
+      A short summary of the paper.
+      \end{abstract}
+
+      \section{Introduction}
+      Text of the paper, citing a work~\cite{example}.
+
+      \bibliographystyle{plainnat}
+      \bibliography{references}
+
+      \end{document}
+
+  - id: icml
+    name: ICML conference paper
+    provider: ICML
+    package: icml{year}
+    hint: [accepted, preprint, nohyperref]
+    fetch:
+      url: https://media.icml.cc/Conferences/ICML{year}/Styles/icml{year}.zip
+      files: ["icml{year}.sty", "icml{year}.bst"]
+      since: 2024
+      known: { "2026": 8b29290f5828e176debb57ea9cc00252502973d55ea561a2f18a7f0a326bfc6c }
+    files: { references.bib: *bib }
+    main: |
+      \documentclass{article}
+
+      \usepackage{microtype}
+      \usepackage{graphicx}
+      \usepackage{booktabs}
+      \usepackage{hyperref}
+
+      \usepackage{icml{year}}
+
+      \usepackage{amsmath}
+      \usepackage{amssymb}
+
+      \icmltitlerunning{Title of the Paper}
+
+      \begin{document}
+
+      \twocolumn[
+        \icmltitle{Title of the Paper}
+        \begin{icmlauthorlist}
+          \icmlauthor{Anonymous Author}{inst}
+        \end{icmlauthorlist}
+        \icmlaffiliation{inst}{Institution, City, Country}
+        \icmlcorrespondingauthor{Anonymous Author}{author@example.org}
+        \icmlkeywords{Machine Learning}
+        \vskip 0.3in
+      ]
+
+      \printAffiliationsAndNotice{}
+
+      \begin{abstract}
+      A short summary of the paper.
+      \end{abstract}
+
+      \section{Introduction}
+      Text of the paper, citing a work~\cite{example}.
+
+      \bibliographystyle{icml{year}}
+      \bibliography{references}
+
+      \end{document}

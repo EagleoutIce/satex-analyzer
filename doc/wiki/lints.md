@@ -4,13 +4,13 @@
 
 # Lint rules
 
-`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. `lint_off` and `lints.⟨code⟩` in [`satex.yaml`](Configuration) turn rules off and tune them. The same findings come from `satex query diagnostics` ([queries](Queries#diagnostics)) and the [language server](lsp.md). See [Chktex-Coverage](Chktex-Coverage) for the chktex warning each rule follows, and [Primitive-coverage](Primitive-coverage) and [Domains](Domains) for how satex gets the facts a rule reads.
+`satex lint` checks the input file with every rule below. `--all` also checks the packages and classes it loads. `--rules` lists the codes, `--explain CODE` prints one rule's explanation. `lint_off` and `lints.⟨code⟩` in [`satex.yaml`](configuration.md) turn rules off and tune them. The same findings come from `satex query diagnostics` ([queries](queries.md#diagnostics)) and the [language server](lsp.md). See [Chktex-Coverage](../chktex-coverage.md) for the chktex warning each rule follows, and [Primitive-coverage](primitive-coverage.md) and [Domains](domains.md) for how satex gets the facts a rule reads.
 
 Every rule has a stable number: its category's letter and a count, such as `C012`. The letters are `C` correctness, `X` security, `S` style, `P` performance and `A` precision (of the analysis). Output shows it before the code: the text and GitHub formats, SARIF's rule id and the editor's diagnostic code. `--explain`, `lint_off` and the suppression comments take the number in place of the code. A new rule gets the next free number of its category in [`src/data/lint-numbers.txt`](https://github.com/EagleoutIce/satex-analyzer/blob/main/src/data/lint-numbers.txt). A removed rule keeps its line there, so a number never changes meaning. A rule that moves to another category keeps its number, so suppressions and links that name it stay valid.
 
 ## Rules
 
-Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The engine column names the engines a rule is about, when not all of them. The origin names the [chktex](Chktex-Coverage) warnings a rule follows. On the site the table comes in pages, and the columns icon in its header hides columns or wraps long summaries. Hovering a rule's name anywhere on the site shows its card.
+Every rule, with a link to its explanation below. The shape gives the severity: ◆ error, ▲ warning, ● info. The badge gives the category. The engine column names the engines a rule is about, when not all of them. The origin names the [chktex](../chktex-coverage.md) warnings a rule follows. On the site the table comes in pages, and the columns icon in its header hides columns or wraps long summaries. Hovering a rule's name anywhere on the site shows its card.
 
 | no. | code | kind | engine | quick fix | summary | since | origin |
 | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -24,6 +24,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C007 | [`caused-library-error`](#caused-library-error) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | package error caused by the document | 0.2.0 | — |
 | C025 | [`environment-mismatch`](#environment-mismatch) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | wrong environment closed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 9, 10, 15">chktex 9, 10, 15</a> |
 | C046 | [`invalid-directive`](#invalid-directive) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | unreadable satex directive | 0.2.0 | — |
+| C066 | [`malformed-bibliography-entry`](#malformed-bibliography-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | entry breaks the database's grammar | 0.2.6 | — |
 | C008 | [`math-still-open`](#math-still-open) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | math mode left open | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> |
 | C055 | [`metadata-after-class`](#metadata-after-class) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | DocumentMetadata after documentclass | 0.2.5 | — |
 | C047 | [`missing-end`](#missing-end) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | document has no end | 0.2.0 | — |
@@ -38,11 +39,14 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C017 | [`undefined-glossary-entry`](#undefined-glossary-entry) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | glossary entry never declared | 0.1.0 | — |
 | C018 | [`unguarded-recursion`](#unguarded-recursion) | <span class="sev sev-error" title="default: error">◆</span> <span class="cat cat-correctness">correctness</span> | — | — | recursion that never stops | 0.1.0 | — |
 | C052 | [`bibliography-entry-missing-field`](#bibliography-entry-missing-field) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | cited entry lacks a required field | 0.2.0 | — |
+| C071 | [`broken-bibliography-crossref`](#broken-bibliography-crossref) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | crossref to no entry, or to an earlier one | 0.2.6 | — |
 | C019 | [`build-missing-custom-dependency`](#build-missing-custom-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | glossary files have no latexmk rule | 0.1.0 | — |
 | C020 | [`catcode-escapes-group`](#catcode-escapes-group) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | category code change outlives its group | 0.1.0 | — |
+| C069 | [`conflicting-bibliography-fields`](#conflicting-bibliography-fields) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | fields that exclude each other | 0.2.6 | — |
 | C021 | [`conflicting-color-definition`](#conflicting-color-definition) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | color name defined twice | 0.2.0 | — |
 | C022 | [`delimiter-not-followed`](#delimiter-not-followed) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | \left or \right before a brace | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 43">chktex 43</a> |
 | C023 | [`duplicate-bibliography-entry`](#duplicate-bibliography-entry) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | key declared twice | 0.1.0 | — |
+| C067 | [`duplicate-bibliography-field`](#duplicate-bibliography-field) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | field given twice in one entry | 0.2.6 | — |
 | C050 | [`duplicate-bibliography-load`](#duplicate-bibliography-load) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | database loaded twice | 0.2.0 | — |
 | C051 | [`duplicate-bibliography-work`](#duplicate-bibliography-work) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | one work under two keys | 0.2.0 | — |
 | C024 | [`duplicate-label`](#duplicate-label) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | label defined twice | 0.1.0 | — |
@@ -51,6 +55,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C028 | [`expl3-signature-mismatch`](#expl3-signature-mismatch) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | expl3 argument signature mismatch | 0.1.0 | — |
 | C057 | [`graphic-without-alt`](#graphic-without-alt) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | graphic without alternative text | 0.2.5 | — |
 | C029 | [`ignored-verbatim-tail`](#ignored-verbatim-tail) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | text lost after verbatim end | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 31">chktex 31</a> |
+| C068 | [`invalid-bibliography-field-value`](#invalid-bibliography-field-value) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | value is not what the field takes | 0.2.6 | — |
 | C030 | [`math-script-braces`](#math-script-braces) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | script needs braces | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 3, 25">chktex 3, 25</a> |
 | C065 | [`missing-bibliography`](#missing-bibliography) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | citations without a bibliography | 0.2.5 | — |
 | C031 | [`missing-dependency`](#missing-dependency) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package missing from the dependency file | 0.1.0 | — |
@@ -71,6 +76,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | C036 | [`undefined-optional-content`](#undefined-optional-content) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown optional content group | 0.1.0 | — |
 | C037 | [`undefined-reference`](#undefined-reference) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | reference to an undefined label | 0.1.0 | — |
 | C038 | [`uninstalled-package`](#uninstalled-package) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | package not installed | 0.2.0 | — |
+| C070 | [`unknown-bibliography-entry-type`](#unknown-bibliography-entry-type) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | entry type the style does not define | 0.2.6 | — |
 | C049 | [`unknown-code-language`](#unknown-code-language) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | — | unknown listings language | 0.2.0 | — |
 | C062 | [`unknown-package-name`](#unknown-package-name) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | package name misspelled | 0.2.5 | — |
 | C039 | [`unresolved-file`](#unresolved-file) | <span class="sev sev-warning" title="default: warning">▲</span> <span class="cat cat-correctness">correctness</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | file not installed | 0.1.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 27">chktex 27</a> |
@@ -124,6 +130,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S032 | [`hand-set-quantity`](#hand-set-quantity) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | hand-set number and unit | 0.2.0 | — |
 | S052 | [`hand-written-author`](#hand-written-author) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | author name typed before a citation | 0.2.0 | — |
 | S051 | [`hand-written-reference`](#hand-written-reference) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | number typed after a reference name | 0.2.0 | — |
+| S069 | [`ignored-bibliography-field`](#ignored-bibliography-field) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | field the style never reads of this type | 0.2.6 | — |
 | S033 | [`inconsistent-precision`](#inconsistent-precision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | different decimals in a column | 0.2.0 | — |
 | S068 | [`indistinct-colors`](#indistinct-colors) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | colors alike with color blindness | 0.2.5 | — |
 | S057 | [`itemize-described`](#itemize-described) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | labelled items in an itemize | 0.2.1 | — |
@@ -139,6 +146,7 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | S041 | [`quote-ligature`](#quote-ligature) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | quotes run together | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 23">chktex 23</a> |
 | S042 | [`quote-punctuation`](#quote-punctuation) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | punctuation inside the quote | 0.2.0 | <a class="from" href="Chktex-Coverage" title="follows chktex warning 38">chktex 38</a> |
 | S066 | [`redundant-package-load`](#redundant-package-load) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | package loaded already | 0.2.5 | — |
+| S070 | [`spelled-out-macro`](#spelled-out-macro) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> | word typed out that a command of the document sets | 0.2.6 | — |
 | S043 | [`stray-space`](#stray-space) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> | space from a line end in a macro | 0.1.0 | — |
 | S044 | [`table-rules`](#table-rules) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | vertical rules or hline in a table | 0.2.0 | — |
 | S065 | [`tagged-math-without-mathml`](#tagged-math-without-mathml) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-style">style</span> | — | — | formulas without MathML | 0.2.5 | — |
@@ -159,9 +167,11 @@ Every rule, with a link to its explanation below. The shape gives the severity: 
 | A001 | [`analysis-imprecision`](#analysis-imprecision) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | analysis had to widen | 0.1.0 | — |
 | A002 | [`assertion-unknown`](#assertion-unknown) | <span class="sev sev-info" title="default: info">●</span> <span class="cat cat-precision">precision</span> | — | — | assertion not decided | 0.2.0 | — |
 
+An error is in every run of the document. Where the run was not certain at a finding's place, a rule's error is shown weaker and says why: a warning on a path the run could not decide or after an assumption, a note after an analysis gap. [When a finding is certain](domains.md#when-a-finding-is-certain) has the rule.
+
 ## Early findings
 
-Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, take their content as plain text. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a rough copy of the document, before the run starts. `lints.early` in [`satex.yaml`](Configuration) lists the names, and the rough copy reports this as the assumption `early-standard-names`.
+Each rule declares the facts it needs. Most need the whole run. A few need only the files' text, or the text and the standard meaning of a few names: which files `\input`, `\include` and `\subfile` read, and which environments, such as `verbatim`, take their content as plain text. The `keys` tier also reads what the text's commands name, by their standard meaning: `\label` defines a label, `\ref` and `\cref` refer to one, `\cite` cites a key of the databases `\bibliography` and `\addbibresource` name, `\usepackage` loads a package, and `\includegraphics` includes a file that graphics finds with one of its extensions. A later pass can still change these findings, so the editor does not keep them between passes, as it keeps `text` and `names` ones. These rules run first, on a rough copy of the document, before the run starts. `lints.early` in [`satex.yaml`](configuration.md) lists the names, and the rough copy reports this as the assumption `early-standard-names`.
 
 | needs | rules |
 | --- | --- |
@@ -223,6 +233,8 @@ A finding's `fix` says what to do. Where that is mechanical it carries the edits
 * **safe** fixes keep the document's meaning: a duplicate `\usepackage`, a definition replaced before it is read, `\renewcommand` of an undefined name.
 * **unsafe** fixes may change what the document means, so check them before you keep them: removing a package that may have side effects, an unused label, `\newcommand` turned into `\renewcommand`.
 
+A possible finding (one only some runs have) offers its fix as unsafe: it is right only where the finding holds.
+
 `--fix` applies the safe fixes, `--unsafe-fixes` adds the unsafe ones, `--diff` prints the edits instead of writing them. Only project files change. Overlapping fixes wait for the next round. The document is re-analyzed after each round, up to eight.
 
 Errors that stop LaTeX get fixes too. A package a letter off an installed one is respelled (`graphix` to `graphicx`), one no installed name is near is deleted. A command only a package defines (`\toprule`, `\SI`, `\mathbb`) loads that package, an arrow tip or shape loads its TikZ library. A second load with new options moves them to the first, a load after `\begin{document}` moves into the preamble, `\DocumentMetadata` moves above `\documentclass`. A `\ref` or `\cite` key one typo off a label or entry is respelled. A duplicate label is renamed, and no reference with it. Citations without any bibliography get `\bibliography` (or biblatex's `\addbibresource`) for the `.bib` files beside the document.
@@ -240,7 +252,7 @@ In the rule list, `S` marks a rule with a safe fix and `U` one with an unsafe fi
 One group per category, each with its first rules. A group's button shows the rest.
 
 <div class="fold" id="category-correctness">
-<h3 class="fold-head"><b>correctness</b> (65 rules)</h3>
+<h3 class="fold-head"><b>correctness</b> (71 rules)</h3>
 
 ### already-defined
 
@@ -362,19 +374,33 @@ A directive is a comment, so TeX skips it: `%\satex@assert{cond}`, `%\satex@assu
 
 See [Assertions](#assertions).
 
+### malformed-bibliography-entry
+
+<p class="badges"><code class="num" title="rule number">C066</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**entry breaks the database's grammar**
+
+An entry is `@type{key, name = value, …}`. A value is a number, a constant, `{…}` or `"…"` with balanced braces, or several joined by `#`. Where an entry breaks this (a missing comma, a brace or quote that never closes, a `}` too many inside quotes), BibTeX says `I was expecting a `,' or a `}'` and skips the rest of the entry: the fields after the break are lost, and an unclosed brace swallows the entries that follow. biber stops with a syntax error. biber also wants the comma after the key: `@misc{key}` is an error to it, not to BibTeX.
+
+Every entry of a loaded database is checked, cited or not. The message names the line where the reader gives up, which may be after the slip.
+
+Fix by repairing the entry. The quick fix adds the comma after a lone key.
+
+See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
+
 ### math-still-open
 
 <p class="badges"><code class="num" title="rule number">C008</code> <span class="sev sev-error" title="default: error">default: error</span> <span class="cat cat-correctness">correctness</span> <a class="from" href="Chktex-Coverage" title="follows chktex warning 16">chktex 16</a> <span class="since" title="first release">since 0.2.0</span></p>
 
 **math mode left open**
 
-A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
+A `$` that is never closed leaves TeX in math mode. The next `\par` makes TeX report `Missing $ inserted` and close the formula itself ([tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20410) `insert_dollar_sign`), and everything up to there is set as mathematics.
 
 The rule reports what the interpreter already saw: the `missing-dollar` diagnostic it raised, or, where no `\par` followed, a last character still carrying a math mode (unless a limit stopped the run before the text's end). It reports one finding, never both.
 
 Fix by closing the formula.
 
-See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20410).
+See [chktex 16](https://www.nongnu.org/chktex/), [tex.web § 1047](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20410).
 
 ### metadata-after-class
 
@@ -512,7 +538,7 @@ See [glossaries § Defining glossary entries](https://ctan.org/pkg/glossaries).
 
 **recursion that never stops**
 
-The run saw the macro's expansion reach the macro again, could not see the recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to end it. A macro nothing expands is judged by the names its replacement text holds. A real run expands until TeX runs out of memory: `TeX capacity exceeded, sorry [main memory size]`.
+The run saw the macro's expansion reach the macro again, could not see the recursion end, and found no conditional (no `\if…`, `\else` or `\fi`) to end it, in any macro of the cycle or in one their replacement texts name. A macro nothing expands is judged by the names its replacement text holds, and it calls a name only where the name stands to be expanded: not inside braces, not as the target of a definition or after `\string`, and not as a quark (`\def\q{\q}`, compared and never expanded). A real run expands until TeX runs out of memory: `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.
 
@@ -522,11 +548,27 @@ Fix by adding the test that stops it, or by removing the self-reference.
 
 **cited entry lacks a required field**
 
-The style's data model requires fields per entry type: the `.bst`'s `output.check`s (BibTeX warns `empty journal in knuth84`), or biblatex's mandatory constraints (biber warns under `--validate-datamodel`). An entry with `crossref` or `xref` inherits fields and is not reported. Only cited entries are checked.
+The style's data model requires fields per entry type: the `.bst`'s `output.check`s (BibTeX warns `empty journal in knuth84`), or biblatex's mandatory constraints (biber warns under `--validate-datamodel`). An empty field counts as missing. A field counts under the name biber gives it (`journal` is `journaltitle`, `school` is `institution`), and a type under the one biber reads it as (`@phdthesis` is a `@thesis`). BibTeX renames nothing.
+
+A `crossref` parent hands its fields down: all of them with BibTeX, what biblatex's inheritance rules say with biber (a `@proceedings`' `title` arrives as `booktitle`, not as `title`). `xref` hands down nothing. Nothing is reported for biber while the document declares a source map or inheritance rules of its own. Only cited entries are checked.
 
 Fix by adding the field.
 
 See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
+
+### broken-bibliography-crossref
+
+<p class="badges"><code class="num" title="rule number">C071</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**crossref to no entry, or to an earlier one**
+
+`crossref` names the entry a cited one inherits its missing fields from. Where no database declares that key, BibTeX stops with `A bad cross reference` and biber warns `I didn't find a database entry for crossref`: nothing is inherited. BibTeX compares keys without case, biber with it.
+
+BibTeX reads the databases once, in order. A parent that stands before its child and is not cited itself is passed by before the child names it, and BibTeX reports the same bad cross reference. [btxdoc](https://ctan.org/pkg/bibtex) asks for the parent after every entry that refers to it. biber has no such order.
+
+Fix by adding the entry, by correcting the key, or by moving the parent below its children.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.4.1](https://ctan.org/pkg/biblatex).
 
 ### build-missing-custom-dependency
 
@@ -555,6 +597,20 @@ Fix by wrapping the change in `{…}` or `\begingroup…\endgroup`, or by restor
 
 See [The TeXbook, chapter 5](https://ctan.org/pkg/texbook).
 
+### conflicting-bibliography-fields
+
+<p class="badges"><code class="num" title="rule number">C069</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**fields that exclude each other**
+
+Some fields say the same thing twice, and the reader takes one. A `.bst` checks its pairs itself (`either.or.check`): BibTeX warns `can't use both author and editor fields` for a `@book`, and `can't use both volume and number fields`. biber renames BibTeX's field names to biblatex's (`journal` to `journaltitle`): where an entry gives both, the old name is dropped. A `date` carries the year and the month: biber warns `Overwriting field 'year' with year value from field 'date'` where a `year` or `month` beside it says something else.
+
+The pairs come from the style: the `.bst`'s checks, biblatex's source map.
+
+Fix by keeping one. The quick fix deletes the field biber drops, safely where both say the same.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.2.5](https://ctan.org/pkg/biblatex).
+
 ### conflicting-color-definition
 
 <p class="badges"><code class="num" title="rule number">C021</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.0</span></p>
@@ -573,13 +629,13 @@ See [xcolor § 2.5](https://ctan.org/pkg/xcolor).
 
 **\left or \right before a brace**
 
-`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
+`\left`, `\right` and `\middle` scan a delimiter: one character with a `\delcode`, or one control sequence made by `\delimiter` ([tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L22057)). A `{`, a `}` or a `$` is none of those, so TeX reports `Missing delimiter (. inserted)` and sets nothing.
 
 The rule asks what each command means rather than matching its name, so it covers `\middle` and any `\let` alias, which chktex's name list does not.
 
 Fix by writing `\{` and `\}` for brace delimiters, or `\left.` where no delimiter is wanted.
 
-See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L22057).
+See [chktex 43](https://www.nongnu.org/chktex/), [tex.web § 1161](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L22057).
 
 ### duplicate-bibliography-entry
 
@@ -592,6 +648,18 @@ Two `\bibitem`s with one key make LaTeX warn `Label … multiply defined` and ev
 Fix by renaming or deleting one of them.
 
 See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
+
+### duplicate-bibliography-field
+
+<p class="badges"><code class="num" title="rule number">C067</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**field given twice in one entry**
+
+An entry that gives a field twice keeps one of the two. BibTeX reads the first and warns `I'm ignoring knuth84's extra "title" field`. biber reads the last and says nothing. A database moved between the two changes what is printed.
+
+Fix by deleting one. The quick fix deletes the one the document's reader does not read, so the output stays as it is.
+
+See [btxdoc § The database files](https://ctan.org/pkg/bibtex).
 
 ### duplicate-bibliography-load
 
@@ -673,9 +741,9 @@ See [interface3 § Naming conventions](https://ctan.org/pkg/l3kernel).
 
 **graphic without alternative text**
 
-With tagging on, every `\includegraphics` becomes a `Figure` structure element, which needs alternative text (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L290), [3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195)). Without `alt=`, latex-lab warns and uses the file name instead, which a screen reader then reads out. A purely decorative graphic is marked `artifact` instead, and `actualtext=` stands for a graphic that shows text.
+With tagging on, every `\includegraphics` becomes a `Figure` structure element, which needs alternative text (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L290), [3](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L195)). Without `alt=`, latex-lab warns and uses the file name instead, which a screen reader then reads out. A purely decorative graphic is marked `artifact` instead, and `actualtext=` stands for a graphic that shows text.
 
-The rule reads the keys of the call as written. A call whose options come from a macro is left alone. There is no automatic fix: only the author knows what the graphic shows. The image dialog has a field for it.
+The rule reports where the run itself raised that warning. A graphic set while tagging is suspended (`\SuspendTagging`, `\tag_stop:`) raises none. There is no automatic fix: only the author knows what the graphic shows. The image dialog has a field for it.
 
 See [latex-lab § latex-lab-graphic](https://ctan.org/pkg/latex-lab), [Matterhorn Protocol § 13](https://pdfa.org/resource/the-matterhorn-protocol/).
 
@@ -692,6 +760,20 @@ satex reports only where the text was really lost. It knows which environments t
 Fix by moving the text to the next line.
 
 See [chktex 31](https://www.nongnu.org/chktex/).
+
+### invalid-bibliography-field-value
+
+<p class="badges"><code class="num" title="rule number">C068</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**value is not what the field takes**
+
+A name list is names joined by `and`, each `First Last`, `Last, First` or `Last, Jr, First`. BibTeX warns `Too many commas in name` at a third comma and `has a comma at the end` at a closing one. biber skips the entry at a third comma or at two in a row. An `and` at the start, at the end or twice in a row joins no name: BibTeX prints it as part of a name, biber skips the entry. `others` stands for the rest only as the last name.
+
+With biblatex a value must also fit the datatype the data model declares for its field. biber warns about a `date` it cannot read (`2001-05-21`, a `/` range, ISO 8601-2), about a `year` or `month` that is no number (`month = {jan}` in braces is a word, bare it is the month constant), and about an ISBN whose check digit fails. Under `--validate-datamodel` it also rejects an `integer` field that is no number (`volume = {IV}`), an ISSN or ISMN with a wrong check digit and a value outside its field's pattern: these are notes. A value with a macro or braces in it is not judged.
+
+The quick fix drops stray `and`s and closing commas, and unbraces a month constant.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.3](https://ctan.org/pkg/biblatex).
 
 ### math-script-braces
 
@@ -755,7 +837,7 @@ The rule reports it at the definition, with TeX's message. Unknown text over-app
 
 **package overrides an earlier one**
 
-A package loaded later redefines a command an earlier package made, and the document uses that command. The later definition wins, often by accident. The finding names the command and both packages, as the run saw them.
+A package loaded later redefines a command an earlier package made, and the document uses that command. The later definition wins, often by accident. The finding names the command and both packages, as the run saw them. A command the document defines itself, or one the later package gives the same meaning again, is none.
 
 Where the earlier package defines the command without checking that it is new, loading the later package first keeps the earlier version. The fix then moves the later `\usepackage` above the earlier one. The rule stays quiet where the later package names the earlier one in its own file: it adapts it on purpose, often after `\@ifpackageloaded`.
 
@@ -815,7 +897,7 @@ See [LaTeX tagging project § usage-instructions](https://latex3.github.io/taggi
 
 **tagging without a language**
 
-A tagged PDF names its natural language in the catalog's `/Lang`, which screen readers use to pick a voice (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L290), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131)). `\DocumentMetadata{lang=…}` sets it. Without the key, LaTeX guesses at `\begin{document}` from babel's main language, or `en` without babel, and warns (`lang-missing`). The guess is wrong for a document in another language that does not load babel.
+A tagged PDF names its natural language in the catalog's `/Lang`, which screen readers use to pick a voice (PDF/UA, ISO 14289-1 [§§ 7](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L290), [2](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L131)). `\DocumentMetadata{lang=…}` sets it. Without the key, LaTeX guesses at `\begin{document}` from babel's main language, or `en` without babel, and warns (`lang-missing`). The guess is wrong for a document in another language that does not load babel.
 
 The fix writes the language LaTeX guessed, which changes nothing in the PDF and silences the warning: check that it is the right one.
 
@@ -853,7 +935,7 @@ See [pdftex § 8.9.8](https://ctan.org/pkg/pdftex).
 
 **unclosed PDF literal**
 
-`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
+`\pdfliteral` and `\special{pdf:…}` (what ocgx2, ocg-p and pdfbase use to write raw PDF) drop `q`/`Q` and `BMC`/`BDC`/`EMC` straight into the page's content stream. `q`/`Q` save and restore the graphics state: color, line width, the current transform. `BMC`/`BDC`/`EMC` bracket marked content, an optional content group among them. Both have to nest within the page ([PDF 32000](https://opensource.adobe.com/dc-acrobat-sdk-docs/pdfstandards/PDF32000_2008.pdf), [§§ 8](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L316), [4](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L231), [2](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L131), [14](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L463), [6](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L279)). One left open leaks its state into everything typeset after it. A viewer may also just reject the page.
 
 satex does not break pages into content streams itself, so it checks the order the run executes the literals in.
 
@@ -934,6 +1016,18 @@ The file was not found in any tree the run searched, and the distribution's pack
 Fix by running the command the finding gives, or `satex install`, which never runs as part of `lint --fix`. The question is off by default because it reads the package repository: turn on `plugins.packages` in `satex.yaml`.
 
 See [TeX Live manual § tlmgr](https://tug.org/texlive/doc.html), [MiKTeX manual § miktex packages](https://docs.miktex.org/manual/).
+
+### unknown-bibliography-entry-type
+
+<p class="badges"><code class="num" title="rule number">C070</code> <span class="sev sev-warning" title="default: warning">default: warning</span> <span class="cat cat-correctness">correctness</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**entry type the style does not define**
+
+A `.bst` defines a function per entry type. For any other type BibTeX warns `entry type for "key" isn't style-file defined` and formats the entry with the style's fallback, if it has one. The standard styles know no `@online`. biblatex's data model declares its types, and biber reads some BibTeX types as one of them (`@phdthesis` as `@thesis`): any other becomes a `@misc`, with a warning under `--validate-datamodel`.
+
+Fix by using a type of the style.
+
+See [btxdoc § Entry types](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
 
 ### unknown-code-language
 
@@ -1061,7 +1155,7 @@ See [pdftex § -shell-escape](https://ctan.org/pkg/pdftex).
 </div>
 
 <div class="fold" id="category-style">
-<h3 class="fold-head"><b>style</b> (68 rules)</h3>
+<h3 class="fold-head"><b>style</b> (70 rules)</h3>
 
 ### accent-on-dotted-letter
 
@@ -1231,7 +1325,7 @@ satex compares each character's `\f@shape` against the kernel's `\itdefault` and
 
 Fix by writing `\/` after the last slanted character.
 
-See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365).
+See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L21365).
 
 ### missing-nonbreaking-space
 
@@ -1241,11 +1335,11 @@ See [chktex 6](https://www.nongnu.org/chktex/), [The TeXbook, chapter 4](https:/
 
 A reference should not begin a line on its own, so a tie belongs in front of it. `~` is an interword space TeX may not break at ([The TeXbook, chapter 14](https://ctan.org/pkg/texbook)).
 
-The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358)).
+The rule reads the reference and citation sites the run recorded, so it follows a `\ref` inside a macro of yours without a list of names, and it reports only where the space really became glue ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20358)).
 
 Fix by writing `Figure~\ref{fig:one}`.
 
-See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358).
+See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20358).
 
 ### overfull-box
 
@@ -1253,11 +1347,11 @@ See [chktex 2](https://www.nongnu.org/chktex/), [The TeXbook, chapter 14](https:
 
 **hbox too wide for its width**
 
-`\hbox to ⟨width⟩{…}`, and the LaTeX boxes built on it such as `\makebox[⟨width⟩][s]{…}`, pack their material to a given width ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L12910)). Material wider than that, after all its glue shrank, sticks out of the box, and TeX writes `Overfull \hbox (…pt too wide) detected at line …` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130)). The rule reports that line's box by the same amount, only where its material and width were known on every visit.
+`\hbox to ⟨width⟩{…}`, and the LaTeX boxes built on it such as `\makebox[⟨width⟩][s]{…}`, pack their material to a given width ([tex.web § 649](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L12910)). Material wider than that, after all its glue shrank, sticks out of the box, and TeX writes `Overfull \hbox (…pt too wide) detected at line …` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L13130)). The rule reports that line's box by the same amount, only where its material and width were known on every visit.
 
 Fix by widening the box, shortening its material, or giving it infinitely shrinkable glue (`\hss`) where sticking out is meant.
 
-See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13104), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130).
+See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L13104), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L13130).
 
 ### overfull-line
 
@@ -1265,13 +1359,13 @@ See [tex.web § 664](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752
 
 **line wider than the text block**
 
-TeX breaks a paragraph into lines and packs each to the line width ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420)). A line whose natural width, less all its glue can shrink, still passes the width sticks out into the right margin, and TeX writes `Overfull \hbox (…pt too wide) in paragraph` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130)).
+TeX breaks a paragraph into lines and packs each to the line width ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17420)). A line whose natural width, less all its glue can shrink, still passes the width sticks out into the right margin, and TeX writes `Overfull \hbox (…pt too wide) in paragraph` to the log ([§ 666](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L13130)).
 
-satex runs TeX's own line breaker ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17438)) on the paragraph, so it reports exactly the lines TeX reports, at the user's line that ended the paragraph, by the same amount. It stays silent where any width, font or parameter is not known, where character protrusion or font expansion (microtype) is on, and where the paragraph may be set differently on another path.
+satex runs TeX's own line breaker ([§§ 813](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L15997)–[890](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17438)) on the paragraph, so it reports exactly the lines TeX reports, at the user's line that ended the paragraph, by the same amount. It stays silent where any width, font or parameter is not known, where character protrusion or font expansion (microtype) is on, and where the paragraph may be set differently on another path.
 
 Fix the text, not the measure: allow a hyphenation point in the long word (`\-`, or `\hyphenation{…}`), let the paragraph space out (`\begin{sloppypar}` or `\emergencystretch`), or rephrase it. satex never rewrites the text itself.
 
-See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L13130), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook).
+See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17420), [tex.web § 666](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L13130), [The TeXbook, chapter 14](https://ctan.org/pkg/texbook).
 
 ### parenthesis-spacing
 
@@ -1319,13 +1413,13 @@ Fix by writing the capital, or `\Cref` for a `\cref`.
 
 **wrong space after a period**
 
-How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
+How wide a space TeX sets follows the space factor of the character before it ([tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20114)). A period raises it to 3000, which asks for the wider space between sentences, but a period after an uppercase letter leaves it at 1000. Under `\frenchspacing` a period sets 1000 too, so nothing is reported.
 
 So `etc. and` gets a sentence space and `the ABC. Next` a word space, both the wrong way round. The rule reads the characters the run set and reports only where a real space token became glue. A lowercase word counts as the sentence running on only when the source writes it right after the space, in the same line and group, unless the word before the period is a listed abbreviation.
 
 Fix by writing `etc.\ and`, or `the ABC\@. Next`.
 
-See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20114).
+See [chktex 12](https://www.nongnu.org/chktex/), [chktex 13](https://www.nongnu.org/chktex/), [tex.web § 1034](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20114).
 
 ### space-before-command
 
@@ -1349,11 +1443,11 @@ See [chktex 24](https://www.nongnu.org/chktex/), [chktex 42](https://www.nongnu.
 
 Punctuation belongs against the word it follows. A space in front of a comma or a period is glue, and the reader sees it on the page.
 
-The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
+The rule reports only a real space token that became glue in horizontal mode ([tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20358)). A thin space a language package inserts before `:` comes from that package's own code, which the run keeps out of the text, so French typography is not reported.
 
 Fix by deleting the space.
 
-See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358).
+See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20358).
 
 ### stray-italic-correction
 
@@ -1361,13 +1455,13 @@ See [chktex 26](https://www.nongnu.org/chktex/), [tex.web § 1043](https://githu
 
 **stray italic correction**
 
-`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
+`\/` appends a kern as wide as the italic correction of the last character on the current list ([The TeXbook, chapter 4](https://ctan.org/pkg/texbook)). The rule reports two places where that kern does not belong: a second `\/` with nothing typeset in between, which finds a kern rather than a character ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L21365)), and one in front of a period or a comma (chktex 28).
 
 satex reads the characters the document set, so it sees through a closing brace: in `\textit{word\/}.` the next character set is the period.
 
 Fix by deleting the `\/`.
 
-See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365).
+See [chktex 5](https://www.nongnu.org/chktex/), [chktex 28](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L21365).
 
 ### unknown-suppress-code
 
@@ -1399,11 +1493,11 @@ See [chktex 20](https://www.nongnu.org/chktex/), [chktex 44](https://www.nongnu.
 
 **box wider than its lines**
 
-A box or rule set in a paragraph, such as an `\includegraphics`, a `tabular` or a `tikzpicture`, that is wider than the line width (`\linewidth`) cannot fit on any line: it sticks out into the margin however the paragraph breaks ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420)). The rule reports the call that set it, by how much it passes the line, where its width and the line width were known on every visit.
+A box or rule set in a paragraph, such as an `\includegraphics`, a `tabular` or a `tikzpicture`, that is wider than the line width (`\linewidth`) cannot fit on any line: it sticks out into the margin however the paragraph breaks ([tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17420)). The rule reports the call that set it, by how much it passes the line, where its width and the line width were known on every visit.
 
 An `\includegraphics` whose `width=` is the reason gets the fix `width=\linewidth`, where every other key leaves that its final width (no `height`, `scale`, `angle`, `bb` or a key satex does not know, no comment). It changes the picture's size, so it is unsafe. Otherwise scale the material down (`\resizebox`, a smaller font), or let it stick out on purpose (`\makebox[\linewidth]{…}`), which TeX does not report.
 
-See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L17420), [graphics § 4.4](https://ctan.org/pkg/graphics).
+See [tex.web § 889](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L17420), [graphics § 4.4](https://ctan.org/pkg/graphics).
 
 ### wrong-dash
 
@@ -1439,13 +1533,13 @@ See [chktex 18](https://www.nongnu.org/chktex/), [chktex 19](https://www.nongnu.
 
 **useless italic correction**
 
-`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
+`\/` appends a kern as wide as the italic correction the font gives the last character on the current list ([tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L21365)). Where that correction is zero the `\/` does nothing.
 
 Every character carries the font it was set in ([fntguide § 2](https://ctan.org/pkg/fntguide)), and satex reads the correction out of that font's TFM. That is a measurement, where chktex decides from a list of command names. In math, and after a space, the kern is zero whatever the font.
 
 Fix by deleting the `\/`.
 
-See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
+See [chktex 4](https://www.nongnu.org/chktex/), [tex.web § 1113](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L21365), [The TeXbook, chapter 4](https://ctan.org/pkg/texbook).
 
 ### bare-reference
 
@@ -1547,7 +1641,7 @@ See [lmodern § Latin Modern](https://ctan.org/pkg/lm), [fntguide § 5](https://
 
 **hand-set quotes, csquotes not loaded**
 
-`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L95)).
+`\enquote{…}` sets the marks the current language wants, nests an inner quotation inside an outer one, and keeps one spelling for the whole document ([csquotes](https://ctan.org/pkg/csquotes) [§§ 3](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L195), [1](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L95)).
 
 The rule fires where the run set quotation marks itself and csquotes is not loaded. Apostrophes inside a word and primes in math do not count.
 
@@ -1561,7 +1655,7 @@ See [chktex 18](https://www.nongnu.org/chktex/), [csquotes § 3.1](https://ctan.
 
 **definition replaced before use**
 
-The name is defined, and defined again, with no use in between: the first replacement text never reaches the typesetter. Both definitions are made on every path, so this is not a conditional fallback. The first is no `\providecommand`, which yields to a later definition on purpose, and both are statements the file reads in order: a definition inside a macro body runs whenever the macro is called, so a default that a key handler or a later call overrides is left alone.
+The name is defined, and defined again, with no use in between: the first replacement text never reaches the typesetter. Both definitions are made on every path, so this is not a conditional fallback. The first is no `\providecommand`, which yields to a later definition on purpose, and no empty declaration (`\newcommand\x{}` before a `\def\x`, `\tl_new:N`), and both are statements the file reads in order: a definition inside a macro body runs whenever the macro is called, so a default that a key handler or a later call overrides is left alone.
 
 Fix by deleting the first definition, or by checking which one was meant.
 
@@ -1595,7 +1689,7 @@ See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
 **hand-set number and unit**
 
-`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
+`2ms` sets the number and the unit as one word, so the line may break between them and the unit is italic in math. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L231), [3](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L195)) asks for a non-breaking space and an upright unit, and [siunitx](https://ctan.org/pkg/siunitx) does both.
 
 The rule reads what the run typeset: a digit run followed by letters with no space token between them, where the unit is an SI symbol and the document set it itself.
 
@@ -1634,6 +1728,20 @@ Where one label of that kind prints that very number, the fix writes `\cref` (`\
 An `\item` of a numbered list counts too, labelled or not, in enumitem's inline lists as well: `see item (b)` or `in step 2`, where one item prints `(b)` or `Step~2`. Its words are the list counter's (`enumi`, its cleveref name `item`) and the word its label format writes (`Step`). The fix puts a `\label` right after that `\item` and refers to it. A number with no word before it, `in 3.)`, is never read.
 
 See [The LaTeX Companion § 2.4](https://ctan.org/pkg/tlc3-examples), [cleveref § 2](https://ctan.org/pkg/cleveref).
+
+### ignored-bibliography-field
+
+<p class="badges"><code class="num" title="rule number">S069</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**field the style never reads of this type**
+
+A style reads a fixed set of fields per entry type: what the `.bst`'s function for the type and the functions it calls name, or what biblatex's data model lists for the type. A field the style knows but does not read of this type is left out without a word: the `booktitle` of an `@article`, the `journal` of a `@book`. biber says `Invalid field 'booktitle' for entrytype 'article'` under `--validate-datamodel`. Often the entry has the wrong type.
+
+With BibTeX a field under biblatex's name is not read either (`journaltitle` where the style reads `journal`). A field no part of the style knows (`abstract`, `file`, a reference manager's own) is a note to yourself and not reported.
+
+Fix by deleting the field or by changing the type. The quick fix renames a field to the name the style reads.
+
+See [btxdoc § The entries](https://ctan.org/pkg/bibtex), [biblatex §2.1](https://ctan.org/pkg/biblatex).
 
 ### inconsistent-precision
 
@@ -1719,7 +1827,7 @@ See [microtype § 1](https://ctan.org/pkg/microtype), [pdftex § \pdfprotrudecha
 
 **numbers not aligned**
 
-A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
+A column of numbers is read by comparing them, which works when each digit stands under the digit of the same place: the units under the units, the decimal marks under each other. An `l` or `c` column sets numbers of different lengths ragged, and an `r` column lines up only numbers with as many decimals. [siunitx](https://ctan.org/pkg/siunitx)'s `S` column aligns them at the decimal mark ([§§ 7](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L290), [12](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L430) of its manual). Its header, not a number, goes in braces: `{Time}`.
 
 The rule reads the table's source: a column whose cells below the header are all numbers, three or more, set in a column that does not align them.
 
@@ -1817,19 +1925,31 @@ Fix by deleting the request. Keep it if the document should still work with anot
 
 See [source2e § ltclass.dtx](https://ctan.org/pkg/source2e).
 
+### spelled-out-macro
+
+<p class="badges"><code class="num" title="rule number">S070</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-unsafe" title="unsafe: the fix may change the meaning, only --unsafe-fixes applies it">U</span> <span class="since" title="first release">since 0.2.6</span></p>
+
+**word typed out that a command of the document sets**
+
+A name the document keeps in one place, `\newcommand\model{TinyNet}` or a glossary entry `name={cellR}`, should be written through it everywhere. A copy typed out by hand stays behind when the name changes, and a glossary misses the use.
+
+The rule reads the characters the run set. A word whose characters come from the replacement text of one of the document's own macros is that macro's word, when the macro sets that one word and nothing else. The same word typed in the document's prose is reported, once per place. "The same" is a level of the one equivalence ladder every comparison of text uses (`lints.spelled-out-macro.equivalence`): `exact`, `glyphs` (the default: a ligature is its letters, any spaces one space), `case` or `letters`. Words shorter than `min-length` (3) are left alone.
+
+Fix by writing the command there: `\model{}` or `\gls{cellr}`. It is unsafe: the command may set more than its word in another context.
+
 ### stray-space
 
 <p class="badges"><code class="num" title="rule number">S043</code> <span class="sev sev-info" title="default: info">default: info</span> <span class="cat cat-style">style</span> <span class="fix fix-safe" title="safe: the fix keeps the document's meaning, --fix applies it">S</span> <span class="since" title="first release">since 0.1.0</span></p>
 
 **space from a line end in a macro**
 
-Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7326)).
+Inside a macro's replacement text, TeX turns the end of a line into a space token unless a control word already skipped it or a `%` swallowed the rest of the line ([tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L7326)).
 
-The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L21264)), as at `\end{center}`.
+The finding follows the modes the run read that space in ([§ 1043](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20358): a space is glue only in horizontal mode). It says the macro *inserts* a space where every reading was horizontal, and that it *may* where some might have been. Only a space that a character, box or rule follows in its list is reported. The glue that ends a paragraph goes ([§ 816](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L16066)), and glue before it only widens the end of the last line. One an `\unskip` takes is gone too ([§ 1105](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L21264)), as at `\end{center}`.
 
 Fix by writing `%` at the end of that line.
 
-See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L20358).
+See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L7326), [tex.web § 816](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L16066), [tex.web § 1043](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L20358).
 
 ### table-rules
 
@@ -1837,7 +1957,7 @@ See [tex.web § 347](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752
 
 **vertical rules or hline in a table**
 
-[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
+[booktabs](https://ctan.org/pkg/booktabs) gives a table three rules of different weights, `\toprule`, `\midrule` and `\bottomrule`, with space around them, and asks for no vertical rules at all ([§ 2](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L131) of its manual): the columns are separated by their space, and `\hline` sets every rule alike and too close to the text. A table of fewer rows than `lints.table-rules.rows` (3) is left alone.
 
 See [booktabs § 2](https://ctan.org/pkg/booktabs).
 
@@ -1871,7 +1991,7 @@ See [btxdoc § Using BibTeX](https://ctan.org/pkg/bibtex).
 
 **unit repeated in every cell**
 
-A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/0fabcfd6752101493a5d55c3391b41c3155cd5ed/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
+A unit repeated in every cell of a column says the same thing on each line and pushes the numbers out of alignment. The [SI brochure](https://www.bipm.org/en/publications/si-brochure) (9th ed., [§§ 5](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L268), [4](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L231), [1](https://github.com/TeX-Live/texlive-source/blob/e73d75f8e070869316e6a148cfda73ab05abcaf3/texk/web2c/tex.web#L95)) heads such a column with the quantity and its unit, as `Time / ms`. With [siunitx](https://ctan.org/pkg/siunitx), `{Time / \unit{ms}}` over an `S` column of bare numbers.
 
 See [SI brochure § 5.4.1](https://www.bipm.org/en/publications/si-brochure), [siunitx § \unit](https://ctan.org/pkg/siunitx).
 

@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SITE = ROOT / "doc" / "site"
 
 
+# The site build runs satex as a tool: never the first-start question, and never the detached
+# background cache builder, which outlives this build and fills the user's cache for every satex built.
+os.environ.setdefault("SATEX_NO_SETUP", "1")
+
+
 def proc(cmd, **kw):
     """`subprocess.run`, with a satex run holding one of the JOBS slots: every step's pool may be
     as wide as it likes, never more than JOBS satex processes run at once. Its seconds go to RUNS."""
@@ -488,9 +493,10 @@ def title_of(text):
 
 
 def intro(text):
-    """The README's opening paragraphs, up to its first rule, with its link definitions."""
+    """The README's block between its first two rules (who makes SaTeX, and how), with its link
+    definitions. The opening above the first rule says what the landing page's hero already does."""
     refs = "\n".join(re.findall(r"^\[[^\]]+\]: .*$", text, flags=re.M))
-    return strip_banner(text).split("\n----", 1)[0] + "\n\n" + refs
+    return strip_banner(text).split("\n----", 2)[1] + "\n\n" + refs
 
 
 def section(text, heading):
@@ -617,7 +623,7 @@ def kernel_caches(satex, work, project, kernel, flags):
 
 def archive_key(data):
     """The key a `satex cache export` archive was made under (src/cli/cache/archive.rs `Archive`, postcard:
-    each string a varint length, then the magic, the semantic version and the key)."""
+    each string a varint length, then the magic and the key)."""
     def varint(at):
         n = shift = 0
         while True:
@@ -626,8 +632,7 @@ def archive_key(data):
                 return n, at
     try:
         size, at = varint(0)
-        _, at = varint(at + size)
-        size, at = varint(at)
+        size, at = varint(at + size)
         return data[at:at + size].decode()
     except (IndexError, UnicodeDecodeError):
         return None
@@ -860,7 +865,10 @@ def exports(satex, work, dist):
     """Every name the installed packages define, with the file to load for it (`satex query exports`), one
     `file<TAB>name<TAB>name…` line per file: the bundle holds a few packages only, so the browser's fixes and
     completion read the rest here (linter/shared.rs `exports`)."""
-    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=KEY, later=b"")
+    # the index is what this binary's code reads off the trees (caches/exports.rs), not cached analysis: its key
+    # a fast build takes the last index, and makes one where there is none: without it the page's
+    # package fixes and completion know no package outside the bundle
+    return memo(work, "exports", [str(dist)], lambda: exports_run(satex, work), key=BINARY, stale=True)
 
 
 def exports_run(satex, work):
@@ -1365,8 +1373,9 @@ TEX_FILES = {
     "pdfjs.tgz": ("https://registry.npmjs.org/pdfjs-dist/-/pdfjs-dist-6.5.438.tgz", "7461aefcd27c4ef0dd76f9ca5760f09466eb6b3f934432670c12132e7b3d6faa"),
 }
 # The package sources Compile asks by default, in order (`SATEX_TEX_SOURCES`, one per line, overrides them at build time):
-# TeXlyre's TeX Live 2026 server, then this site's own mirror of the packages it offers.
-TEX_SOURCES = ["https://texlive2026.texlyre.org/{format}/{name}", "play/texfiles/{name}"]
+# this site's own mirror of the packages it offers and of every file an example's build reads, then TeXlyre's
+# TeX Live 2026 server for the rest. An example's build asks no other host (`compile_reads`).
+TEX_SOURCES = ["play/texfiles/{name}", "https://texlive2026.texlyre.org/{format}/{name}"]
 TEX_TIMEOUT_MS = 8000
 TEX_NOT_MIRRORED = re.compile(r"\.(bin|satex-docs|lua|otf|ttf|pdf|txt|md|json|html)$|/(README|LICENSE|CHANGES)[^/]*$")
 TEX_MAP = "texmf-var/fonts/map/pdftex/updmap/pdftex.map"
@@ -1397,10 +1406,11 @@ def tex_core(tar, pdftex_map):
     return files, bytes(blob + pdftex_map)
 
 
-def tex_mirror(out, tables, packages, core, pdftex_map):
+def tex_mirror(out, tables, packages, core, pdftex_map, compiles):
     """`play/texfiles/NAME`: the pdfTeX files of the packages the playground offers, flat, the first of a name kept,
-    and the Type 1 fonts and encodings the font map names for their metrics. What the core has stays out.
-    The second source of Compile, on the site's own host. Its bytes in all."""
+    the Type 1 fonts, encodings and virtual fonts of their metrics, and every file an example's build reads
+    (`compiles`, name -> path). What the core has stays out. The first source of Compile, on the site's own host.
+    Returns the virtual fonts TeX Live lacks of those metrics: asked of nobody."""
     have, size = {Path(p).name for p, _ in core}, 0
     keep = out / "play/texfiles"
     keep.mkdir(parents=True, exist_ok=True)
@@ -1422,11 +1432,21 @@ def tex_mirror(out, tables, packages, core, pdftex_map):
     for line in pdftex_map.decode("latin-1").splitlines():
         if line.split(" ", 1)[0] + ".tfm" in metrics:
             fonts.update(re.findall(r"<+\[?([\w.-]+\.(?:pfb|enc))", line))
+    # pdfTeX asks for a virtual font of every metric it loads: TeX Live's ships here, the others are absent
     fonts = sorted(fonts - have)
-    for at in range(0, len(fonts), 200):
-        for path in proc(["kpsewhich", *fonts[at:at + 200]], capture_output=True, text=True).stdout.split():
-            write(Path(path).name, Path(path).read_bytes())
+    metrics |= {n for found, _ in compiles.values() for n in found if n.endswith(".tfm")}
+    virtual = sorted({f"{Path(m).stem}.vf" for m in metrics} - have)
+    found = set()
+    for names in (fonts, virtual):
+        for at in range(0, len(names), 200):
+            for path in proc(["kpsewhich", *names[at:at + 200]], capture_output=True, text=True).stdout.split():
+                write(Path(path).name, Path(path).read_bytes())
+                found.add(Path(path).name)
+    # an example's own reads, whatever their kind: its build then asks no other host
+    for name, path in sorted({n: p for found, _ in compiles.values() for n, p in found.items()}.items()):
+        write(name, Path(path).read_bytes())
     print(f"playground: site mirror of TeX files: {sum(1 for _ in keep.iterdir())} files, {size / 2**20:.0f} MiB", file=sys.stderr)
+    return sorted(set(virtual) - found)
 
 
 def seeds(satex, work, project, packages):
@@ -1456,7 +1476,50 @@ def seeds(satex, work, project, packages):
     return out
 
 
-def browser_tex(out, work, tables, packages):
+# kpathsea's answer to one lookup (`-kpathsea-debug=32`): the names tried, then the paths found, none when absent
+KPSE_SEARCH = re.compile(r"^kdebug:returning from (?:generic )?search\(\[?([^\])]*)\]?\) =>(.*)$", re.M)
+
+
+def compile_reads(work, project):
+    """Per document the playground offers, what the installation's pdfLaTeX looks up building it (kpathsea's trace,
+    two passes with their PDF, so the fonts too; BibTeX's style from the .aux), as `(found, absent)`: the TeX Live files
+    it read (name -> path) with the preamble format's `mylatexformat.ltx`, and the names TeX Live lacks (`cmr10.vf`,
+    `lstlocal.cfg`). The browser's pdfTeX finds the first on the site and asks nobody for the second.
+    A file LaTeX says is not found is said loudly: the browser would ask a package server for it."""
+    trees = [Path(t).resolve() for v in ("TEXMFDIST", "TEXMFLOCAL", "TEXMFSYSVAR") if (t := run("kpsewhich", "-var-value", v).strip())]
+    def one(doc):
+        build = work / "compile-reads" / doc.stem
+        shutil.rmtree(build, ignore_errors=True)
+        shutil.copytree(project, build, ignore=shutil.ignore_patterns("satex.yaml"))
+        read, absent = {run("kpsewhich", "mylatexformat.ltx").strip()}, set()
+        for _ in range(2):
+            trace = proc(["pdflatex", "-kpathsea-debug=32", "-no-shell-escape", "-interaction=nonstopmode", doc.name],
+                         cwd=build, capture_output=True, text=True, errors="replace", timeout=300, check=False).stderr
+            for names, found in KPSE_SEARCH.findall(trace):
+                if found.split():
+                    read |= set(found.split())
+                else:
+                    absent |= set(names.split())
+            aux = build / f"{doc.stem}.aux"
+            styles = [f"{b.strip()}.bst" for b in re.findall(r"\\bibstyle\{([^}]*)\}", aux.read_text(errors="replace") if aux.is_file() else "")]
+            read |= {str(p) for p in kpsewhich(styles, build).values()}
+        log = build / f"{doc.stem}.log"
+        missing = re.findall(r"^! LaTeX Error: File `([^']+)' not found", log.read_text(errors="replace") if log.is_file() else "", re.M)
+        paths = {(build / r).resolve() for r in read if r}
+        own = {p.name for p in build.iterdir()}
+        shutil.rmtree(build, ignore_errors=True)
+        found = {p.name: str(p) for p in sorted(paths) if p.is_file() and any(p.is_relative_to(t) for t in trees) and p.suffix not in (".fmt", ".map", ".cnf") and p.name != "ls-R"}
+        # the document's own files and what its runs write are the build's, never TeX Live's
+        return missing, found, sorted(n for n in absent - set(found) if n not in own and Path(n).stem.split(".")[0] != doc.stem and "/" not in n and n != "aliases")
+    docs = [d for d in sources() if d.suffix == ".tex"]
+    done = parallel("[4/4] files each example's build reads", docs, one)
+    for d, (missing, _, _) in zip(docs, done):
+        if missing:
+            print(f"::warning::playground: {d.name}'s build looks for files TeX Live lacks, the browser's TeX asks the package server: {', '.join(missing)}", file=sys.stderr)
+    return {d.name: (found, absent) for d, (_, found, absent) in zip(docs, done)}
+
+
+def browser_tex(out, work, tables, packages, project):
     """The manifest's `tex`, or None when a download fails: Compile on a static host then says it has none."""
     keep = work / "browser-tex"
     keep.mkdir(parents=True, exist_ok=True)
@@ -1476,9 +1539,16 @@ def browser_tex(out, work, tables, packages):
     except (OSError, ValueError, subprocess.CalledProcessError) as e:
         print(f"::warning::playground: no browser TeX, Compile on this site says so: {e}", file=sys.stderr)
         return None
+    # the installation's font map lines the release's lacks (sansmathaccent's `mathkerncmssi10`): without one pdfTeX
+    # looks for a bitmap font of that name, at a package server
+    have = {l.split(" ", 1)[0] for l in map_.decode("latin-1").splitlines()}
+    local = Path(run("kpsewhich", "pdftex.map").strip()).read_text("latin-1").splitlines()
+    map_ += "".join(f"{l}\n" for l in local if l and l[0] not in "%#" and l.split(" ", 1)[0] not in have).encode("latin-1")
     files, blob = tex_core(tar, map_)
     packed = gz(blob)
-    tex_mirror(out, tables, packages, files, map_)
+    texts = [(d.name, d.read_bytes()) for d in sources()] + [(c, (d.parent / c).read_bytes()) for d in sources() for c in projects()[d.name]]
+    compiles = memo(work, "compile-reads", [texts, installation_stamp(), inspect.getsource(compile_reads)], lambda: compile_reads(work, project))
+    novf = tex_mirror(out, tables, packages, files, map_, compiles)
     with tarfile.open(fileobj=io.BytesIO(pdfjs)) as t:
         lib, worker, pdfjs_licence = (t.extractfile(f"package/{n}").read() for n in ("legacy/build/pdf.min.mjs", "legacy/build/pdf.worker.min.mjs", "LICENSE"))
     with tarfile.open(fileobj=io.BytesIO(tar)) as t:
@@ -1488,7 +1558,11 @@ def browser_tex(out, work, tables, packages):
             "engine": emit(out, "play/busytex.engine.js", engine), "wasm": emit(out, "play/busytex.wasm", wasm), "wasmSize": len(wasm),
             "core": emit(out, "play/tex-core.bin.gz", packed), "coreSize": len(packed), "files": files,
             "pdfjs": emit(out, "play/pdf.min.mjs", lib), "pdfWorker": emit(out, "play/pdf.worker.min.mjs", worker),
-            "notice": emit(out, "play/tex-NOTICE.txt", b"\n\n".join((notice, licence, pdfjs_licence, terms))), "sources": os.environ.get("SATEX_TEX_SOURCES", "\n".join(TEX_SOURCES)).split(), "timeoutMs": TEX_TIMEOUT_MS}
+            "notice": emit(out, "play/tex-NOTICE.txt", b"\n\n".join((notice, licence, pdfjs_licence, terms))), "sources": os.environ.get("SATEX_TEX_SOURCES", "\n".join(TEX_SOURCES)).split(), "timeoutMs": TEX_TIMEOUT_MS,
+            # per example, what its build reads beyond the core: fetched side by side before its first pass;
+            # and what any example's build looks up that TeX Live lacks (a font's `.vf`): asked of nobody
+            "reads": {doc: sorted(set(found) - {Path(p).name for p, _ in files}) for doc, (found, _) in compiles.items()},
+            "absent": sorted({n for _, absent in compiles.values() for n in absent} | set(novf))}
 
 
 def playground(satex, wasm, work, out):
@@ -1569,7 +1643,7 @@ def playground(satex, wasm, work, out):
         "js": emit_local(out, "play/satex.js", (wasm / "satex.js").read_bytes()),
         "wasm": emit_local(out, "play/satex.wasm", wasm_bytes), "wasmSize": len(wasm_bytes),
         "kernels": kernels, "packages": extra, "seeds": seeds(satex, work, project, packages), "preload": first_download(), "unavailable": UNAVAILABLE, "queries": queries, "queryAbout": query_about, "filtered": filtered, "rules": rules,
-        "tex": browser_tex(out, work, tables, packages), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
+        "tex": browser_tex(out, work, tables, packages, project), "tips": [t[0] for t in json.loads((SITE / "tips.json").read_text())],
         "completion": completion, "samples": samples, "sample": "hello.tex", "root": "../",
         "commands": {name: command for name, command in commands().items() if command != "lint"}, "projects": projects(), "plugins": plugins(), "typePlugins": tiles,
         "symbols": emit(out, "play/symbols.json", json.dumps({**table, "glyphs": emit(out, "play/glyphs.bin.gz", gz(table["glyphs"])),
@@ -1877,6 +1951,48 @@ def symbols(satex, project, env):
             "weight": {**established(dist, sorted({r[5] for r in rows})), "kernel": 1, "unicode-math": 1}}, fonts
 
 
+def compile_stats(path):
+    """The landing page's strip of compile numbers: the newest entry of bench/compile.json
+    (scripts/bench_compile.py), else a line that says none are measured yet."""
+    entries = json.loads(path.read_text()) if path.exists() else []
+    link = '<a href="bench/index.html#compile">Compile benchmarks</a>'
+    if not entries or not entries[-1].get("summary"):
+        return f'<p class="muted small">{link}: not measured yet.</p>'
+    e = entries[-1]
+    s, tiles = e["summary"], []
+    def times(x):
+        return f"{x:.2f}×" if x < 2 else f"{x:.1f}×" if x < 10 else f"{x:.0f}×"
+    # one measure for every tile: latexmk's time over satex's (above 1 faster), never "faster" and "slower" mixed
+    def ratio(x, what):
+        if x:
+            tiles.append((times(x), f"speed vs latexmk, {what}"))
+    # a thesis as theses are: chapters, TikZ and pgfplots figures, hyperref (benches/speed/gen.py `thesis`)
+    th = {(r["scenario"], r["tool"]): r for r in e["runs"] if r["doc"].startswith("gen:thesis")}
+    mine, theirs = th.get(("edit", s.get("tool", "satex-build"))), th.get(("edit", "latexmk"))
+    if mine and theirs:
+        tiles.append((f'{mine["wall"]["median"]:.1f} s', f'one-edit rebuild, {mine["pages"]}-page thesis with figures (latexmk {theirs["wall"]["median"]:.1f} s)'))
+    big = s.get("big_edit")
+    if big and big.get("satex"):
+        pages = big.get("pages") or next((r["pages"] for r in e["runs"] if r["doc"] == big["doc"] and r.get("pages")), None)
+        doc = f"{pages} pages" if pages else html.escape(big["doc"])
+        tiles.append((f'{big["satex"]:.1f} s', f'one-edit rebuild, {doc} (latexmk {big["latexmk"]:.1f} s)'))
+    for key, what in (("edit", "one-edit rebuild"), ("cold", "cold build"), ("warm", "nothing changed")):
+        ratio(s.get("speedup", {}).get(key), what)
+    # the same output is what every build must give, not a gain: said first, as a fact
+    same = s.get("identical")
+    lead = ""
+    if same and "/" in same:
+        a, b = same.split("/")
+        lead = f'<p class="muted small">{"All" if a == b else a + " of"} {b} builds give the same pages and text as latexmk.</p>'
+    strip = "".join(f"<div class=\"stat\"><b>{html.escape(v)}</b><span>{html.escape(t[:1].upper() + t[1:])}</span></div>" for v, t in tiles)
+    n = e.get("repeats")
+    runs = "one run each" if n == 1 else f"median of {n} runs" if n else "median of repeated runs"
+    mode = {"satex-build": " (the PDF only)", "satex-warm": " (the PDF only, warm engine)"}.get(s.get("tool"), "")
+    return (f'{lead}<div class="stat-strip">{strip}</div><p class="muted small"><code>satex compile</code>{mode} against latexmk on '
+            f'{html.escape(e.get("machine", {}).get("cpu", "one machine"))}, {runs}, SaTeX {html.escape(e["version"])} ({html.escape(e["date"])}). '
+            f'Geometric means over the benchmark documents. {link} has every document, toolchain and spread.</p>')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--satex", type=Path, required=True, help="the native satex binary")
@@ -1895,6 +2011,9 @@ def main():
                     help="reuse the files each package was listed to read across satex builds (a development loop: "
                          "a file a changed interpreter reads besides is missing from the bundle until --fresh)")
     args = ap.parse_args()
+    # The build makes the caches it ships itself: no satex run of it starts a background builder that
+    # outlives the build (`satex cache build --background`, cli/cache/background.rs).
+    os.environ["SATEX_NO_SETUP"] = "1"
     # Ctrl+C stops the build: the terminal signals the satex runs too, and worker threads must not
     # start more of them, so the process ends at once instead of unwinding the main thread only.
     for stop in (signal.SIGINT, signal.SIGTERM):
@@ -2011,6 +2130,8 @@ def main():
             body = rewrite(markdown(text), src, table | lean_table, homepage, repo, out, "../" * dst.count("/"))
             if dst == "changelog.html":
                 body = re.sub(r"<li>(?:<p>)?<code>(feat|fix|perf|docs|build)</code>", lambda m: f'<li><span class="badge b-{m[1]}">{m[1]}</span>', body)
+                # the TeX Live versions an entry is for, as a second badge
+                body = re.sub(r'(<span class="badge b-\w+">\w+</span>)\s*<code>(TL [^<]+)</code>', r'\1<span class="badge b-tl">\2</span>', body)
                 body = commit_ranges(body)
             if dst == "wiki/formal-semantics.html":
                 body = formal(body)
@@ -2072,6 +2193,7 @@ def main():
         return
     def home():
         parts["showcase"] = showcase(out, live)
+        parts["compilestats"] = compile_stats(SITE / "bench/compile.json")
         page("index.html", "Static Analysis for (La)TeX and Friends", fill((SITE / "home.html").read_text(), {
             **assets, **parts, "version": release, "versiontitle": release_title, "repository": repo, "description": html.escape(cargo["description"])}), side=False)
     home()
@@ -2079,12 +2201,13 @@ def main():
     # Draw alone, to embed: its own page without the site's chrome
     (out / "draw").mkdir(exist_ok=True)
     (out / "draw/index.html").write_text(minify_html(fill((SITE / "draw.html").read_text(), {**assets, "root": "../", "symbols": manifest["symbols"]})))
-    data = SITE / "bench/data.json"
     (out / "bench").mkdir(exist_ok=True)
-    if data.exists():
-        shutil.copy2(data, out / "bench/data.json")
-    else:
-        (out / "bench/data.json").write_text("[]\n")
+    for name in ("data.json", "compile.json"):
+        data = SITE / "bench" / name
+        if data.exists():
+            shutil.copy2(data, out / "bench" / name)
+        else:
+            (out / "bench" / name).write_text("[]\n")
     page("bench/index.html", "Benchmarks", fill((SITE / "bench.html").read_text(), {"root": "../", "repository": repo}), side=False)
     (out / ".nojekyll").write_text("")
     with stage("link check"):
@@ -2269,9 +2392,21 @@ def recapture(out):
     server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(quiet, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
     began = time.monotonic()
-    # browsers by what the machine has free now: about 3 GB each with the engine, two idle cores each, six at most
-    idle = (os.cpu_count() or 2) - os.getloadavg()[0]
-    slots = max(1, min(6, available_memory() // (3 * 2**30), int(idle) // 2))
+    # The recordings show how fast the playground is: taken on a busy machine they show a compile five times as slow
+    # as it is, and their browsers load it further. A busy machine (load over a quarter of the cores) keeps the last
+    # captures; SATEX_SHOTS=force takes them anyway.
+    cores = os.cpu_count() or 2
+    if os.getloadavg()[0] > cores / 4 and os.environ.get("SATEX_SHOTS") != "force":
+        server.shutdown()
+        print(f"showcase: {len(due)} captures out of date, kept: the machine is busy (load {os.getloadavg()[0]:.1f} of {cores} cores); "
+              "build again when it is idle, or SATEX_SHOTS=force", file=sys.stderr)
+        return False
+    # browsers by what the machine has free now: about 3 GB each with the engine, two idle cores each, two at most;
+    # shots that compile one at a time, so no take waits for another's engine
+    idle = cores - os.getloadavg()[0]
+    slots = max(1, min(2, available_memory() // (3 * 2**30), int(idle) // 2))
+    if any(n in served for n in due):
+        slots = 1
     names, url = list(due), f"http://127.0.0.1:{server.server_address[1]}/"
     urls, playground = {}, None
     if any(n in served for n in names):
@@ -2293,7 +2428,7 @@ def recapture(out):
 
     def run(part):
         t0 = time.monotonic()
-        out = subprocess.run(["node", str(SITE / "showcase/capture.mjs"), urls.get(part[0], url), str(img)],
+        out = subprocess.run(["nice", "-n", "10", "node", str(SITE / "showcase/capture.mjs"), urls.get(part[0], url), str(img)],
                              env=dict(os.environ, ONLY=",".join(part), CHROME=str(chrome)), capture_output=True, text=True).stdout
         finished[0] += 1
         got = sorted(set(re.findall(r"^ok +\S+ (light|dark)", out, re.M)))

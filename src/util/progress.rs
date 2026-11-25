@@ -22,6 +22,8 @@ struct Bars {
 
 static BARS: Mutex<Bars> = Mutex::new(Bars { lines: Vec::new(), head: None, shown: Vec::new(), last_draw_ms: 0 });
 const THROTTLE_MS: u64 = 100;
+/// Columns and rows of a terminal that does not say its size.
+const SIZE: (usize, usize) = (80, 24);
 /// Longest label shown, so a bar never wraps on an 80-column terminal.
 const LABEL: usize = 48;
 
@@ -49,10 +51,12 @@ pub fn terminal(stream: impl IsTerminal) -> bool {
 }
 
 impl Bars {
-    /// The rows to show: the headline, then every bar, each cut to `width`.
-    fn rows(&self, width: usize) -> Vec<String> {
+    /// The rows to show: the headline, then every bar, each cut to `width`, and no more than
+    /// `height` of them. A frame taller than the screen pushes its first rows into the
+    /// scrollback, where the next frame cannot overwrite them: each would stay there for good.
+    fn rows(&self, (width, height): (usize, usize)) -> Vec<String> {
         let bars = self.lines.iter().flat_map(|(_, lines)| lines);
-        self.head.iter().chain(bars).map(|line| fit(line, width.saturating_sub(1))).collect()
+        self.head.iter().chain(bars).take(height.max(1)).map(|line| fit(line, width.saturating_sub(1))).collect()
     }
 
     /// Prints `above` (lines that stay) and then the rows over the old ones,
@@ -64,8 +68,8 @@ impl Bars {
     /// cut to the terminal's width: one that wrapped would leave the next
     /// frame one row short.
     fn draw(&mut self, out: &mut impl Write, above: &str) {
-        let width = terminal_size::terminal_size_of(std::io::stderr()).map_or(80, |(w, _)| w.0 as usize);
-        let rows = self.rows(width);
+        let size = terminal_size::terminal_size_of(std::io::stderr()).map_or(SIZE, |(w, h)| (w.0.into(), h.0.into()));
+        let rows = self.rows(size);
         if above.is_empty() && rows == self.shown {
             return;
         }
@@ -182,12 +186,17 @@ pub struct Sub {
 static RUN: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 static RUNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
 
-/// Package caches this process loaded instead of reading the package.
-static CACHES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// Package caches this process loaded instead of reading the package, and built.
+static CACHES: [std::sync::atomic::AtomicU32; 2] = [const { std::sync::atomic::AtomicU32::new(0) }; 2];
 
 /// One more package cache was loaded: the bar counts them.
 pub fn cache_loaded() {
-    CACHES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    CACHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// One more package cache was built: the bar counts them too.
+pub fn cache_built() {
+    CACHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 pub fn set_run(run: u32, runs: u32) {
@@ -224,9 +233,11 @@ pub fn bar(
         (all, 0) => format!(" {} lines", count(all)),
         (all, cached) => format!(" {} lines ({} cached)", count(all), count(cached)),
     };
-    let caches = match CACHES.load(std::sync::atomic::Ordering::Relaxed) {
-        0 => String::new(),
-        n => format!(" {n} caches loaded"),
+    let caches = match CACHES.each_ref().map(|n| n.load(std::sync::atomic::Ordering::Relaxed)) {
+        [0, 0] => String::new(),
+        [n, 0] => format!(" {n} packages from caches"),
+        [0, b] => format!(" {b} packages cached"),
+        [n, b] => format!(" {} packages: {n} from caches, {b} cached", n + b),
     };
     let tokens = if steps.0 > 0 { format!("{caches} {} steps", count(steps.0)) } else { caches };
     let here = if steps.1 >= 100_000 { format!(" {} on this line", count(steps.1)) } else { String::new() };
@@ -385,7 +396,7 @@ thread_local! {
 }
 
 /// What runs between two commands of a document's run on this thread.
-type Pause = Box<dyn FnMut()>;
+pub type Pause = Box<dyn FnMut()>;
 
 thread_local! {
     static PAUSE: std::cell::RefCell<Option<Pause>> = const { std::cell::RefCell::new(None) };
@@ -457,6 +468,33 @@ pub fn pause_if_due() {
     let every = std::time::Duration::from_millis(PAUSE_EVERY.load(std::sync::atomic::Ordering::Relaxed));
     if PAUSED_AT.get().is_none_or(|t| t.elapsed() >= every) {
         pause_now();
+    }
+}
+
+/// The seconds each part of some work took, written as one note (`satex: <what>: a 0.01s, …`)
+/// when dropped (`-vv`).
+pub struct Laps(Option<(std::time::Instant, String)>);
+
+impl Laps {
+    pub fn new(on: bool, what: &str) -> Self {
+        Laps(on.then(|| (std::time::Instant::now(), format!("satex: {what}:"))))
+    }
+
+    /// The time since the last lap went to `what`.
+    pub fn lap(&mut self, what: &str) {
+        if let Some((clock, said)) = &mut self.0 {
+            use std::fmt::Write;
+            let _ = write!(said, " {what} {:.2}s,", clock.elapsed().as_secs_f64());
+            *clock = std::time::Instant::now();
+        }
+    }
+}
+
+impl Drop for Laps {
+    fn drop(&mut self) {
+        if let Some((_, said)) = &self.0 {
+            message(format_args!("{}", said.trim_end_matches(',')));
+        }
     }
 }
 
@@ -624,6 +662,18 @@ mod tests {
         assert!(!before.contains("\x1b[J"), "erased before writing: {text:?}");
         assert_eq!(rows.matches("\x1b[J").count(), 1, "only the rows past the frame go: {text:?}");
         assert!(rows.find("early findings") < rows.find("satex: a"), "the headline stands first: {text:?}");
+    }
+
+    /// A frame has no more rows than the screen. One row more scrolled the headline into the
+    /// scrollback, where no later frame reaches it: `N early findings so far` stayed there
+    /// once for each time a deep `\\input` chain made the bars taller than a small terminal.
+    #[test]
+    fn a_frame_is_no_taller_than_the_screen() {
+        let mut bars = bars(&["satex: a", "  b", "  c"]);
+        bars.head = Some("head".into());
+        let all = bars.lines[0].1.len() + 1;
+        assert_eq!(bars.rows((super::SIZE.0, all)).len(), all);
+        assert_eq!(bars.rows((super::SIZE.0, all - 1)), ["head", "satex: a", "  b"]);
     }
 
     #[test]

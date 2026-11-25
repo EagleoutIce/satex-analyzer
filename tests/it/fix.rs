@@ -139,6 +139,75 @@ fn reported(name: &str, source: &str, code: &str) -> usize {
     satex::linter::lint(&analysis).iter().filter(|r| r.get("code").and_then(|c| c.as_str()) == Some(code)).count()
 }
 
+/// Intuition: a run a budget stopped never read the rest: a reference to a label there is "maybe
+/// defined later", a precision note, never "no `\\label` anywhere" (the label is made by a macro: the
+/// source text does not spell its key). Pins 3 false undefined-reference
+/// errors on a 60-section article `limits.seconds` stopped at section 9.
+#[test]
+fn a_reference_past_a_stopped_run_is_only_a_note() {
+    if !installed() {
+        return;
+    }
+    let filler = "\\relax".repeat(4000);
+    let head = "\\documentclass{article}\n\\newcommand\\seclabel[1]{\\label{sec:#1}}\n\\begin{document}\nSee \\ref{sec:late}.\n";
+    let source = format!("{head}{filler}\n\\section{{Late}}\\seclabel{{late}}\n\\end{{document}}\n");
+    let dir = project("reference-stopped", &[("doc.tex", &source)]);
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    // past the `\ref`, by what this kernel spends up to it, and well before the filler's end
+    cfg.limits.steps = Machine::analyze(head, None, &cfg).steps + 2000;
+    let analysis = Machine::analyze(&source, Some(&dir.join("doc.tex")), &cfg);
+    assert!(analysis.exhausted, "the budget did not stop the run");
+    let found: Vec<serde_json::Value> = (satex::linter::lint(&analysis).into_iter())
+        .filter(|r| r["code"] == "undefined-reference")
+        .map(|r| serde_json::to_value(r).unwrap())
+        .collect();
+    assert!(!found.is_empty() && found.iter().all(|r| r["category"] == "precision"), "{found:?}");
+}
+
+/// Intuition: a run that did not read everything may not have met a package's use: "unused" is then a
+/// precision note with no fix that deletes the load. Pins `xlistings` (used past the line a time limit
+/// stopped the run at) offered for deletion.
+#[test]
+fn an_unused_package_in_an_incomplete_run_is_only_a_note() {
+    if !installed() {
+        return;
+    }
+    // the chapter stays unread (`load.inputs: false`): it may use the package
+    let source =
+        "\\documentclass{article}\n\\usepackage{needspace}\n\\begin{document}\nA\n\\input{chap}\n\\end{document}\n";
+    let dir = project("unused-package-unread", &[("doc.tex", source), ("chap.tex", "\\needspace{2\\baselineskip}B\n")]);
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    cfg.load.inputs = false;
+    let analysis = Machine::analyze(source, Some(&dir.join("doc.tex")), &cfg);
+    let found: Vec<serde_json::Value> = (satex::linter::lint(&analysis).into_iter())
+        .filter(|r| r["code"] == "unused-package")
+        .map(|r| serde_json::to_value(r).unwrap())
+        .collect();
+    assert!(
+        !found.is_empty()
+            && found.iter().all(|r| r["category"] == "precision" && r.get("edits").is_none_or(|e| e.is_null())),
+        "{found:?}"
+    );
+}
+
+/// A package that sets a font default the text is set in acts on every character, though no name
+/// it defines is called: `\\usepackage[T1]{fontenc}` (the kernel's `\\normalfont` reads
+/// `\\encodingdefault`). Pins the false finding on nearly every thesis. Without an option fontenc
+/// selects OT1, the default already, and is unused.
+#[test]
+fn a_package_setting_the_text_font_is_used() {
+    if !installed() {
+        return;
+    }
+    let doc = |opt: &str| {
+        format!(
+            "\\documentclass{{article}}\n\\usepackage{opt}{{fontenc}}\n\\begin{{document}}\nHello.\n\\end{{document}}\n"
+        )
+    };
+    assert_eq!(reported("unused-package-t1", &doc("[T1]"), "unused-package"), 0);
+    assert_eq!(reported("unused-package-ot1", &doc(""), "unused-package"), 1);
+}
+
 /// A package whose command the text of a macro the document runs calls is
 /// used, through any number of macros, though the path calling it was not
 /// taken. A macro nothing runs uses nothing.
@@ -221,8 +290,9 @@ fix_cases! {
     unused_label_is_deleted_inline_and_as_a_line("unused-label", "\\documentclass{article}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\\section{B}\n  \\label{sec:b}\nx\n\\end{document}\n", "unused-label", true, "\\documentclass{article}\n\\begin{document}\n\\section{A}\n\\section{B}\nx\n\\end{document}\n");
     /// amsmath writes the `\newlabel` at the end of a display, and reads an
     /// `align` body as one argument: the label is recorded at its own key, so
-    /// the deletion finds the `\label` that carries it.
-    unused_label_is_deleted_inside_a_display("unused-label-display", "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n  \\label{eq:b}\n\\end{equation}\n\\begin{align}\n  c &= d \\label{eq:a} \\\\\n  e &= f\n\\end{align}\n\\end{document}\n", "unused-label", true, "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{equation}\n  g = h\n\\end{equation}\n\\begin{align}\n  c &= d  \\\\\n  e &= f\n\\end{align}\n\\end{document}\n");
+    /// the deletion finds the `\label` that carries it. The display has a referenced
+    /// row: one with none is `unreferenced-numbered-display`'s.
+    unused_label_is_deleted_inside_a_display("unused-label-display", "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{align}\n  c &= d \\label{eq:a} \\\\\n  e &= f \\label{eq:e}\n\\end{align}\n\\eqref{eq:e}\n\\end{document}\n", "unused-label", true, "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\begin{align}\n  c &= d  \\\\\n  e &= f \\label{eq:e}\n\\end{align}\n\\eqref{eq:e}\n\\end{document}\n");
     dead_definition_before_a_def_is_a_safe_deletion("dead-definition", "\\documentclass{article}\n\\def\\x#1{[#1]}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n", "dead-definition", false, "\\documentclass{article}\n\\def\\x#1{(#1)}\n\\begin{document}\n\\x{a}\n\\end{document}\n");
     unused_definition_deletes_the_whole_newcommand("unused-definition", "\\documentclass{article}\n\\newcommand*{\\unused}[2][d]{%\n  #1 and #2%\n}\n\\begin{document}\nx\n\\end{document}\n", "unused-definition", true, &format!("\\documentclass{{article}}\n{BODY}"));
     csname_becomes_the_etoolbox_command_for_its_role("csname", "\\documentclass{article}\n\\usepackage{etoolbox}\n\\expandafter\\def\\csname my@x\\endcsname{X}\n\\expandafter\\let\\csname my@y\\endcsname\\relax\n\\begin{document}\n\\csname my@x\\endcsname \\csname my@x\\endcsname\n\\end{document}\n", "primitive-tex-command", true, "\\documentclass{article}\n\\usepackage{etoolbox}\n\\csdef{my@x}{X}\n\\cslet{my@y}\\relax\n\\begin{document}\n\\csuse{my@x}\\csuse{my@x}%\n\\end{document}\n");
@@ -519,9 +589,18 @@ fn a_quantity_set_on_only_some_paths_is_not_reported() {
     assert_eq!(records.len(), 1, "{records:?}");
 }
 
+/// `want` as the installed siunitx spells a quantity: siunitx 2 (TeX Live 2019, no
+/// `siunitx-v2.sty` beside it) has `\SI`, not `\qty`, so the fix writes that.
+fn qty(want: &str) -> String {
+    match crate::support::installed_file_has("siunitx-v2.sty", "") || !installed() {
+        true => want.to_string(),
+        false => want.replace("\\qty{", "\\SI{"),
+    }
+}
+
 fix_cases! {
-    hand_set_quantity_becomes_a_siunitx_call("hand-set-quantity", "\\documentclass{article}\n\\begin{document}\nA delay of 2ms and growth of 5\\%.\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\qty{2}{\\milli\\second} and growth of \\qty{5}{\\percent}.\n\\end{document}\n");
-    hand_set_quantity_rewrites_a_macro_that_holds_the_unit("hand-set-quantity-macro", "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n", "hand-set-quantity", true, "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n");
+    hand_set_quantity_becomes_a_siunitx_call("hand-set-quantity", "\\documentclass{article}\n\\begin{document}\nA delay of 2ms and growth of 5\\%.\n\\end{document}\n", "hand-set-quantity", true, &qty("\\documentclass{article}\n\\usepackage{siunitx}\n\\begin{document}\nA delay of \\qty{2}{\\milli\\second} and growth of \\qty{5}{\\percent}.\n\\end{document}\n"));
+    hand_set_quantity_rewrites_a_macro_that_holds_the_unit("hand-set-quantity-macro", "\\documentclass{article}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(3\\ms\\).\n\\end{document}\n", "hand-set-quantity", true, &qty("\\documentclass{article}\n\\usepackage{siunitx}\n\\newcommand{\\ms}{\\,\\mathrm{ms}}\n\\begin{document}\nA delay of \\(\\qty{3}{\\milli\\second}\\).\n\\end{document}\n"));
 }
 
 /// Documents exercising the typography lints that could plausibly disagree
@@ -634,8 +713,9 @@ fn a_context_document_is_not_held_to_latex_conventions() {
 }
 
 /// A name a package defined is named with the package and its line, and the
-/// fix warns that overriding it changes the package's own uses: amsmath's
-/// `\text` is what `\newcommand{\text}` most often runs into.
+/// message warns that renewing it changes the package's own uses: amsmath's
+/// `\text` is what `\newcommand{\text}` most often runs into. The fix is one short
+/// action (`\renewcommand`), so an editor shows it as one button.
 #[test]
 fn a_package_s_command_is_named_with_its_package() {
     if !installed() {
@@ -650,7 +730,19 @@ fn a_package_s_command_is_named_with_its_package() {
         satex::linter::lint(&analysis).into_iter().find(|r| r["code"] == "already-defined").expect("a finding");
     let message = record["message"].as_str().unwrap_or_default();
     assert!(message.starts_with("\\text is already defined by amstext (amstext.sty:"), "{message}");
-    assert!(record["fix"].as_str().unwrap_or_default().contains("pick another name"), "{record:?}");
+    assert!(message.contains("changes it where amstext uses it too"), "{message}");
+    assert_eq!(record["fix"].as_str().unwrap_or_default(), "use `\\renewcommand{\\text}`", "{record:?}");
+}
+
+/// Without a LaTeX kernel (plain TeX defines no `\(`) a math-only command in text is set in `$…$`.
+/// Pins the fix writing `\(`, undefined there.
+#[test]
+fn math_command_in_plain_tex_takes_dollars() {
+    if !installed() {
+        return;
+    }
+    let fixed = fix("err-plain", "% !TeX program = tex\nLook at \\sum here.\n\\bye\n", "raised-error", false);
+    assert_eq!(fixed.text, "% !TeX program = tex\nLook at $\\sum$ here.\n\\bye\n");
 }
 
 /// An article whose body is `body`.
@@ -670,8 +762,18 @@ fix_cases! {
     runaway_closes_every_open_group("err-nested", article("\\textbf{a \\emph{b % c}\n"), "raised-error", true, &article("\\textbf{a \\emph{b}} % c}\n"));
     /// TeX ignores a `}` that closes no group: deleting it is safe.
     extra_brace_is_deleted("err-brace", article("Some text} more.\n"), "raised-error", false, &article("Some text more.\n"));
-    /// A script in text sets its nucleus and argument as a formula, one at a time.
-    math_only_tokens_become_formulas("err-dollar", article("Let x^{10}_i be and \\alpha too.\n"), "raised-error", true, &article("Let $x^{10}_i$ be and $\\alpha$ too.\n"));
+    /// A script in text sets its nucleus and argument as a formula, one at a time, in LaTeX's `\(…\)`
+    /// where the file has no formula of its own.
+    math_only_tokens_become_formulas("err-dollar", article("Let x^{10}_i be and \\alpha too.\n"), "raised-error", true, &article("Let \\(x^{10}_i\\) be and \\(\\alpha\\) too.\n"));
+    /// A math-only command in text is set as a formula with the arguments the run knows it reads, the
+    /// text around it left text: a safe fix. Pins "Let's look at an example \sum" giving pdfTeX's
+    /// `Missing $ inserted` with only a fix to review, and `\frac{1}{2}` wrapped without its arguments.
+    math_command_in_text_is_a_safe_formula("err-sum", article("Let's look at an example \\sum here, \\frac{1}{2} too.\n"), "raised-error", false, &article("Let's look at an example \\(\\sum\\) here, \\(\\frac{1}{2}\\) too.\n"));
+    /// A file that sets its formulas with `$` and never `\(` gets `$`: the project's own style.
+    math_command_follows_a_dollar_file("err-sum-dollar", article("We have $x$ and \\alpha here.\n"), "raised-error", false, &article("We have $x$ and $\\alpha$ here.\n"));
+    /// A command whose arguments the run cannot tell (`\sqrt` hands on through `\protect`) takes the
+    /// `[…]` and `{…}` right after it, for a review. Pins `\(\sqrt\)[3]{x}`, a new error.
+    math_command_with_unknown_arguments_takes_its_groups("err-sqrt", article("Roots \\sqrt[3]{x} here.\n"), "raised-error", true, &article("Roots \\(\\sqrt[3]{x}\\) here.\n"));
     /// The file's own spelling of formulas wins.
     math_follows_the_files_delimiters("err-paren", article("\\(a\\) and \\(b\\), then x_1.\n"), "raised-error", true, &article("\\(a\\) and \\(b\\), then \\(x_1\\).\n"));
     /// An `&` past the last column adds a column of the last one's kind.
@@ -835,7 +937,10 @@ fn a_format_line_waits_for_its_format() {
     );
     let path = dir.join("doc.tex");
     let source = std::fs::read_to_string(&path).unwrap();
-    let cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    let mut cfg = Config { load: Load { classes: true, ..Default::default() }, ..crate::support::config() };
+    // what the preamble costs is the installation's (TeX Live 2019's hyperref reads fewer files):
+    // any that is most of the build counts here
+    cfg.lints.build_cost.tokens = 0;
     let analysis = Machine::analyze(&source, Some(&path), &cfg);
     let cost: Vec<Record> =
         satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "preamble-cost").collect();

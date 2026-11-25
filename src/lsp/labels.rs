@@ -66,6 +66,11 @@ impl Labels {
         Labels { written, contents, environments }
     }
 
+    /// The number `key`'s `\newlabel` wrote, as typeset.
+    pub fn number(&self, key: &str) -> Option<&str> {
+        self.written.get(key).and_then(|g| g.first()).map(String::as_str).filter(|n| !n.is_empty())
+    }
+
     /// What `label` points at, in a line: `figure 2: A caption`, `§1.2: Intro`, `equation 3`.
     pub fn about(&self, label: &Occurrence) -> Option<String> {
         let groups = self.written.get(&label.key);

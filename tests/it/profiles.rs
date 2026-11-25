@@ -107,6 +107,83 @@ fn a_package_s_unused_definition_is_reported_only_when_private() {
     assert!(!names.iter().any(|m| m.contains("demoPublicCmd")), "{names:?}");
 }
 
+/// The private names of `source`, read as the package `demo.sty`, that `unused-definition` reports.
+fn unused_private(source: &str) -> Vec<String> {
+    let analysis = analyze_as(Profile::Package, source, "demo.sty");
+    let unused = |r: &&satex::queries::query::Record| r["code"] == "unused-definition" && r["origin"] == "document";
+    let mut names: Vec<String> =
+        satex::linter::lint(&analysis).iter().filter(unused).filter_map(|r| Some(r["name"].as_str()?.into())).collect();
+    names.sort();
+    names
+}
+
+/// A package read alone calls none of its commands, so no run expands their texts. A private
+/// name a public command's text holds is used all the same, also one defined after that text
+/// (hyperref's `\MakeLinkTarget` names `\__hyp_target_manual:nn` nine lines before it is
+/// defined), and through another private name. So is one a public name copies (`\let`,
+/// `\cs_new_eq:NN`). One nothing names is still reported.
+#[test]
+fn a_package_s_private_name_its_public_command_names_is_used() {
+    let names = unused_private(
+        "\\ProvidesPackage{demo}[2024/01/01 demo]
+\\newcommand\\demoPublicCmd{\\demo@helper}
+\\newcommand\\demo@helper{\\demo@inner}
+\\newcommand\\demo@inner{x}
+\\newcommand\\demo@orphan{\\demo@orphaned}
+\\newcommand\\demo@orphaned{y}
+\\newcommand\\demo@copied{z}
+\\let\\demoPublicCopy\\demo@copied
+\\endinput
+",
+    );
+    assert_eq!(names, ["\\demo@orphan", "\\demo@orphaned"]);
+}
+
+/// A name a text builds from a parameter is any name of that shape: `\csname demo@get@#1\endcsname`
+/// and expl3's `\use:c { __demo_get_#1:n }` (hyperref's `\hyperget`) use every name they can
+/// build. A name of another shape is still reported.
+#[test]
+fn a_name_built_from_a_parameter_uses_every_name_of_its_shape() {
+    let names = unused_private(
+        "\\ProvidesPackage{demo}[2024/01/01 demo]
+\\newcommand\\demoGet[1]{\\csname demo@get@#1\\endcsname}
+\\newcommand\\demo@get@a{a}
+\\newcommand\\demo@put@a{a}
+\\ExplSyntaxOn
+\\cs_new:Npn \\demoget #1 { \\use:c { __demo_get_#1:n } {} }
+\\cs_new:Npn \\__demo_get_anchor:n #1 { a }
+\\cs_new:Npn \\__demo_put_anchor:n #1 { a }
+\\ExplSyntaxOff
+\\endinput
+",
+    );
+    assert_eq!(names, ["\\__demo_put_anchor:n", "\\demo@put@a"]);
+}
+
+/// What reads a library as a document is off for it, by the profile's own settings: it programs
+/// in primitives, requires packages for the macros its users call, states each requirement
+/// itself, defines colors for its users, lists control symbols (`\do\.`) where prose has a
+/// typo, and repeats code where a macro would expand differently.
+/// hyperref.sty alone gave 31 `primitive-tex-command`, 8 `unused-package` and 89 `clones`.
+#[test]
+fn the_library_profiles_turn_off_what_reads_a_library_as_a_document() {
+    for profile in [Profile::Package, Profile::Class, Profile::Literate] {
+        let mut cfg = Config::default();
+        assert!(cfg.lints.clones.enabled);
+        cfg.apply_profile(profile).unwrap();
+        let document_only =
+            ["primitive-tex-command", "unused-package", "redundant-package-load", "unused-color", "unintended-escape"];
+        for code in document_only {
+            assert!(cfg.lint_off.iter().any(|c| c == code), "{code} under {profile:?}");
+        }
+        assert!(!cfg.lints.clones.enabled, "{profile:?}");
+        // What a library can get wrong stays on.
+        for code in ["unused-definition", "dead-definition", "duplicate-package", "group-local-definition"] {
+            assert!(!cfg.lint_off.iter().any(|c| c == code), "{code} under {profile:?}");
+        }
+    }
+}
+
 #[test]
 fn a_document_s_unused_definition_is_reported_regardless() {
     let source = "\\documentclass{article}\n\\newcommand\\unused{x}\n\\begin{document}\\end{document}\n";

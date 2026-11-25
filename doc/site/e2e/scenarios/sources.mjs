@@ -12,11 +12,12 @@ export const MARKUP = `\\documentclass{article}\n\\begin{document}\n\\section{Pl
 export const BANG = `\\documentclass{article}\n\\newcommand{\\greet}[1]{Hello, #1!}\n\\begin{document}\n\\greet{loool Das ist doch witzig oder?}\n$x_{42}+ 2 - 41$Generally I'd say this is nice wouldn't you!\nFoo bar baz ban chicken asmana \\greet{Walter}\n\\end{document}\n`;
 
 // the forest example as a hello.tex text: the examples list does not offer it
-export const FM = readFileSync(new URL('../../examples/feature-model.tex', import.meta.url), 'utf8');
+export const FM = readFileSync(new URL('../../tests/fixtures/feature-model.tex', import.meta.url), 'utf8');
 
-export const is = (s) => `(t) => t === ${JSON.stringify(s)}`;
-export const big = (s) => `(t, w) => t === ${JSON.stringify(s)} && w[4] - w[2] > 12`;
-export const lastOn1 = `(t, w, ws) => w === ws.filter((x) => x[0] === 1 && /^w\\d+[a-f]\\.?$/.test(x[5])).at(-1)`;
+// word targets (e2e/probe.js): data the page's word index answers, no code sent to the page
+export const is = (s) => ({ word: s });
+export const big = (s) => ({ word: s, minH: 12 });
+export const lastOn1 = { match: '^w\\d+[a-f]\\.?$', page: 1, nth: -1 };
 export const after = (s) => (text, w) => { const i = text.indexOf(s ?? w.replace(/[.,]$/, '')); return i < 0 ? -1 : i + (s ?? w.replace(/[.,]$/, '')).length; };
 
 // an undecided test: the run reads \\time as the time it ran (decided), a random number stays unknown

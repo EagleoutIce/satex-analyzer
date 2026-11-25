@@ -244,8 +244,10 @@ fn an_unknown_arrow_tip_names_its_library() {
 const SPIN_PASSES: u64 = 5_000_000;
 
 /// A name read with `{` a letter is TeX's error where the category codes
-/// are known, but not where a cut made the analysis assume them back
-/// (`region-catcodes`): there it is reported as possible only. The budget is
+/// are known, but not after a cut: the run rests on the cut from there
+/// (`Diagnostic::rest`), so the name is reported as possible only, with the
+/// gap it may follow from. Bug pinned: the rule looked for a
+/// `region-catcodes` row alone, and a cut that raised none left a certain error. The budget is
 /// the plain run's cost, so the cut falls in the loop however much
 /// `\begin{document}` costs (a fixed 400000 began to cut `\begin{document}`).
 #[test]
@@ -280,7 +282,11 @@ fn a_name_read_under_assumed_category_codes_is_no_certain_error() {
     };
     assert!(plain < SPIN_PASSES, "the loop's line must cost more than the plain run: {plain}");
     let assumed = severity("\\begingroup\\catcode`\\{=11 \\spin\\endgroup", plain);
-    assert_eq!(assumed, ["warning `\\x{y` is undefined where the analysis assumed category codes back after a cut"]);
+    assert_eq!(assumed.len(), 1, "{assumed:?}");
+    assert!(
+        assumed[0].starts_with("info `\\x{y` is never defined in this run (may follow from the analysis gap at"),
+        "{assumed:?}"
+    );
 }
 
 /// Only `\newlabel` warns about a name defined twice (pdflatex: "Label
@@ -373,7 +379,7 @@ fn document_class_options_reach_the_class() {
 
 #[test]
 fn hook_rules_and_the_kind_of_hook_decide_the_order_its_code_runs_in() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -419,7 +425,7 @@ fn hook_rules_and_the_kind_of_hook_decide_the_order_its_code_runs_in() {
 
 #[test]
 fn the_document_hooks_run_around_the_body_and_what_they_define_survives() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -442,7 +448,7 @@ fn the_document_hooks_run_around_the_body_and_what_they_define_survives() {
 
 #[test]
 fn a_one_time_hook_runs_code_added_after_it_has_fired() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -460,7 +466,7 @@ fn a_one_time_hook_runs_code_added_after_it_has_fired() {
 
 #[test]
 fn the_environment_hooks_fire_around_the_environment_and_its_group() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -483,7 +489,7 @@ fn the_environment_hooks_fire_around_the_environment_and_its_group() {
 
 #[test]
 fn the_file_and_package_hooks_fire_around_a_load() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -501,7 +507,7 @@ fn the_file_and_package_hooks_fire_around_a_load() {
 
 #[test]
 fn a_command_hook_wraps_the_command_it_names() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -517,7 +523,7 @@ fn a_command_hook_wraps_the_command_it_names() {
 
 #[test]
 fn add_to_hook_next_runs_last_and_only_once() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -534,7 +540,7 @@ fn add_to_hook_next_runs_last_and_only_once() {
 
 #[test]
 fn removing_a_label_takes_its_code_out_of_the_hook() {
-    if !installed() {
+    if !crate::support::kernel_has("\\AddToHook") {
         return;
     }
     let analysis = analyze(
@@ -675,6 +681,68 @@ fn metadata_is_recorded() {
     );
 }
 
+/// tex.web § 338: a definition that runs to the end of the main file is
+/// TeX's fatal "File ended while scanning definition of \rep". Bug pinned:
+/// satex read the body on as text and said only that the run was
+/// incomplete, with no error. With no approximation on the way the error is
+/// certain.
+#[test]
+fn a_definition_open_at_the_end_of_the_file_is_an_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze("\\documentclass{article}\n\\begin{document}\n\\def\\rep{x\ny\n\\end{document}\n");
+    let errors: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+        .collect();
+    assert!(errors.iter().any(|m| m.contains("ile ended while scanning definition")), "{errors:?}");
+}
+
+/// tex.web §§ 1240, 1236: `\multiply` of a dimension past `max_answer` and
+/// `\divide` by zero are "Arithmetic overflow". With `\count1` one of 0 and 1
+/// some runs err: pdflatex errs for one seed and not the other. Bug pinned:
+/// the interval arithmetic joins the erring members in silently, so the run
+/// is "complete" with no possible error. Each line must give one.
+#[test]
+fn an_overflow_on_some_members_of_an_interval_is_a_possible_error() {
+    if !installed() {
+        return;
+    }
+    for line in [r"\dimen0=\count1 pt \multiply\dimen0 by 16384", r"\count2=10 \divide\count2 by \count1"] {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\count1=\\pdfuniformdeviate 2\\relax\n{line}\n\\end{{document}}\n"
+        );
+        let found: Vec<_> = satex::linter::lint(&analyze(&source))
+            .into_iter()
+            .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+            .collect();
+        assert!(found.iter().any(|m| m.contains("Arithmetic overflow")), "{line}: {found:?}");
+    }
+}
+
+/// `round` of an unknown quotient in l3fp: on an approximated path the expandable error's
+/// `\???` scan runs off past `\end{document}`. Bug pinned: the run then said `missing-end`, a
+/// certain error, though pdflatex ends the document. An end reached past a gap the run left is
+/// the analysis' end, said as `analysis-ended-early`, never a certain error.
+#[test]
+fn an_approximated_fp_round_is_no_missing_end() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\ExplSyntaxOn
+\fp_eval:n { round ( \pdfuniformdeviate 300 / 7 ) }
+\ExplSyntaxOff
+\end{document}",
+    );
+    let found = codes(&analysis);
+    assert!(!found.iter().any(|c| c == "missing-end"), "{found:?}");
+}
+
 /// satex renders `\title` as a PDF string itself, which no TeX run does.
 /// algorithm2e's `\nl` there steps a counter under hyperref's `\let`, and
 /// the rendering recurses until cut. None of that reaches the run: the
@@ -794,7 +862,8 @@ fn lastbox_after_unvbox_takes_a_plain_box() {
 /// compiles.
 #[test]
 fn a_file_a_shell_program_may_write_may_exist() {
-    if !installed() {
+    // minted before version 3 runs `pygmentize`, which needs `-shell-escape`.
+    if !crate::support::installed_file_has("minted.sty", "latexminted") {
         return;
     }
     let analysis = analyze(
@@ -868,6 +937,49 @@ fn every_tex_error_of_the_document_is_an_error_finding() {
     }
 }
 
+/// A script with nothing after it before the math ends: `\(\sum_ \)` makes
+/// pdflatex say `Missing { inserted` and `Missing } inserted` on that line
+/// (the `\)` comes as the subscript). A person typing a formula in the
+/// playground hits it first thing; satex reported nothing there (userrun
+/// e2e u-sum-sub-errors).
+#[test]
+fn a_script_with_nothing_after_it_is_an_error_on_its_line() {
+    if !installed() {
+        return;
+    }
+    for body in [r"Sum: \(\sum_ \)", r"Power: $x^$"] {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors: Vec<_> = satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["severity"] == "error" && f["line"] == 3)
+            .map(|f| f["code"].as_str().unwrap_or_default().to_string())
+            .collect();
+        assert!(!errors.is_empty(), "{body}: no error on its line, {:?}", codes(&analysis));
+    }
+}
+
+/// A blank line inside display math (what an empty `equation` template
+/// holds) is a `\par` in math mode: pdflatex says `Missing $ inserted` on
+/// the blank line itself. satex reports it (math-still-open) on the line
+/// after, so the squiggle is not where TeX stops (userrun e2e
+/// u-par-in-math-covered).
+#[test]
+fn a_blank_line_in_display_math_is_an_error_on_the_blank_line() {
+    if !installed() {
+        return;
+    }
+    let head = "\\documentclass{article}\n\\begin{document}\n\\begin{equation}\n";
+    let blank = head.lines().count() as u64 + 1;
+    let analysis = analyze(&format!("{head}  \n\\end{{equation}}\n\\end{{document}}\n"));
+    let lines: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f["severity"] == "error")
+        .filter_map(|f| f["line"].as_u64())
+        .collect();
+    assert!(lines.contains(&blank), "errors on lines {lines:?}, want one on {blank}");
+}
+
 /// tex.web §§ 785, 1129: only `align_peek`, right after a `\cr`, takes a
 /// `\noalign`; anywhere else it is "Misplaced \noalign", and so is an
 /// `\omit` past a cell's start. A row missing its `\\` puts the
@@ -911,7 +1023,7 @@ fn a_noalign_inside_a_cell_is_misplaced() {
 /// and leaves the command undefined.
 #[test]
 fn an_error_the_run_raises_is_reported() {
-    if !installed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
         return;
     }
     let analysis = analyze(
@@ -956,7 +1068,7 @@ fn an_error_raised_after_the_mode_widened_is_no_certain_error() {
 /// unused definition of its own: the name the document wrote is.
 #[test]
 fn an_unused_command_is_reported_once_not_with_its_implementation() {
-    if !installed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
         return;
     }
     let analysis = analyze(
@@ -973,6 +1085,26 @@ fn an_unused_command_is_reported_once_not_with_its_implementation() {
         .collect();
     names.sort();
     assert_eq!(names, [r"\fd", r"\fe"]);
+}
+
+/// A `\csname` name the run could not decide (`\romannumeral` of a random
+/// count) is a fresh name, never written on the line: no "`\` is never used"
+/// with a fix that deletes a backslash (audit n8).
+#[test]
+fn a_name_the_run_could_not_decide_is_not_an_unused_definition() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\count1=\pdfuniformdeviate 12 \expandafter\def\csname\romannumeral\count1\endcsname{}
+\begin{document}x\end{document}",
+    );
+    let unused: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("unused-definition"))
+        .collect();
+    assert!(unused.is_empty(), "{unused:?}");
 }
 
 /// A definition is used when anything that reads it is: a `\let` copy that
@@ -1008,6 +1140,43 @@ fn a_definition_read_through_an_alias_or_a_package_is_used() {
         .collect();
     names.sort();
     assert_eq!(names, [r"\lonelier", r"\lonely"]);
+}
+
+/// `\meaning` reads the definition it prints: `\@onelevel@sanitize\host` is
+/// `\edef\host{\expandafter\strip@prefix\meaning\host}`, so the `\def` before it is used and not
+/// dead (hyperref's `\Hy@StringLocalhost`). Nor is a name declared empty and then defined:
+/// `\newcommand\x{}` checks that the name is free before a `\def` with delimiters (acronym,
+/// natbib, amsmath), and expl3 wants `\tl_new:N` before `\tl_set:Nn` (siunitx, tabularray).
+/// A definition replaced with no read in between still is.
+#[test]
+fn a_definition_meaning_prints_is_read() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\makeatletter
+\def\host{localhost}
+\@onelevel@sanitize\host
+\def\dead{a}
+\def\dead{b}
+\newcommand\declared{}
+\def\declared#1[#2]{#1#2}
+\ExplSyntaxOn
+\tl_new:N \l_demo_tl
+\tl_set:Nn \l_demo_tl { x }
+\ExplSyntaxOff
+\makeatother
+\begin{document}
+\host\dead\declared a[b]
+\end{document}",
+    );
+    let names: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f["code"] == "dead-definition" && f["origin"] == "document")
+        .filter_map(|f| f["name"].as_str().map(str::to_string))
+        .collect();
+    assert_eq!(names, [r"\dead"]);
 }
 
 /// An overhang is between characters TeX set next to each other, not ones
@@ -1081,10 +1250,12 @@ fn verbatim_bodies_are_read_line_by_line_with_an_active_end_of_line() {
 \\begin{Verbatim}\n\\def\\bad{}\n\\end{Verbatim}\n{\\obeylines\\gdef\\r{a\nb}}\n\\def\\after{}\n\\end{document}\n",
     );
     let saved = body(&analysis, "FV@SV@V");
-    assert!(
-        saved.ends_with("\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}"),
-        "{saved}"
-    );
+    // TeX Live 2019's fancyvrb (3.5) counts no lines there
+    let oracle = "\\documentclass{article}\n\\usepackage{fancyvrb}\n\\begin{document}\n\\begin{SaveVerbatim}{V}\na  b   \n \\c%\n\\end{SaveVerbatim}\n\\makeatletter\\typeout{SV \\meaning\\FV@SV@V}\n\\end{document}\n";
+    let lines = "\\FV@ProcessLine {a  b}\\advance \\c@FancyVerbLine \\@ne \\FV@ProcessLine { \\c%}";
+    let want = crate::support::engine_typeout(oracle, "SV", lines);
+    let want = &want[want.find("\\FV@ProcessLine").expect("a line")..];
+    assert!(saved.ends_with(want), "{saved}");
     // tex.web § 49: the active end of line prints as `^^M`, not raw.
     assert_eq!(body(&analysis, "r"), "a^^Mb");
     assert!(undefined(&analysis, "bad"));
@@ -1396,7 +1567,8 @@ fn a_conditional_that_returns_without_aftergroup_is_clean() {
 /// it is where the defect showed on real documents.
 #[test]
 fn figureversions_selects_a_figure_style_without_a_gap() {
-    if !installed() {
+    // The package is newer than some distributions.
+    if !crate::support::installed_file_has("figureversions.sty", "") {
         return;
     }
     let analysis = analyze(
@@ -1429,7 +1601,7 @@ fn a_floating_point_zero_is_sanitized_and_keeps_its_terminator() {
 \cs_new_protected:Npn \myshow:n #1
   {
     \fp_set:Nn \l_my_fp {#1}
-    \tl_put_right:Ne \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
+    \tl_put_right:Nx \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
   }
 \ExplSyntaxOff
 \begin{document}
@@ -1464,33 +1636,35 @@ fn exponentials_divide_by_repeating_digits() {
     if !installed() {
         return;
     }
-    let analysis = analyze(
-        r"\documentclass{article}
+    // l3fp's block separator: `;` before `\__fp_sep:` (TeX Live 2022: `…{0000};`)
+    let sep = if crate::support::installed_file_has("expl3-code.tex", "\\__fp_sep:") { "\\__fp_sep: " } else { ";" };
+    let analysis = analyze(&format!(
+        r"\documentclass{{article}}
 \ExplSyntaxOn
 \fp_new:N \l_my_fp
 \tl_new:N \l_my_tl
 \cs_new_protected:Npn \myshow:n #1
-  {
-    \fp_set:Nn \l_my_fp {#1}
-    \tl_put_right:Ne \l_my_tl { [ \fp_to_tl:N \l_my_fp ] }
-  }
+  {{
+    \fp_set:Nn \l_my_fp {{#1}}
+    \tl_put_right:Nx \l_my_tl {{ [ \fp_to_tl:N \l_my_fp ] }}
+  }}
 \ExplSyntaxOff
-\begin{document}
+\begin{{document}}
 \ExplSyntaxOn
-\myshow:n { exp(1) }
-\myshow:n { ln(2) }
-\myshow:n { 2 ^ 3 }
-\myshow:n { .8 ^ 3 }
-\tl_put_right:Ne \l_my_tl
-  { [ \__fp_fixed_div_int:wwN {10000}{0000}{0000}{0000}{0000}{0000} \__fp_sep: 10 \__fp_sep: \use:n ] }
+\myshow:n {{ exp(1) }}
+\myshow:n {{ ln(2) }}
+\myshow:n {{ 2 ^ 3 }}
+\myshow:n {{ .8 ^ 3 }}
+\tl_put_right:Nx \l_my_tl
+  {{ [ \__fp_fixed_div_int:wwN {{10000}}{{0000}}{{0000}}{{0000}}{{0000}}{{0000}} {sep} 10 {sep} \use:n ] }}
 \ExplSyntaxOff
 x
-\end{document}",
-    );
+\end{{document}}",
+    ));
     assert_eq!(unsupported(&analysis), Vec::<String>::new());
     assert_eq!(
         last_body(&analysis, "l_my_tl"),
-        "[2.718281828459045][0.6931471805599453][8][0.512][1000{0000}{0000}{0000}{0000}{0000}\\__fp_sep: ]"
+        format!("[2.718281828459045][0.6931471805599453][8][0.512][1000{{0000}}{{0000}}{{0000}}{{0000}}{{0000}}{sep}]")
     );
 }
 
@@ -1693,7 +1867,7 @@ fn a_widened_if_in_a_number_scan_leaves_text_after_the_number() {
     }
     let mut cfg = crate::support::config();
     cfg.limits.site_forks = 1;
-    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_gset:Ne \\g_a_tl { \\int_rand:n {16777215} }\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n";
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\tl_gset:Nx \\g_a_tl { \\int_rand:n {16777215} }\n\\ExplSyntaxOff\n\\begin{document}\nx\n\\end{document}\n";
     let analysis = satex::analysis::machine::Machine::analyze(source, None, &cfg);
     assert_eq!(gaps_of(&analysis), Vec::new());
     assert!(body(&analysis, "g_a_tl").contains("unknown digits"), "{}", body(&analysis, "g_a_tl"));
@@ -2324,7 +2498,9 @@ x\label{after}
 /// cut, no budget cascade into `\begin{document}`.
 #[test]
 fn an_error_in_the_document_is_recovered_like_tex() {
-    if !installed() {
+    // l3flag's `\flag_raise:n` of a name (`l_#1_flag`): TeX Live 2022's raises an undeclared
+    // flag without an error, as its pdflatex does.
+    if !crate::support::installed_file_has("expl3-code.tex", "\\flag_raise:c { l_#1_flag }") {
         return;
     }
     let analysis = analyze(
@@ -2355,7 +2531,8 @@ fn an_error_in_the_document_is_recovered_like_tex() {
 /// missing-endcsname and unbalanced-group by the dozen). Four gaps remain.
 #[test]
 fn resized_picture_with_styles_keeps_file_name_scans() {
-    if !installed() {
+    // The package is newer than some distributions.
+    if !crate::support::installed_file_has("commalists-tools.sty", "") {
         return;
     }
     let analysis = analyze(
@@ -2668,8 +2845,21 @@ fn an_eps_image_converted_through_the_shell_has_its_bounding_box() {
         cfg.shell_escape = Some(mode);
         let analysis = Machine::analyze(source, Some(&doc), &cfg);
         if mode == ShellEscape::None {
-            assert_eq!(body(&analysis, "scaled"), "207.70511pt,207.71666pt", "a draft box, as pdflatex makes");
-            assert!(raised(&analysis).contains(&"error".to_string()), "{mode:?}");
+            // pdftex.def of TeX Live 2022 finds no file to draw a draft box for: `0.0pt,0.0pt`.
+            let oracle = format!(
+                "\\begin{{filecontents*}}{{logo.eps}}\n{eps}\\end{{filecontents*}}\n{}",
+                source.replace("\\end{document}", "\\typeout{SCALED \\scaled}\\end{document}")
+            );
+            let want = crate::support::engine_typeout_with(
+                &oracle,
+                "SCALED",
+                "207.70511pt,207.71666pt",
+                &["-no-shell-escape"],
+            );
+            assert_eq!(body(&analysis, "scaled"), want, "a draft box, as pdflatex makes");
+            // TeX Live 2022's graphics stops at "File `./logo' not found", the missing graphic.
+            let errs = raised(&analysis).contains(&"error".to_string());
+            assert!(errs || codes(&analysis).contains(&"missing-graphic".to_string()), "{mode:?}");
             continue;
         }
         assert_eq!(body(&analysis, "nat"), "286.06805pt,81.30354pt", "{mode:?}");
@@ -3019,7 +3209,8 @@ fn a_uniform_parshape_keeps_the_lines_known() {
 /// end, packed to the height asked), `\unvbox`es it, takes it back with
 /// `\lastbox` and reads pdfTeX's `\leftmarginkern` of it: `\lpcode`
 /// thousandths of the quad; of a ligature first, its own character's
-/// (pdfTeX's `char_pw` reads `lig_char`). Sizes as `pdflatex` prints.
+/// (pdfTeX's `char_pw` reads `lig_char`). Sizes as the installed `pdflatex`
+/// prints (TeX Live 2019's microtype protrudes `A` and `--` less).
 #[test]
 fn left_protrusion_of_a_line_is_known() {
     if !installed() {
@@ -3057,7 +3248,9 @@ fn left_protrusion_of_a_line_is_known() {
         ("Mn", "8.27576pt"),
         ("Mo", "-2.99927pt"),
     ];
-    for (name, want) in want {
+    let typeouts: String = want.iter().map(|(name, _)| format!("\\typeout{{{name} \\{name}}}")).collect();
+    let oracle = src.replace("\\end{document}", &format!("{typeouts}\\end{{document}}"));
+    for ((name, _), want) in want.iter().zip(crate::support::engine_typeouts(&oracle, &want, &[])) {
         assert_eq!(body(&analysis, name), want, "{name}");
     }
 }
@@ -3358,6 +3551,121 @@ fn a_lookahead_at_a_cell_end_meets_its_v_part() {
     );
 }
 
+/// tex.web §§ 342, 780, 336: an `&` that skipped conditional text reads at
+/// `align_state` zero ends the cell, and the `v` part TeX inserts ends in
+/// `\endtemplate`, which counts as `\outer`: "Incomplete \iffalse", then
+/// "Extra \fi" and "Extra alignment tab" (pdflatex). Bug pinned: satex skipped
+/// past the `&` and said nothing, on a run it called complete. After a
+/// `\relax` only: `align_peek` expands a leading `\iffalse` at `align_state`
+/// 1000000, where an `&` ends nothing (pdflatex: no error).
+#[test]
+fn an_alignment_tab_in_skipped_text_ends_the_cell() {
+    if !installed() {
+        return;
+    }
+    let errors = |cell: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\setbox0\\vbox{{\\halign{{#&#\\cr {cell} x&y\\cr}}}}\n\\end{{document}}\n"
+        );
+        let analysis = analyze(&source);
+        let lint = satex::linter::lint(&analysis);
+        let errors = lint.iter().filter(|f| f.get("severity").is_some_and(|s| s == "error"));
+        errors.filter_map(|f| f.get("message")?.as_str().map(str::to_string)).collect::<Vec<_>>()
+    };
+    let skipped = errors("\\relax\\iffalse a&b\\fi");
+    assert_eq!(skipped.len(), 3, "{skipped:?}");
+    assert!(skipped.iter().any(|m| m.contains("endtemplate")), "{skipped:?}");
+    assert_eq!(errors("\\iffalse a&b\\fi"), Vec::<String>::new());
+}
+
+/// A macro that calls itself with nothing to stop it, run on one arm of an
+/// undecided conditional: pdflatex never ends on the runs that take the arm
+/// (seed 2), the others end clean. Some run fails, so the run reports a
+/// possible finding, a warning. Bug pinned: run on every path the same loop
+/// is an error (`unguarded-recursion`), on one arm the engine notes its
+/// `endless-loop` only as imprecision and no rule reports it.
+#[test]
+fn an_endless_loop_on_one_arm_is_a_possible_finding() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        "\\documentclass{article}\n\\begin{document}\nx\n\\def\\r{\\r}\\ifnum\\pdfuniformdeviate2=0 \\r\\fi\n\\end{document}\n",
+    );
+    let lints = satex::linter::lint(&analysis);
+    let severity = |s: &str| lints.iter().any(|f| f.get("severity").and_then(|v| v.as_str()) == Some(s));
+    assert!(severity("warning") && !severity("error"), "{lints:?}");
+}
+
+/// [`an_alignment_tab_in_skipped_text_ends_the_cell`] in a LaTeX `tabular`:
+/// pdflatex gives "Incomplete \iffalse", "Missing } inserted" and "Extra
+/// \fi" for the cell `\relax\iffalse a & b \fi`. Bug pinned: satex reports
+/// nothing on a run it calls complete; the skip passes the `&` as if no cell
+/// ended there (the plain `\halign` case is caught).
+#[test]
+fn an_alignment_tab_in_skipped_text_ends_a_tabular_cell() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\begin{document}
+\begin{tabular}{cc}
+\relax\iffalse a & b \fi\\
+\end{tabular}
+\end{document}",
+    );
+    let errors: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+        .collect();
+    assert!(!errors.is_empty(), "no error");
+}
+
+/// tex.web § 780: only the `\endtemplate` a cell's `v` part ends in is
+/// forbidden in a scan, not a token that looks like the `&` given back
+/// behind it. Here `\amp` ends the cell and the `v` part's `\edef` expands
+/// `\amp` again: both `&` are the one token of `\amp`'s body. Bug pinned:
+/// the put-back `&` was known by where it was read (file, line, column), so
+/// the `\edef`'s `&` counted as `\endtemplate` and the scan stopped with a
+/// false forbidden-outer. pdflatex raises nothing.
+#[test]
+fn a_cell_end_from_a_macro_is_no_endtemplate_in_its_v_part() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\def\\amp{&}\n\\begin{document}\n\\setbox0\\vbox{\\halign{#\\edef\\x{\\amp}&#\\cr a\\amp b\\cr}}\n\\end{document}\n";
+    let a = analyze(source);
+    let outer: Vec<_> =
+        a.facts.diagnostics.iter().filter(|d| d.code == "forbidden-outer").map(|d| &d.message).collect();
+    assert!(outer.is_empty(), "{outer:?}");
+}
+
+/// tex.web § 324: `align_state` is zero where a `u` part ends, whatever
+/// braces it opened, so with the template `{#}` an `&` in skipped text still
+/// ends the cell (pdflatex: Incomplete \iffalse, Missing }, Extra \fi, Extra
+/// alignment tab). Bug pinned: satex took the cell's base before reading
+/// the `u` part's `{`, so no `&` ever matched it (every LaTeX tabular cell).
+/// Clean cells stay clean.
+#[test]
+fn an_alignment_tab_in_skipped_text_ends_a_braced_cell() {
+    if !installed() {
+        return;
+    }
+    let errors = |cell: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\n\\begin{{document}}\n\\setbox0\\vbox{{\\halign{{{{#}}&#\\cr {cell}\\cr}}}}\n\\end{{document}}\n"
+        );
+        let lint = satex::linter::lint(&analyze(&source));
+        let errors = lint.iter().filter(|f| f.get("severity").is_some_and(|s| s == "error"));
+        errors.filter_map(|f| f.get("message")?.as_str().map(str::to_string)).collect::<Vec<_>>()
+    };
+    let skipped = errors("\\relax\\iffalse a&b\\fi x&y");
+    assert!(skipped.iter().any(|m| m.contains("endtemplate")), "{skipped:?}");
+    assert_eq!(errors("\\relax\\iffalse a\\fi x&y"), Vec::<String>::new());
+    assert_eq!(errors("\\iffalse a&b\\fi x&y"), Vec::<String>::new());
+}
+
 /// siunitx collects an `S` cell token by token with `\peek_...` until it
 /// meets the `v` part, which TeX inserts where the `\cr` is looked at
 /// (tex.web § 342); array's `\\` raises `align_state` with
@@ -3383,6 +3691,10 @@ fn siunitx_table_cells_end_at_their_v_part() {
             (b'a' + i as u8) as char
         ));
     }
+    // The widths are the installed pdflatex's: siunitx's cell layout differs between releases.
+    let oracle: String =
+        (0..cases.len()).map(|i| format!("\\typeout{{S{c} \\S{c}}}", c = (b'a' + i as u8) as char)).collect();
+    let oracle = format!("{src}{oracle}\\end{{document}}");
     src.push_str("\\end{document}");
     let analysis = analyze(&src);
     let codes = codes(&analysis);
@@ -3390,7 +3702,9 @@ fn siunitx_table_cells_end_at_their_v_part() {
         assert!(!codes.iter().any(|c| c == code), "{codes:?}");
     }
     for (i, (f, want)) in cases.iter().enumerate() {
-        let got = body(&analysis, &format!("S{}", (b'a' + i as u8) as char));
+        let c = (b'a' + i as u8) as char;
+        let want = crate::support::engine_typeout(&oracle, &format!("S{c}"), want);
+        let got = body(&analysis, &format!("S{c}"));
         for (g, w) in got.split('/').zip(want.split('/')) {
             assert!(g == w || g.contains("unknown"), "{f}: {got}");
         }
@@ -3488,6 +3802,26 @@ fn math_sizes(cases: &[(&str, &str)]) {
     for (i, (f, want)) in cases.iter().enumerate() {
         assert_eq!(body(&analysis, &format!("S{}", (b'a' + i as u8) as char)), *want, "{f}");
     }
+}
+
+/// A command that puts nothing on a list puts no atom into a formula: a font's
+/// settings (pdfTeX manual: `\pdfnobuiltintounicode`, `\pdffontattr`), the catalog,
+/// `\afterassignment`. cmap sets the first two for every font it loads, the math fonts
+/// at the first formula of a size: that formula's size was given up, and with it the
+/// box around it (acmart's title box, whose unknown height ran its page loop). Sizes as
+/// `pdflatex` prints.
+#[test]
+fn a_command_that_appends_nothing_keeps_a_formula_s_size() {
+    if !installed() {
+        return;
+    }
+    let cases = [
+        (r"\pdfnobuiltintounicode\font a", "5.28589pt/4.30554pt/0.0pt"),
+        (r"a\pdffontattr\font{}b", "9.57755pt/6.94444pt/0.0pt"),
+        (r"a\pdfcatalog{}b", "9.57755pt/6.94444pt/0.0pt"),
+        (r"a\afterassignment\relax b", "9.57755pt/6.94444pt/0.0pt"),
+    ];
+    math_sizes(&cases);
 }
 
 /// tex.web §§ 719, 756-758: scripts of any length and depth are set in the
@@ -3834,6 +4168,15 @@ fn the_build_reruns_only_for_what_it_read() {
         "\\def\\N{0}\\openin2=\\jobname.lof \\ifeof2 \\else\\closein2 \\input\\jobname.lof \\fi\\immediate\\openout1=\\jobname.lof \\immediate\\write1{\\string\\gdef\\string\\N{\\number\\numexpr\\N+1\\relax}}\\edef\\X{\\N}\n",
     );
     assert_eq!(counting.build_runs, 4);
+    // `limits.build_widen_after` names that run. Widened a run earlier, the third run reads the
+    // join of what the first two wrote and writes a number it covers: one run fewer, and `\N`
+    // is no longer one exact number.
+    let source = std::fs::read_to_string(dir.join("count.tex")).unwrap();
+    let mut early = crate::support::config();
+    early.limits.build_widen_after = 1;
+    let sooner = Machine::analyze(&source, Some(&dir.join("count.tex")), &early);
+    assert_eq!(sooner.build_runs, counting.build_runs - 1);
+    assert!(crate::support::body(&sooner, "X").parse::<u32>().is_err(), "{}", crate::support::body(&sooner, "X"));
     // A line only the first run wrote shifts the rest: the join aligns on
     // what each line sets, so the line between the moving ones stays exact.
     let shifted = run(
@@ -3897,6 +4240,54 @@ fn the_build_makes_a_bbl_from_the_cited_entries() {
     std::fs::write(&path, source).unwrap();
     let analysis = Machine::analyze(source, Some(&path), &crate::support::config());
     assert!(defined(&analysis, "Found") && undefined(&analysis, "Missing"), "{:?}", analysis.build_runs);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// BibTeX's input is complete where `\bibliography` stands after every citation, so the run
+/// that writes the citations makes the `.bbl` itself when it looks for it and reads their
+/// entries: the labels settle a run sooner. The build still makes the file from the whole
+/// run at its end and compares, so a citation after the bibliography, whose entry the early
+/// file lacks, sends the build round again and is found all the same.
+#[test]
+fn a_bibliography_after_its_citations_is_read_in_the_first_run() {
+    if !installed() {
+        return;
+    }
+    let dir = crate::support::tmp_root().join(format!("satex-early-bbl-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("refs.bib"),
+        "@book{k1, author={Doe, Jane}, title={One}, year=2001}\n@book{k2, author={Poe, Edgar}, title={Two}, year=1999}\n",
+    )
+    .unwrap();
+    let probe = "\\makeatletter\\@ifundefined{b@k1}{}{\\gdef\\One{}}\\@ifundefined{b@k2}{}{\\gdef\\Two{}}\\makeatother";
+    let run = |name: &str, body: &str| {
+        let source = format!(
+            "\\documentclass{{article}}\\begin{{document}}\\bibliographystyle{{plain}}{body}{probe}\\end{{document}}\n"
+        );
+        let path = dir.join(name);
+        std::fs::write(&path, &source).unwrap();
+        Machine::analyze(&source, Some(&path), &crate::support::config())
+    };
+    // Run 1 reads the entry and writes its label, run 2 reads the label.
+    let after = run("after.tex", "\\cite{k1}\\bibliography{refs}");
+    assert!(defined(&after, "One") && undefined(&after, "Two"));
+    assert_eq!(after.build_runs, 2);
+    // `bib.early` off: the tool runs between two runs only, as in a LaTeX build.
+    let mut late = crate::support::config();
+    late.bib.early = false;
+    let source = std::fs::read_to_string(dir.join("after.tex")).unwrap();
+    let off = Machine::analyze(&source, Some(&dir.join("after.tex")), &late);
+    assert!(defined(&off, "One") && undefined(&off, "Two"));
+    assert_eq!(off.build_runs, after.build_runs + 1);
+    // No citation yet: nothing to make, the bibliography tool runs after the first run.
+    let before = run("before.tex", "\\bibliography{refs}\\cite{k1}");
+    assert!(defined(&before, "One") && undefined(&before, "Two"));
+    assert_eq!(before.build_runs, after.build_runs + 1);
+    // The early file lacks `k2`: the file of the whole run differs, and the build goes on.
+    let both = run("both.tex", "\\cite{k1}\\bibliography{refs}\\cite{k2}");
+    assert!(defined(&both, "One") && defined(&both, "Two"));
+    assert_eq!(both.build_runs, after.build_runs + 1);
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -4917,6 +5308,118 @@ fn names_a_package_builds_per_call_are_never_dead() {
     assert!(dead.is_empty(), "{dead:?}");
 }
 
+/// `\include{k}` writes `\@setckpt{k}{` to the `.aux` and reads names built
+/// from `k`, the shape a citation has (`\cite{k}` writes `\citation{k}`, reads
+/// `\b@k`). Bug pinned: the included file's name was a citation, so the run
+/// warned "`chapa` is cited, but no bibliography is named" and "no
+/// bibliography entry declares `chapa`" (pdflatex: no warning). A key that
+/// names the file its call loads is no citation.
+#[test]
+fn an_included_file_is_no_citation() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-include-{}", std::process::id())));
+    let path = root.join("main.tex");
+    let source = r"\documentclass{report}
+\begin{filecontents*}[overwrite]{chapa.tex}
+\chapter{A}\label{ch:a}
+\end{filecontents*}
+\begin{filecontents*}[overwrite]{part.tex}
+\end{filecontents*}
+\begin{document}
+\include{chapa}
+\end{document}";
+    std::fs::write(&path, source).unwrap();
+    // the second build run reads the `.aux` the first wrote
+    let analysis =
+        satex::analysis::machine::Machine::analyze_build(source, Some(&path), &crate::support::discover(&root));
+    let cites: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| {
+            f.get("code").and_then(|c| c.as_str()).is_some_and(|c| c.contains("citation") || c.contains("bibliography"))
+        })
+        .collect();
+    assert!(cites.is_empty(), "{cites:?}");
+}
+
+/// counttexruns reads the run count back with `\read` from the `.ctr` file each run
+/// writes: a line that names no macro. latexmk sees the file change and runs again
+/// until its limit. Bug pinned (audit): the build stopped after its second run, since
+/// no line it changed named a name the run read, and reported the count of a build
+/// latexmk never ends with. Now each run's new line sends the build round again.
+#[test]
+fn a_run_count_read_back_from_a_data_line_runs_the_build_again() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-ctr-{}", std::process::id())));
+    let path = root.join("main.tex");
+    let source = r"\documentclass{article}
+\usepackage{counttexruns}
+\begin{document}
+\ifnum\value{counttexruns}=1 \errmessage{one}\fi
+\ifnum\value{counttexruns}>1 \errmessage{many}\fi
+\end{document}";
+    std::fs::write(&path, source).unwrap();
+    let analysis =
+        satex::analysis::machine::Machine::analyze_build(source, Some(&path), &crate::support::discover(&root));
+    let limit = crate::support::discover(&root).limits.build_runs;
+    assert_eq!(analysis.build_runs, u32::from(limit));
+}
+
+/// l3mark's `\int_compare:nNnT \tex_lastnodetype:D < 0` in memoir's output routine
+/// reads the node type of a list whose tail satex does not know. Bug pinned (memoir):
+/// an unknown engine quantity was any word, -2^31 included, which fails e-TeX's
+/// expression check, so three possible errors no run has were said. A node type
+/// stays in its own range.
+#[test]
+fn memoir_output_reads_no_overflowing_node_type() {
+    if !installed() {
+        return;
+    }
+    let root =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-memoir-{}", std::process::id())));
+    let path = root.join("main.tex");
+    std::fs::write(
+        root.join("chap.tex"),
+        r"\chapter{Two}\label{two}
+See~\ref{one}.\footnote{A note.}
+\begin{figure}[h!]\centering x\caption{A figure}\label{fig}\end{figure}
+\begin{itemize}\item one\end{itemize}
+",
+    )
+    .unwrap();
+    let source = r"\documentclass{memoir}
+\begin{document}
+\tableofcontents
+\chapter{One}\label{one}
+Text.
+\include{chap}
+\end{document}";
+    std::fs::write(&path, source).unwrap();
+    let analysis =
+        satex::analysis::machine::Machine::analyze_build(source, Some(&path), &crate::support::discover(&root));
+    let raised = raised(&analysis);
+    assert!(raised.is_empty(), "{raised:?}");
+}
+
+/// `\cite[p.~3` never closed: the optional argument the document began runs to the end of the
+/// file inside library code (`\@citex`), and pdflatex stops with "File ended while scanning use
+/// of \@citex@checkblank". Bug pinned (errcover): library code is assumed to compile, so the run
+/// gave the text back and said nothing. The document opened what never closes: its error.
+#[test]
+fn an_optional_argument_the_document_never_closes_is_an_error() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze("\\documentclass{article}\n\\begin{document}\nSee \\cite[p.~3 here.\n\\end{document}\n");
+    let raised = raised(&analysis);
+    assert!(raised.iter().any(|s| s == "error"), "{raised:?}");
+}
+
 /// A here-float the output routine puts on its own list (`\box\@currbox` in `\@addtocurcol`)
 /// reaches the page with that list: its caption is typeset, not lost to the next box built.
 #[test]
@@ -5268,11 +5771,243 @@ fn errors_met_while_expanding_or_computing_are_error_findings() {
         r"\par\count1=\spacefactor ",                                  // Improper \spacefactor.
         r"x\dimen0=\prevdepth ",                                       // Improper \prevdepth.
     ];
-    for body in cases {
+    // A kernel that does not load expl3 (TeX Live 2019) has no `\ExplSyntaxOn` to test.
+    let expl3 = crate::support::kernel_has("\\ExplSyntaxOn");
+    for body in cases.into_iter().filter(|b| expl3 || !b.contains("ExplSyntax")) {
         let analysis =
             analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
         let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 3);
         assert!(errors.count() > 0, "{body}: no error, {:?}", codes(&analysis));
+    }
+}
+
+/// tex.web §§ 1151, 403 `scan_math`: a script, `\radical` (`\sqrt`),
+/// `\mathaccent` (`\bar`), `\underline` or `\mathord` takes the next token
+/// after expansion as its operand; anything but a character, a math character
+/// or a `{` is "Missing { inserted", and TeX reads it again inside the math
+/// group it opened, so the formula's `$` then finds that group open: "Missing
+/// } inserted" (both are pdflatex's `!` lines for each case). § 1161: `\left`
+/// before no delimiter is "Missing delimiter (. inserted)". Bug pinned: no
+/// rule reported these (the playground's PDF said 2 errors, its findings 0),
+/// the second error at the same place was dropped as a duplicate, and
+/// `\left{` swallowed its `{`.
+#[test]
+fn a_math_operand_tex_rejects_is_a_missing_brace_error() {
+    if !installed() {
+        return;
+    }
+    let brace = "Missing { inserted";
+    let closer = "Missing } inserted";
+    let cases: [(&str, &[&str]); 9] = [
+        (r"\(\sum_ \)", &[brace, closer]),
+        // `'` is math-active: its definition starts with `^` (tex.web § 1151)
+        (r"$x^'$", &[brace, closer]),
+        (r"$x_$", &[brace, closer]),
+        (r"$x^\hbox{a}$", &[brace]),
+        (r"$x_^2$", &[brace]),
+        (r"$\sqrt\hbox{a}$", &[brace]),
+        (r"$\bar\hbox{a}$", &[brace]),
+        (r"$\left\hbox{}\right.$", &["Missing delimiter (. inserted)"]),
+        (r"$\left{a\right.$", &["Missing delimiter (. inserted)", closer]),
+    ];
+    for (body, expected) in cases {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors: Vec<String> = satex::linter::lint(&analysis)
+            .into_iter()
+            .filter(|f| f["severity"] == "error" && f["line"] == 3)
+            .filter_map(|f| f["message"].as_str().map(str::to_string))
+            .collect();
+        for want in expected {
+            assert!(errors.iter().any(|e| e.starts_with(want)), "{body}: no {want:?} in {errors:?}");
+        }
+    }
+}
+
+/// A recursion that re-enters itself with the same arguments, in the same
+/// state, on the last round's unread input never returns: TeX's stacks
+/// overflow, "TeX capacity exceeded" (tex.web § 94), a fatal error. Typing
+/// `\begin` or `see \ref` just before `\end{document}` makes LaTeX's `\end`
+/// do that (pdflatex: "Missing \endcsname inserted", then "TeX capacity
+/// exceeded, sorry [parameter stack size=2000]"). A recursion that counts
+/// towards its end, nested deeper each round, stays clean. Bug pinned: the
+/// run widened the recursion silently, and a doubted note at the same place
+/// hid TeX's certain errors, so the findings showed none of them.
+#[test]
+fn a_recursion_that_never_returns_exceeds_tex_s_capacity() {
+    if !installed() {
+        return;
+    }
+    let doc = |body: &str| format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+    let errors = |body: &str| -> Vec<String> {
+        satex::linter::lint(&analyze(&doc(body)))
+            .into_iter()
+            .filter(|f| f["severity"] == "error")
+            .filter_map(|f| f["message"].as_str().map(str::to_string))
+            .collect()
+    };
+    let capacity = "TeX capacity exceeded";
+    for (body, also) in
+        [(r"\begin", Some("Missing \\endcsname inserted")), (r"see \ref", None), (r"\def\a{\a x}\a", None)]
+    {
+        let found = errors(body);
+        assert!(found.iter().any(|e| e.starts_with(capacity)), "{body}: {found:?}");
+        // TeX Live 2019's `\begin` overflows before it misses its `\endcsname`.
+        if let Some(also) = also.filter(|also| crate::support::engine_says(&doc(body), also)) {
+            assert!(found.iter().any(|e| e.starts_with(also)), "{body}: {found:?}");
+        }
+    }
+    let counted = r"\newcounter{c}\def\a{\stepcounter{c}\ifnum\value{c}<9 {\a}\fi}\a";
+    assert!(errors(counted).is_empty(), "{:?}", errors(counted));
+}
+
+/// Another rule's finding at the place of a raised TeX error stands for one
+/// TeX error, never for all of them: `\[ \frac{a}{b} = \sqrt` before
+/// `\end{document}` gives pdflatex's "Missing { inserted" beside the
+/// environment mismatch. Bug pinned: any correctness finding at the place,
+/// a doubted note too, hid every raised error there.
+#[test]
+fn a_finding_at_a_raised_error_s_place_hides_only_its_own_error() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{amsmath}\n\\begin{document}\n\\[ \\frac{a}{b} = \\sqrt\n\\end{document}\n";
+    let findings = satex::linter::lint(&analyze(source));
+    let has = |code: &str, text: &str| {
+        findings.iter().any(|f| f["code"] == code && f["message"].as_str().is_some_and(|m| m.starts_with(text)))
+    };
+    assert!(has("raised-error", "Missing { inserted"), "{findings:?}");
+    assert!(has("environment-mismatch", "LaTeX Error"), "{findings:?}");
+}
+
+/// The operands TeX takes (pdflatex: no error): expansion, spaces and
+/// `\relax` come first, an implicit `{`, a `\mathchardef` or `\mathchar`, a
+/// macro opening a group (`\mathrm`, amsmath's `\text`, `\frac`) and a
+/// conditional's arm all count. Pins that the `scan_math` check reports none
+/// of them, so the check reads meanings and expansion, not spelling.
+#[test]
+fn a_math_operand_tex_takes_raises_nothing() {
+    if !installed() {
+        return;
+    }
+    let body = r"$x_\mathrm{a}$ $x_\alpha$ $x^\prime$ $x_\text{a}$ $x^{ab}$ $x_\bgroup a\egroup$ $x_ 1$
+$x_\relax 1$ $x^\char`a$ $x^\mathchar'141$ $\sqrt{x}^2$ $x^{}$ $x'$ $x^\protect\alpha$ $\overline{x}_a$
+$\left(x\right)^2$ $\underline x$ $\mathbin x$ $\sqrt\relax x$ $\bar x \hat{y} \vec\alpha \sqrt[3]{x}$
+$\left\{ x \right\} \bigl( x \bigr) \left\langle x \right\rangle \left| x \right.$
+$\left\relax( x \right)$ $\frac{a}{b}^2 x_\frac12$ $x^\ifnum1=1 a\else b\fi$
+\newcommand\sq[1]{#1^2}$\sq{x}\sq\alpha$ \let\up=^ $x\up2$";
+    let analysis = analyze(&format!(
+        "\\documentclass{{article}}\n\\usepackage{{amsmath}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"
+    ));
+    let findings: Vec<_> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|f| f["severity"] == "error" || f["code"] == "raised-error")
+        .collect();
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+/// `\@alph` is an `\ifcase` with 26 arms and `\@ctrerr` in its `\else`:
+/// a counter in 27..29 takes the `\else` on every run, so "Counter too
+/// large" is certain (`pdflatex`: the error for each seed). Bug pinned: an
+/// interval past the last `\or` was split as undecided into its one arm, and
+/// the error was only possible.
+#[test]
+fn an_ifcase_selector_past_its_last_or_takes_the_else_for_certain() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\newcounter{c}\n\\begin{document}\n\\setcounter{c}{\\numexpr27+\\pdfuniformdeviate 3\\relax}\\alph{c}\n\\end{document}\n";
+    let analysis = analyze(source);
+    let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 4);
+    assert!(errors.count() > 0, "{:?}", codes(&analysis));
+}
+
+/// l3fp packs an operand into blocks `1dddd` and takes them apart with
+/// `1#3\__fp_sep:`: the `1` of the delimiter matched against typed digits
+/// 11000..13999 leaves exactly four places, a slice of that number.
+/// `pdflatex`: `\fp_eval:n{1+x}` for x in 1..3 is 2, 3 or 4. Bug pinned: the
+/// rest became digits of open length, a later `\int_value:w` of the blocks
+/// was any number, read as one token by a one-digit test, and the result ran
+/// into the file: `\R` was `\par` for certain, with a false "Too many }'s".
+#[test]
+fn an_fp_sum_of_a_bounded_unknown_integer_stays_a_number() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\ExplSyntaxOn\n\\int_set:Nn\\l_tmpa_int{\\int_rand:nn{1}{3}}\\xdef\\R{\\fp_eval:n{1+\\l_tmpa_int}}\n\\ExplSyntaxOff\n\\begin{document}\n\\end{document}\n";
+    let analysis = analyze(source);
+    let r = body(&analysis, "R");
+    assert!(!r.contains("par") && !r.is_empty(), "{r:?}");
+    let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error").count();
+    assert_eq!(errors, 0, "{:?}", codes(&analysis));
+}
+
+/// l3fp's own `\numexpr`s over an unknown quotient's digits may overflow on
+/// satex's wide intervals, never on pdflatex's runs (0..299 / 7). Bug pinned:
+/// that library-internal maybe-overflow was said at the document line as a
+/// possible "Arithmetic overflow".
+#[test]
+fn library_arithmetic_over_an_unknown_quotient_is_no_possible_overflow() {
+    if !installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\n\\fp_eval:n { round(\\pdfuniformdeviate 300/7,2) }\n\\ExplSyntaxOff\n\\end{document}\n";
+    let found: Vec<_> = satex::linter::lint(&analyze(source))
+        .into_iter()
+        .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+        .collect();
+    assert!(!found.iter().any(|m| m.contains("Arithmetic overflow")), "{found:?}");
+}
+
+/// A `\numexpr` some members of an interval overflow (0..1 times 2^31) is a
+/// possible error when the document writes it, and none when library code
+/// does (`\int_eval:n`'s own `\numexpr`): library code is assumed to compile.
+/// Bug pinned: the test of whose code it is read the file being read, which
+/// is the document's while any library macro runs from it, so l3mark's
+/// `\numexpr\lastnodetype` in memoir's output routine said a possible
+/// "Arithmetic overflow" at each `\chapter` (classes::memoir).
+#[test]
+fn a_possible_overflow_is_said_for_the_document_code_only() {
+    if !installed() {
+        return;
+    }
+    for (body, said) in [
+        (r"\count2=\numexpr\pdfuniformdeviate 2*1073741824*2\relax", true),
+        (r"\ExplSyntaxOn\int_set:Nn\l_tmpa_int{\pdfuniformdeviate 2*1073741824*2}\ExplSyntaxOff", false),
+    ] {
+        let source = format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n");
+        let found: Vec<_> = satex::linter::lint(&analyze(&source))
+            .into_iter()
+            .filter_map(|f| f.get("message")?.as_str().map(str::to_string))
+            .collect();
+        assert_eq!(found.iter().any(|m| m.contains("Arithmetic overflow")), said, "{body}: {found:?}");
+    }
+}
+
+/// Arithmetic on an interval errs on every run when every value of it does:
+/// `\multiply` and `\numexpr` of 2..3 by 2^30, a `\dimexpr` past `\maxdimen`
+/// for every 0..2pt (pdflatex: "Arithmetic overflow" for each seed). Where
+/// some value stays in range (0..2 times 2^30) no error is certain. Bug
+/// pinned: the interval lift clipped every corner to the bound and only
+/// flagged "may err", so a certain overflow was silent.
+#[test]
+fn arithmetic_that_overflows_for_every_value_of_an_interval_is_an_error() {
+    if !installed() {
+        return;
+    }
+    let two = r"\count1=\pdfuniformdeviate 2 \advance\count1 2 ";
+    let cases = [
+        (format!(r"{two}\multiply\count1 by 1073741824 "), true),
+        (format!(r"{two}\count2=\numexpr\count1*1073741824\relax"), true),
+        (r"\dimen0=\pdfuniformdeviate 3pt \dimen1=\dimexpr 16383.99998pt+\dimen0+1sp\relax".to_string(), true),
+        (r"\count1=\pdfuniformdeviate 3 \multiply\count1 by 1073741824 ".to_string(), false),
+        (r"\count1=\pdfuniformdeviate 3 \count2=\numexpr\count1*1073741824\relax".to_string(), false),
+    ];
+    for (body, certain) in cases {
+        let analysis =
+            analyze(&format!("\\documentclass{{article}}\n\\begin{{document}}\n{body}\n\\end{{document}}\n"));
+        let errors = satex::linter::lint(&analysis).into_iter().filter(|f| f["severity"] == "error" && f["line"] == 3);
+        assert_eq!(errors.count() > 0, certain, "{body}: {:?}", codes(&analysis));
     }
 }
 
@@ -5314,6 +6049,170 @@ fn a_document_started_from_its_own_dumped_preamble_has_one_documentclass() {
         .iter()
         .filter(|r| r["code"] == "raised-error")
         .map(|r| r["message"].to_string())
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// Each LaTeX error here is raised on one arm of an undecided `\if` only:
+/// pdflatex with `\pdfsetrandomseed 1` raises none of them, with seed 2
+/// each. The specific rules that report these errors in place of
+/// `raised-error` must keep its certainty: possible, not an error. Pins:
+/// `missing-graphic`, `undefined-environment`, `already-defined`,
+/// `not-defined`, `option-clash`, `math-still-open` and
+/// `undefined-glossary-entry` reported them as certain errors.
+#[test]
+fn a_latex_error_on_one_undecided_arm_is_no_certain_error() {
+    if !installed() {
+        return;
+    }
+    let arm = "\\ifnum\\pdfuniformdeviate2=0 ";
+    let cases = [
+        ("missing-graphic", "\\usepackage{graphicx}".to_string(), format!("{arm}\\includegraphics{{nofile}}\\fi")),
+        ("undefined-environment", String::new(), format!("{arm}\\begin{{noenv}}\\end{{noenv}}\\fi")),
+        ("already-defined", format!("{arm}\\newcommand\\foo{{}}\\fi \\newcommand\\foo{{}}"), String::new()),
+        ("already-defined", String::new(), format!("{arm}\\newenvironment{{itemize}}{{}}{{}}\\fi")),
+        ("not-defined", format!("{arm}\\renewcommand\\nothere{{}}\\fi"), String::new()),
+        (
+            "option-clash",
+            format!("\\usepackage[a4paper]{{geometry}}{arm}\\usepackage[letterpaper]{{geometry}}\\fi"),
+            String::new(),
+        ),
+        ("math-still-open", String::new(), format!("{arm}$x\\fi y")),
+        (
+            "undefined-glossary-entry",
+            "\\usepackage{glossaries}\\makeglossaries".to_string(),
+            format!("{arm}\\newglossaryentry{{e}}{{name=e,description=d}}\\fi\\gls{{e}}"),
+        ),
+    ];
+    for (code, preamble, body) in cases {
+        let source =
+            format!("\\documentclass{{article}}\n{preamble}\n\\begin{{document}}\nx\n{body}\n\\end{{document}}\n");
+        let findings = satex::linter::lint(&crate::support::analyze_latex(&source));
+        let wrong: Vec<_> = findings
+            .iter()
+            .filter(|f| f.get("severity").and_then(|s| s.as_str()) == Some("error"))
+            .map(|f| f.get("message").and_then(|m| m.as_str()).unwrap_or_default().to_string())
+            .collect();
+        assert!(wrong.is_empty(), "{code}: one run raises nothing: {wrong:?}");
+    }
+}
+
+/// `\fp_eval:n` of `ops` in an `\xdef`, then `\ifx` of the result against each
+/// of `values` (the results TeX gives on some run): the names whose test may
+/// hold. A value lost from `\Ra` leaves its probe undefined.
+fn fp_values_lost(set: &str, ops: &str, values: &[&str]) -> Vec<String> {
+    let probes: String = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| format!("\\def\\v{{{v}}}\\ifx\\Ra\\v\\expandafter\\gdef\\csname R{i}\\endcsname{{}}\\fi\n"))
+        .collect();
+    let source = format!(
+        "\\documentclass{{article}}\n\\ExplSyntaxOn\n{set}\\xdef\\Ra{{\\fp_eval:n{{{ops}}}}}\n\\ExplSyntaxOff\n{probes}\\begin{{document}}\n\\end{{document}}\n"
+    );
+    let analysis = analyze(&source);
+    (0..values.len()).map(|i| format!("R{i}")).filter(|n| !maybe_defined(&analysis, n)).collect()
+}
+
+/// Intuition: a product of two random integers 1..3 is one of 1, 2, 3, 4, 6, 9, so
+/// `\Ra` may be each. Bug pinned (H5): l3fp reads its operand blocks with
+/// delimited arguments over typed digits; the read forks, the last reruns run
+/// away and are refuted, and the refutation flag of that last rerun stayed set
+/// after the drive returned the feasible arm. The forking command ended the
+/// `\int_value:w` scan it ran in, so the enclosing run took itself for refuted:
+/// every path was dropped and `\Ra` was the empty text, its only value.
+#[test]
+fn a_product_of_two_unknown_integers_keeps_every_value() {
+    if !installed() {
+        return;
+    }
+    let set = r"\int_set:Nn\l_tmpa_int{\int_rand:nn{1}{3}}\int_set:Nn\l_tmpb_int{\int_rand:nn{1}{3}}";
+    let lost = fp_values_lost(set, r"\l_tmpa_int*\l_tmpb_int", &["1", "2", "3", "4", "6", "9"]);
+    assert!(lost.is_empty(), "values lost: {lost:?}");
+}
+
+/// Intuition: `1/x` for x in -1..1 is -1 or 1 (and for 0 an error and a value).
+/// Bug pinned (H6): the run reruns the `\xdef` per path a look ahead left
+/// apart; a rerun that ended with fewer paths than the run it repeats dropped
+/// the arms past them as infeasible (explore.rs, the replayed-arm `no_arm`),
+/// so only `-1` stayed.
+#[test]
+fn a_reciprocal_of_an_unknown_integer_keeps_every_value() {
+    if !installed() {
+        return;
+    }
+    let set = r"\int_set:Nn\l_tmpa_int{\int_rand:nn{-1}{1}}";
+    let lost = fp_values_lost(set, r"1/\l_tmpa_int", &["-1", "1"]);
+    assert!(lost.is_empty(), "values lost: {lost:?}");
+}
+
+/// Intuition: `\vref[see]{x}` reads `[` as the label, since cleveref's
+/// `\vref` has no optional argument. Pins a finding that says so: the old fix told the
+/// author to "add `\label{[}`", absurd advice for a misread argument.
+#[test]
+fn a_bracket_read_as_a_label_says_the_optional_argument_is_wrong() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{varioref}\usepackage{hyperref}\usepackage{cleveref}
+\begin{document}
+\section{A}\label{s:a}\vref[see]{s:a}.
+\end{document}",
+    );
+    let found: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("undefined-reference"))
+        .map(|f| format!("{} | {}", f["message"].as_str().unwrap_or_default(), f["fix"].as_str().unwrap_or_default()))
+        .collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("no optional argument") && !found[0].contains("\\label{[}"), "{found:?}");
+}
+
+/// Intuition: a name the run could not compute (`\ref{sec:\s}` in a loop the
+/// analysis summarized) is held under a mark of satex's own. Pins that no
+/// finding shows that mark: the bug was `\^^Bunknown name:r@sec:^^G` and raw
+/// control characters in messages meant for the author.
+#[test]
+fn no_finding_shows_the_mark_of_an_unknown_name() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze(
+        r"\documentclass{article}
+\usepackage{pgffor,enumitem,hyperref}
+\begin{document}
+\foreach \s in {1,...,60}{\section{S \s}\label{sec:\s}\begin{enumerate}\foreach \i in {1,...,6}{\item I \i, see~\ref{sec:\s}.}\end{enumerate}}
+\end{document}",
+    );
+    let shown: Vec<String> = satex::linter::lint(&analysis)
+        .iter()
+        .flat_map(|f| {
+            ["message", "name", "fix"].map(|k| f.get(k).and_then(|v| v.as_str()).unwrap_or_default().to_string())
+        })
+        .filter(|t| {
+            t.contains("unknown name") || t.contains("^^B") || t.chars().any(|c| c.is_control() && !c.is_whitespace())
+        })
+        .collect();
+    assert!(shown.is_empty(), "{shown:?}");
+}
+
+/// Intuition: a cell's own braces count from where its `u` template ends (tex.web § 324), whatever that
+/// template's expansion read past or put back. siunitx's `S` cells peek token by token and swap `\cr`
+/// behind `\if_false: { \fi:`; a base counted from the template's tokens alone came out one too high, so
+/// that `\cr` ended the cell inside `\cs_set:Npn \cr` and a braced cell gave false certain errors.
+#[test]
+fn a_braced_siunitx_cell_ends_where_tex_ends_it() {
+    if !installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{booktabs,siunitx}\n\\begin{document}\n\\begin{tabular}{lS}\n\\toprule\na & {B} \\\\ \\midrule\nb & 2.5 \\\\\n\\bottomrule\n\\end{tabular}\n\\end{document}\n";
+    let path = crate::support::tmp_root().join("siunitx-braced-cell.tex");
+    std::fs::write(&path, text).unwrap();
+    let analysis = satex::analysis::machine::Machine::analyze(text, Some(&path), &crate::support::config());
+    let errors: Vec<String> = codes(&analysis)
+        .into_iter()
+        .filter(|c| c.contains("error") || c.contains("mismatch") || c == "missing-end")
         .collect();
     assert!(errors.is_empty(), "{errors:?}");
 }

@@ -143,7 +143,9 @@ test("Type mode's rules at the spots that broke", async () => {
   // `\)` takes its last character, and a formula of one character whole; Delete before `\(` the same from the front.
   // Pins Backspace taking the `\)` alone (refused by the gate, so it did nothing) and a lone delimiter left behind.
   const typeKeys = (text, at, keys) => { let f = null; for (const k of keys) { const e = E.key(text, at, k, { fresh: f }); if (typeof e === 'string') continue; const [a, b, body, step] = e; text = text.slice(0, a) + body + text.slice(b); f = E.grow(f, a, b, body.length); at = a + step; } return [text, at]; };
-  assert.equal(typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n')[0], '\\section{Background new\\}\\{}\\label{sec:b}');
+  // (Enter at the heading's end starts a paragraph after it; the keys after go there)
+  const keyed = typeKeys(t, at('}'), [...' new', 'Enter', '}', '{', '$', 'x', '$', 'Backspace'])[0].split('\n');
+  assert.deepEqual([keyed[0], keyed[1], keyed[2]], ['\\section{Background new}', '', '\\}\\{\\label{sec:b}']);
   const xy = 'a \\(xy\\) b', close = xy.indexOf('\\)') + 2, open = xy.indexOf('\\(');
   assert.equal(typeKeys(xy, close, ['Backspace'])[0], 'a \\(x\\) b', 'Backspace after `\\)`: the last character inside');
   assert.equal(typeKeys(xy, close, ['Backspace', 'Backspace'])[0], 'a  b', 'then the formula of one character whole');
@@ -158,6 +160,11 @@ test("Type mode's rules at the spots that broke", async () => {
   const envd = typeKeys('Some text.\n\nMore.', 10, ['Enter', ...'\\begin{itemize}', 'Enter']);
   assert.deepEqual(envd, ['Some text.\n\n\\begin{itemize}\n\n\\end{itemize}\n\nMore.', 28], 'the pair, the caret inside');
   assert.equal(typeof E.key('a \\begin{x} b \\end{x}', 9, 'y'), 'string', 'a name not being typed stays a name');
+  // a reference typed by hand: its key goes into the fresh \\ref{…} (and a citation's list into \\cite{…}); a key
+  // not typed since the caret was put stays a key. Pins the key refused (`\\ref{}`, preview wish 4, 2026-11-21).
+  assert.equal(typeKeys('See it.', 3, [...' \\ref{sec:a}'])[0], 'See \\ref{sec:a} it.', 'a fresh key takes its name');
+  assert.equal(typeKeys('See it.', 3, [...' \\cite{a, b}'])[0], 'See \\cite{a, b} it.', 'a citation list');
+  assert.equal(typeof E.key('a \\ref{x} b', 8, 'y'), 'string', 'a key not being typed stays a key');
   assert.equal(typeKeys('a \\[z\\] b', 'a \\[z\\]'.length, ['Backspace'])[0], 'a  b', 'a display `\\[z\\]` the same');
   assert.equal(typeKeys(t, at('}'), [...'$x', 'Backspace'])[0].split('\n')[0], '\\section{Background}\\label{sec:b}', 'the last character of a formula takes it');
   assert.equal(typeKeys('a pipeline. b', 'a pipeline'.length, [...'\\emph{q}'])[0], 'a pipeline\\emph{q}. b', '`\\` before `.`: its space goes once `{` ends the name');
@@ -249,4 +256,51 @@ test('blankPlace: empty page space mapped to the source', () => {
   // written where shown: the text with the body in place keeps the paragraphs apart by blank lines
   const w = t.slice(0, b.at) + b.body + 'New' + t.slice(b.at);
   assert.ok(w.includes('line two.\n\nNew\n\nSecond'));
+});
+// Intuition: Enter in the page is a new paragraph as TeX sets one (a blank line in the source). At the end of a command's
+// argument (`\textbf{world|}`) the paragraph starts after the command, never inside its argument (refused there: the
+// key did nothing and the next text went into the bold); on an item's last line of a list the next `\item`; in math a
+// line of source only. Pins user report 2026-11-21 13:15 (Enter "does a newline in the code editor").
+test('Enter: a paragraph where TeX takes one', () => {
+  const E = self.satexPdfEdit, ed = (t, e) => t.slice(0, e[0]) + e[2] + t.slice(e[1]);
+  const bold = 'a \\textbf{world}\n';
+  const e1 = E.key(bold, bold.indexOf('}'), 'Enter');
+  assert.equal(ed(bold, e1), 'a \\textbf{world}\n\n\n', 'after the command');
+  assert.equal(e1[0] + e1[3], bold.indexOf('}') + 3, 'the caret on the new paragraph');
+  const list = '\\begin{itemize}\n\\item one\n\\end{itemize}', at = list.indexOf('one') + 3;
+  assert.equal(ed(list, E.key(list, at, 'Enter')), '\\begin{itemize}\n\\item one\n\\item \n\\end{itemize}', 'the next item');
+  const mid = 'Hello there friend.';
+  assert.equal(ed(mid, E.key(mid, 5, 'Enter')), 'Hello\n\n there friend.', 'prose: a blank line');
+  assert.equal(typeof E.key('a \\textbf{wor ld}', 9, 'Enter'), 'string', 'inside an argument: refused');
+});
+
+// Intuition: a footnote is set at the page's foot but written inside its body paragraph. A click below the footnote's
+// text goes to the end of the note (its last row's end), never to a new body paragraph after the `\footnote{…}`.
+// A click below the body text, above the note, still starts a new paragraph after the body's.
+// Pins "Generally" typed below "Foobar chicken!!" landing as a new body paragraph (user 2026-11-22 18:54).
+test('blankPlace: below a footnote, the note\'s end', () => {
+  const E = self.satexPdfEdit;
+  const t = ['\\begin{document}', 'There is merit to this, you know?!', '\\footnote{Foobar chicken!!}', '', '\\end{document}'].join('\n');
+  const word = (s, l, base) => [1, l, base - 8, l + 30, base, s];
+  const body = { t: 92, d: 102, base: 100, l: 72, r: 300, line: 3, words: [word('There', 72, 100), word('know?!1', 250, 100)] };
+  const note = { t: 692, d: 700, base: 698, l: 80, r: 200, line: 3, words: [word('1Foobar', 80, 698), word('chicken!!', 130, 698)] };
+  assert.deepEqual(E.blankPlace(t, [body, note], 150, 720), { kind: 'end', row: 1 }, 'below the note: its end');
+  const p = E.blankPlace(t, [body, note], 150, 300);
+  assert.equal(p.kind, 'new', 'below the body text, above the note: a new paragraph');
+  assert.equal(E.blankPlace(t, [body, { ...note, words: [word('Other', 80, 698)] }], 150, 720).kind, 'new', 'a row of other text: no note');
+  const two = { ...note, t: 704, d: 712, base: 710, words: [word('more', 80, 710)] }, u = t.replace('chicken!!', 'chicken!! and more');
+  assert.equal(E.blankPlace(u, [body, { ...note, words: [...note.words, word('and', 170, 698)] }, two], 150, 703).kind, 'end', 'between two rows of a note: the upper row\'s end');
+});
+
+// Intuition: a footnote is set apart from the paragraph it is written in, so the Type caret's paragraph inside one is
+// the note's text, and its page rows are those that spell that text (the mark aside). Pins the echo of text typed in
+// a footnote drawn on the body row, then the caret jumping to the foot when the build landed (e2e footnote).
+test('notes: the note around the caret and its rows', () => {
+  const E = self.satexPdfEdit, t = 'Body here.\\footnote{A footnote text goes here.} More.';
+  const arg = [t.indexOf('A footnote'), t.indexOf('.}') + 1];
+  assert.deepEqual(E.noteAt(t, t.indexOf('text')), arg, 'inside: its text span');
+  assert.equal(E.noteAt(t, t.indexOf('More')), null, 'outside: none');
+  assert.deepEqual(E.notes(t, 0, t.length), [arg]);
+  assert.equal(E.noteRow(t.slice(...arg), ['1A', 'footnote', 'text']), true, 'its row, the mark aside');
+  assert.equal(E.noteRow(t.slice(...arg), ['Body', 'here.1']), false, 'the body row');
 });

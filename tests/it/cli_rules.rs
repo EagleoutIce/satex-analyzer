@@ -223,3 +223,54 @@ fn a_lint_filter_on_a_missing_field_names_the_fields() {
     let (ok, _, stderr) = run("rule=unused-label");
     assert!(!ok && stderr.contains("`rule`") && stderr.contains("code"), "{stderr}");
 }
+
+/// Intuition: `satex -f chapter.tex lint` on a chapter a document `\input`s reads it through that
+/// document, as the editor does: alone, `\section` reads as undefined and every line is an error.
+/// Pins the 47 false errors on doc/site/examples/chapter.tex; the root sits below the head of its
+/// file, and a macro's bare `{#1}` in a sibling document must not count as naming the chapter.
+#[test]
+fn an_input_file_is_linted_through_its_root() {
+    let dir = project("input-root");
+    let pad = "% filler line\n".repeat(40);
+    std::fs::write(
+        dir.join("aside.tex"),
+        "\\documentclass{article}\n\\def\\twice#1{#1#1}\n\\begin{document}\nx\n\\end{document}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("main.tex"),
+        format!("\\documentclass{{article}}\n{pad}\\begin{{document}}\n\\input{{chapter}}\n\\end{{document}}\n"),
+    )
+    .unwrap();
+    std::fs::write(dir.join("chapter.tex"), "\\section{One}\nText.\n").unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["-f", "chapter.tex", "--no-config", "--set", "limits.seconds=0", "lint"])
+        .output()
+        .unwrap();
+    let (stdout, stderr) = (String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(stderr.contains("through its root") && stderr.contains("main.tex"), "{stderr}");
+    assert!(!stdout.contains("never defined") && !stdout.contains("Missing \\begin{document}"), "{stdout}");
+}
+
+/// Intuition: a slice's `filecontents*` copies are named as the document names its files, relative to
+/// its folder. Run from that folder (`-f main.tex`, the folder `""`), the copy of a local package was
+/// also written under its absolute path: compiling a stale slice would overwrite the user's file.
+#[test]
+fn a_slice_names_its_file_copies_relative_to_the_document() {
+    let dir = project("slice-relative");
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n\\newcommand\\mine{M}\n").unwrap();
+    std::fs::write(
+        dir.join("main.tex"),
+        "\\documentclass{article}\n\\usepackage{mine}\n\\begin{document}\n\\mine\n\\end{document}\n",
+    )
+    .unwrap();
+    let out = crate::support::satex()
+        .current_dir(&dir)
+        .args(["-f", "main.tex", "--no-config", "--set", "limits.seconds=0", "slice", "--at", "4"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let copies: Vec<&str> = stdout.lines().filter(|l| l.starts_with("\\begin{filecontents*}")).collect();
+    assert!(copies.iter().all(|l| !l.contains('/')) && copies.len() == 1, "{stdout}");
+}

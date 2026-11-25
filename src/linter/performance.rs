@@ -188,15 +188,44 @@ fn unused_package(report: &mut Report) {
     let consumed = consumed_names(analysis, &files);
     let mut bound: BTreeMap<Sym, BTreeSet<Sym>> = BTreeMap::new();
     let mut acts: BTreeSet<Sym> = BTreeSet::new();
+    // which packages' loads read each file, looked up once per binding
+    let mut readers: crate::fixed::HashMap<crate::engine::tex::FileId, Vec<Sym>> = crate::fixed::HashMap::default();
+    for (package, read) in &files {
+        read.iter().for_each(|f| readers.entry(*f).or_default().push(*package));
+    }
+    // the font values the text was set in (`T1`, `lmr`, `m`, `n`): a package that set a default to one
+    // of them acts on every character set so, whoever reads the default (`\\normalfont` at
+    // `\\begin{document}`, not the document's own call): fontenc's `\\encodingdefault`
+    let set_in: crate::fixed::HashSet<&str> = (analysis.facts.text.at.iter())
+        .filter_map(|spot| analysis.font_states.get(spot.font_state as usize).filter(|_| spot.font_state != 0))
+        .flat_map(|f| [&*f.encoding, &*f.family, &*f.series, &*f.shape])
+        .collect();
+    let sets_font = |b: &crate::engine::env::Binding| match &b.meaning {
+        crate::engine::tex::Meaning::Macro(m) if m.arity() == 0 => {
+            let text: String = m
+                .replacement_text
+                .iter()
+                .filter_map(|t| match t.tok {
+                    crate::engine::tex::Tok::Chr(c, _) => Some(c),
+                    _ => None,
+                })
+                .collect();
+            !text.is_empty() && text.len() == m.replacement_text.len() && set_in.contains(text.as_str())
+        }
+        _ => false,
+    };
     for sym in analysis.env.bound() {
         let Some(binding) = analysis.env.slot(sym) else { continue };
         let Some(file) = binding.defs.last().and_then(|&n| analysis.graph.vertex(n)).map(|v| v.span.file) else {
             continue;
         };
+        // only a binding a package's files made counts: the comparison with the format's after that
+        let Some(packages) = readers.get(&file) else { continue };
         let format = analysis.kernel.as_ref().and_then(|k| k.slot(sym));
         let changed = format.is_none_or(|f| f.meaning != binding.meaning || f.value != binding.value);
-        let parameter = matches!(binding.meaning.prim(), Some(p) if p.is_parameter());
-        for package in files.iter().filter(|(_, f)| f.contains(&file)).map(|(p, _)| *p) {
+        let parameter =
+            matches!(binding.meaning.prim(), Some(p) if p.is_parameter()) || (changed && sets_font(binding));
+        for &package in packages {
             match (changed, parameter) {
                 (true, true) => _ = acts.insert(package),
                 (true, false) if analysis.env.is_defined(sym) => _ = bound.entry(package).or_default().insert(sym),
@@ -216,11 +245,17 @@ fn unused_package(report: &mut Report) {
         if acts.contains(&package) || names.iter().any(|n| consumed.contains(n)) {
             continue;
         }
+        // a run that did not reach the end may not have met the use: a note, never a fix
+        let message = format!("{} defines {} names, none of which are used", load.name, names.len());
+        if report.unread("used").is_some() {
+            report.add_absent("used", load.span, &load.name, message, None);
+            continue;
+        }
         let edits = report.edits().delete_load(load);
         report.add_fix(
             load.span,
             &load.name,
-            format!("{} defines {} names, none of which are used", load.name, names.len()),
+            message,
             Fix::new(
                 format!("delete `\\usepackage{{{}}}`: nothing it defines or changes is used", load.name),
                 Applicability::Unsafe,
@@ -256,11 +291,12 @@ fn consumed_names(
     packages: &BTreeMap<Sym, BTreeSet<crate::engine::tex::FileId>>,
 ) -> crate::fixed::HashSet<Sym> {
     // the calls the document writes itself, not those its macros and environments make
+    let loads: crate::fixed::HashSet<Span> = analysis.facts.loads.iter().map(|l| l.span).collect();
     let own = |e: &&crate::analysis::facts::Expansion| {
         e.within.is_none()
             && crate::queries::query::origin(analysis, e.span.file) == "document"
             && e.span.line > 0
-            && !analysis.facts.loads.iter().any(|l| l.span == e.span)
+            && !loads.contains(&e.span)
     };
     let document = |kind| analysis.facts.occurrences.iter().find(|o| o.kind == kind && o.key == "document");
     let begun = document(crate::engine::builtins::OccKind::BeginEnvironment);
@@ -282,8 +318,10 @@ fn consumed_names(
         }
     }
     let called = (0..graph.nodes.len()).filter(|&i| reached[i]).map(|i| graph.nodes[i]);
+    let read_by_packages: crate::fixed::HashSet<crate::engine::tex::FileId> =
+        packages.values().flatten().copied().collect();
     let outside = |from: crate::engine::env::NodeId| {
-        analysis.graph.vertex(from).is_some_and(|v| packages.values().all(|f| !f.contains(&v.span.file)))
+        analysis.graph.vertex(from).is_some_and(|v| !read_by_packages.contains(&v.span.file))
     };
     let register = |sym: Sym| matches!(analysis.env.meaning(sym), crate::engine::tex::Meaning::Register(..));
     let read =
@@ -465,12 +503,17 @@ fn preamble_cost(report: &mut Report) {
         return;
     }
     let span = report.index().document_start().unwrap_or_default();
-    let message = format!(
-        "{} requested directly, {} read, {}% of the tokens the build takes",
-        crate::util::plural(direct, "package"),
-        crate::util::plural(files, "file"),
-        steps * 100 / analysis.tex_steps().max(1)
-    );
+    // no `\\usepackage` of its own: the class is what reads the files (beamer's 375)
+    let class = analysis.facts.loads.iter().find(|l| l.kind == crate::engine::builtins::LoadKind::Class);
+    let read = crate::util::plural(files, "file");
+    let share = steps * 100 / analysis.tex_steps().max(1);
+    let message = match class {
+        Some(c) if direct == 0 => format!("the class {} reads {read}, {share}% of the tokens the build takes", c.name),
+        _ => format!(
+            "{} requested directly, {read} read, {share}% of the tokens the build takes",
+            crate::util::plural(direct, "package")
+        ),
+    };
     // A format the build already starts from leaves nothing to suggest.
     if analysis.plugins.preload.is_some() {
         report.add(span, "", message, None);

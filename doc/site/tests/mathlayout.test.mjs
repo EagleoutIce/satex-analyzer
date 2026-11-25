@@ -181,3 +181,20 @@ test('preview: a math command drawn small as SVG', () => {
   assert.equal(M.isMath('sqrt') && M.isMath('mathbb') && M.isMath('lim'), true);
   assert.equal(M.isMath('section'), false);
 });
+// Intuition: a formula in text breaks only after a relation or binary operator of its outer list (tex.web §767): at
+// \relpenalty 500 after `=`, \binoppenalty 700 after `+`, never before a relation (`=` after `<`), never inside braces
+// or scripts, never in display. Pins the echo setting `$a+b=c$` as one unbreakable box (preview wish 3, 2026-11-21).
+test('inline math: break points after relations and binary operators', () => {
+  const b = lay('a+b=c'), br = b.br ?? [], pens = (x) => (x.br ?? []).filter((g) => g.pen != null).map((g) => g.pen);
+  assert.deepEqual(pens(b), [P.binPenalty, P.relPenalty]);
+  // its glue: medium about `+`, thick about `=`, each a part of its own, the break after the operator
+  assert.deepEqual(br.map((g) => g.mu), [4, 4, 5, 5]);
+  assert.ok(br.every((x) => x.next > x.at), 'the space after the operator is dropped at a break');
+  assert.equal(lay('a+b=c', true).br, undefined, 'a display breaks nowhere');
+  assert.deepEqual(pens(lay('{a+b}^{c=d}')), [], 'a group and scripts are inner lists');
+  assert.equal(pens(lay('a\\le=b')).length, 1, 'no break between two relations');
+  // the parts put together are the formula: widths and spaces add up, every glyph kept once
+  const ps = M.parts(b), sum = ps.reduce((n, p) => n + p.box.w + (p.space ?? 0), 0);
+  assert.ok(Math.abs(sum - b.w) < 1e-9);
+  assert.equal(ps.reduce((n, p) => n + p.box.g.length, 0), b.g.length);
+});

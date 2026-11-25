@@ -1242,7 +1242,73 @@ pub const ETEX_PRIMITIVES: &[&str] = &[
 /// LuaTeX 1.17 has no `\tracingstacklevels` (doc/primitive-facts.md).
 const NOT_IN_LUATEX: &[&str] = &["TeXXeTstate", "beginL", "beginR", "endL", "endR", "tracingstacklevels"];
 
+/// The catalog without the primitives the installed engine lacks: an older
+/// engine misses the newer ones (`\partokenname` came with TeX Live 2022).
 pub fn initial_meanings(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
+    let mut table = catalog(it, engine);
+    let absent = absent_primitives(engine);
+    if !absent.is_empty() {
+        table.retain(|sym, _| !absent.contains(it.name(*sym)));
+    }
+    table
+}
+
+/// The catalog names the installed `engine` does not define, asked once per
+/// engine with `\ifcsname` in an INITEX run.  Empty without the binary.
+fn absent_primitives(engine: Engine) -> &'static crate::fixed::HashSet<String> {
+    static SETS: Mutex<Vec<(Engine, &'static crate::fixed::HashSet<String>)>> = Mutex::new(Vec::new());
+    let mut sets = SETS.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((_, s)) = sets.iter().find(|(e, _)| *e == engine) {
+        return s;
+    }
+    let set: &'static _ = Box::leak(Box::new(probe_absent(engine).unwrap_or_default()));
+    sets.push((engine, set));
+    set
+}
+
+fn probe_absent(engine: Engine) -> Option<crate::fixed::HashSet<String>> {
+    // Knuth's TeX has no `\ifcsname`, and its catalog is fixed.
+    if !engine.has_etex() {
+        return None;
+    }
+    let binary = crate::project::paths::which(engine.as_str()).ok()?;
+    let mut it = Interner::from_names(Vec::new());
+    let mut names: Vec<String> = catalog(&mut it, engine).keys().map(|s| it.name(*s).to_string()).collect();
+    names.retain(|n| n.chars().all(|c| c.is_ascii_alphabetic()));
+    let mut probe = String::from("\\catcode`\\{=1 \\catcode`\\}=2 ");
+    // LuaTeX's INITEX starts with TeX's primitives only; a LaTeX format
+    // enables the rest the same way.
+    if engine.has_luatex() {
+        probe.push_str("\\directlua{tex.enableprimitives('',tex.extraprimitives())}");
+    }
+    probe.push_str("\\immediate\\openout0=absent.txt\n");
+    for n in &names {
+        probe.push_str(&format!("\\ifcsname {n}\\endcsname\\else\\immediate\\write0{{{n}}}\\fi\n"));
+    }
+    probe.push_str("\\immediate\\write0{done}\\immediate\\closeout0 \\end\n");
+    let dir = std::env::temp_dir().join(format!("satex-primitives-{}-{}", engine.as_str(), std::process::id()));
+    std::fs::create_dir_all(&dir).ok()?;
+    let ran = std::fs::write(dir.join("probe.tex"), probe).ok().and_then(|()| {
+        let mut command = std::process::Command::new(binary);
+        command.arg("-ini");
+        if !engine.has_luatex() {
+            command.arg("-etex");
+        }
+        command.args(["-interaction=batchmode", "probe.tex"]).current_dir(&dir).output().ok()
+    });
+    let found = ran.and_then(|_| std::fs::read_to_string(dir.join("absent.txt")).ok());
+    let _ = std::fs::remove_dir_all(&dir);
+    let lines: Vec<&str> = found.as_deref()?.lines().collect();
+    // A probe cut short, or one without a working `\ifcsname`, says nothing.
+    if lines.last() != Some(&"done") || lines.contains(&"ifcsname") {
+        return None;
+    }
+    Some(lines[..lines.len() - 1].iter().map(|n| n.to_string()).collect())
+}
+
+/// Every primitive satex models for `engine`, as the newest engine has it;
+/// [`initial_meanings`] drops what the installed binary lacks.
+pub fn catalog(it: &mut Interner, engine: Engine) -> HashMap<Sym, Meaning> {
     use Primitive as P;
     let mut table: HashMap<Sym, Meaning> = HashMap::with_capacity_and_hasher(512, Default::default());
     let mut put = |it: &mut Interner, name: &str, p: Primitive| {

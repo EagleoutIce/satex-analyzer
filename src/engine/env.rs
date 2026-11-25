@@ -16,6 +16,10 @@ const NONE: u32 = u32::MAX;
 
 pub type NodeId = u32;
 
+/// A copy of a name's definition sites, as a macro call or a reference reads
+/// them: nearly always one or two, so the copy stays off the heap.
+pub type Defs = smallvec::SmallVec<[NodeId; 2]>;
+
 /// What a control sequence is bound to: its [`Meaning`], [`Value`], and the
 /// [`NodeId`]s that defined it. [`Env`] stores one per active [`Sym`].
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -150,6 +154,16 @@ impl Journal {
     }
 }
 
+/// A logged write: the name, the group depth of a local write (0 for a
+/// global one: a local one is undone once fewer groups are open), and
+/// [`Env::assignments`] when it was made (0 when unknown).
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+struct Write {
+    sym: u32,
+    depth: u32,
+    at: u64,
+}
+
 /// Open group: journal start, opener kind, saved `\aftergroup` tokens.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct Mark {
@@ -187,7 +201,9 @@ pub struct Env {
     /// from the same bindings. One entry per slot and fork: the first change
     /// under a fork saves what rewinding restores, and links to the slot's
     /// previous entry, which rewinding puts back.
-    trail: Vec<(u32, Option<Binding>, u32, u32, u64)>,
+    /// Chunked: a checkpoint taken while a fork is open shares it.
+    #[serde(with = "crate::fixed::flat")]
+    trail: crate::fixed::Chunked<(u32, Option<Binding>, u32, u32, u64)>,
     /// Per slot, its latest trail entry, `NONE` for none.
     trailed: crate::fixed::Chunked<u32>,
     /// Per open fork, the fewest groups the running path stood in since.
@@ -201,18 +217,16 @@ pub struct Env {
     /// Forks that several paths continued from. A package load's record of
     /// what it wrote does not follow them.
     paths: usize,
-    /// Names assigned since [`Env::clear_recent`], for widening a loop that
-    /// does not end to every state it could have left.
-    recent: Vec<u32>,
-    /// Per `recent` entry, [`Env::assignments`] when it was made; 0 when
-    /// unknown.
-    recent_at: Vec<u64>,
-    /// Per `recent` entry, the group depth a local write was made at (0 for
-    /// a global one): it is undone once fewer groups are open.
-    #[serde(default)]
-    recent_depth: Vec<u32>,
-    /// [`Env::assignments`] when the log was last cleared or set.
+    /// Writes since [`Env::clear_recent`], for widening a loop that does
+    /// not end to every state it could have left. Read from a mark on
+    /// ([`Env::assignments`] then); [`Env::fold_recent`] bounds it.
+    recent: Vec<Write>,
+    /// [`Env::assignments`] when the log was last cleared, set or folded:
+    /// it answers exactly for marks from then on.
     recent_from: u64,
+    /// Entries the last fold kept, 0 since a clear.
+    #[serde(skip)]
+    recent_kept: usize,
     /// Per slot, [`Env::assignments`] at the write its binding came from.
     /// A group end puts back the old one, so a name whose write a group
     /// end undid is not widened.
@@ -243,7 +257,8 @@ pub struct Env {
     /// While calls are recorded: every name read, in order, with the stamp
     /// of the binding it read.
     logging: std::cell::Cell<bool>,
-    read_log: std::cell::RefCell<Vec<(u32, u64)>>,
+    #[serde(with = "crate::fixed::flat::cell")]
+    read_log: std::cell::RefCell<crate::fixed::Chunked<(u32, u64)>>,
     /// Whether the log passed [`READ_LOG`] and stopped, so it is incomplete.
     log_full: std::cell::Cell<bool>,
     /// When the log was cleared, how long it was then, and how long when last asked
@@ -267,6 +282,53 @@ pub struct Env {
     /// While a run keeps checkpoints: when each slot was last read or written.
     #[serde(skip)]
     pub touched: LastUse,
+    #[serde(skip)]
+    distinct: Distinct,
+}
+
+/// Takes each name of a read log once, in one pass over it: per name, the pass that last met
+/// it and where. Sorting the log instead cost a record's end `n log n` for `n` reads, most of
+/// them repeats. A copy starts empty: it is scratch.
+#[derive(Default)]
+struct Distinct {
+    pass: std::cell::Cell<u32>,
+    met: std::cell::RefCell<Vec<(u32, u32)>>,
+}
+
+impl Clone for Distinct {
+    fn clone(&self) -> Self {
+        Distinct::default()
+    }
+}
+
+impl Distinct {
+    /// The names of `reads` (`sym | value << 31`), each once, sorted, with the value bit
+    /// set where any of its reads had it.
+    fn of(&self, reads: impl Iterator<Item = u32>) -> Vec<u32> {
+        let pass = self.pass.get().wrapping_add(1);
+        let mut met = self.met.borrow_mut();
+        if pass == 0 {
+            met.clear();
+        }
+        self.pass.set(pass.max(1));
+        let pass = pass.max(1);
+        let mut out: Vec<u32> = Vec::new();
+        for r in reads {
+            let sym = (r & !(1 << 31)) as usize;
+            if sym >= met.len() {
+                met.resize(sym + 1, (0, 0));
+            }
+            match met[sym] {
+                (p, at) if p == pass => out[at as usize] |= r & 1 << 31,
+                _ => {
+                    met[sym] = (pass, out.len() as u32);
+                    out.push(r);
+                }
+            }
+        }
+        out.sort_unstable_by_key(|r| r & !(1 << 31));
+        out
+    }
 }
 
 /// When each entry of a table (a slot, a recorded list's node) was last used, as the run's
@@ -341,7 +403,7 @@ impl LastUse {
 struct MemoLog {
     reads: Vec<u32>,
     /// Parts of `reads` an ended record took each name of once, by start:
-    /// their end and those names, so a record around it sorts no part twice.
+    /// their end and those names, so a record around it reads no part twice.
     parts: std::collections::BTreeMap<usize, (usize, Rc<[u32]>)>,
     pre: Vec<(u32, Option<Binding>)>,
     at: LookupMap<u32, usize>,
@@ -399,6 +461,109 @@ impl ReadKind {
     }
 }
 
+/// An integer a load computed from values it found (its *leaves*: slots it has not written),
+/// by TeX's own arithmetic. A package cache stores the expression where the value only flows
+/// into what the load leaves, and fills it in from the state it is served into.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Expr {
+    Leaf(Sym),
+    Const(i64),
+    Op(crate::engine::builtins::Arith, Rc<Expr>, Rc<Expr>),
+    Neg(Rc<Expr>),
+}
+
+impl Expr {
+    pub fn leaves(&self, out: &mut Vec<Sym>) {
+        match self {
+            Expr::Leaf(sym) => out.push(*sym),
+            Expr::Const(_) => {}
+            Expr::Op(_, a, b) => {
+                a.leaves(out);
+                b.leaves(out);
+            }
+            Expr::Neg(a) => a.leaves(out),
+        }
+    }
+
+    /// The expression with each leaf renamed by `name`; `None` where a leaf has no name.
+    pub fn renamed(&self, name: &dyn Fn(Sym) -> Option<Sym>) -> Option<Rc<Expr>> {
+        Some(Rc::new(match self {
+            Expr::Leaf(sym) => Expr::Leaf(name(*sym)?),
+            Expr::Const(c) => Expr::Const(*c),
+            Expr::Op(op, a, b) => Expr::Op(*op, a.renamed(name)?, b.renamed(name)?),
+            Expr::Neg(a) => Expr::Neg(a.renamed(name)?),
+        }))
+    }
+
+    /// Its value where `leaf` gives each leaf's. `None` where a leaf is no known integer or
+    /// TeX reports "Arithmetic overflow" (tex.web §§ 1238-1240).
+    pub fn eval(&self, leaf: &dyn Fn(Sym) -> Option<i64>) -> Option<i64> {
+        match self {
+            Expr::Leaf(sym) => leaf(*sym),
+            Expr::Const(n) => Some(*n),
+            Expr::Op(op, a, b) => crate::engine::exec::int_arith(a.eval(leaf)?, b.eval(leaf)?, *op, false),
+            Expr::Neg(a) => Some(crate::engine::value::wrap(-a.eval(leaf)?)),
+        }
+    }
+}
+
+/// Where a hole's tokens come from: the decimal print of an integer, or the whole text of a
+/// macro the load found ([`copied_text`]).
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Src {
+    Dec(Rc<Expr>),
+    TextOf(Sym),
+}
+
+/// Tokens `at..at + len` of a replacement text stand for `src`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Hole {
+    pub at: u32,
+    pub len: u32,
+    pub src: Src,
+}
+
+/// What a slot the load wrote holds, as a function of the load's leaves: its value, or
+/// parts of its replacement text. The slot itself holds the concrete content.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum Amb {
+    Int(Rc<Expr>),
+    Text(Vec<Hole>),
+}
+
+impl Amb {
+    /// The slots it depends on, each with the part read of it.
+    pub fn sources(&self, out: &mut Vec<(Sym, ReadKind)>) {
+        let mut leaves = Vec::new();
+        match self {
+            Amb::Int(e) => e.leaves(&mut leaves),
+            Amb::Text(holes) => {
+                for hole in holes {
+                    match &hole.src {
+                        Src::Dec(e) => e.leaves(&mut leaves),
+                        Src::TextOf(sym) => out.push((*sym, ReadKind::Meaning)),
+                    }
+                }
+            }
+        }
+        out.extend(leaves.into_iter().map(|sym| (sym, ReadKind::Value)));
+    }
+}
+
+/// A test a load decided on its leaves: the relation between two expressions and how it came out.
+pub type Guard = (Rc<Expr>, char, Rc<Expr>, bool);
+
+/// A number scan that read exactly one integer quantity: what it is as an [`Expr`], the
+/// value read, and the exact reads the scan logged for it (to take back when the consumer
+/// keeps the expression instead, [`Env::retract`]).
+#[derive(Clone, Debug)]
+pub struct Scanned {
+    pub expr: Rc<Expr>,
+    pub value: i64,
+    undo: Vec<(u32, u8)>,
+    serial: u64,
+}
+
 /// Reads recorded while a package cache is captured. Per slot: which parts
 /// were read while they still held their value from before the load, and
 /// which parts the load has overwritten since (a later read of those does
@@ -426,6 +591,42 @@ struct Reads {
     /// Read parts added by a `\csname` that become irrelevant if the whole
     /// meaning is overwritten before any other read (`\cs_gset:cpn`).
     moot: LookupMap<u32, u8>,
+    /// Slots the load wrote whose content is a function of its leaves ([`Amb`]), and every
+    /// slot such a function names. A plain read of the slot, or a write of a leaf, turns
+    /// the function into exact reads of its leaves ([`Reads::settle`]).
+    ambient: LookupMap<u32, Amb>,
+    sources: LookupSet<u32>,
+    guards: Vec<Guard>,
+    /// Expressions whose exact reads were taken back: each read found a known integer,
+    /// which the segment still depends on.
+    kept: Vec<Rc<Expr>>,
+    /// The slots the last expression scan read exactly ([`Env::scanned`]), the scan's
+    /// number, and whether anything read one of them since: then the reads are no longer
+    /// the scan's alone to take back.
+    #[serde(skip)]
+    pending: Vec<u32>,
+    #[serde(skip)]
+    serial: u64,
+    #[serde(skip)]
+    shared: bool,
+    /// The reader accounts for the slot's [`Amb`] itself.
+    #[serde(skip)]
+    quiet: bool,
+    /// Reads go unnoted while writes are noted ([`Env::pause_reads`]).
+    paused: bool,
+}
+
+impl Reads {
+    /// The content `amb` describes was looked at, or may change apart from it: from here on
+    /// the segment depends on the exact leaves.
+    fn settle(&mut self, amb: &Amb) {
+        let mut sources = Vec::new();
+        amb.sources(&mut sources);
+        for (sym, kind) in sources {
+            self.shared |= self.pending.contains(&sym.0);
+            *self.read.entry(sym.0).or_insert(0) |= kind.bit();
+        }
+    }
 }
 
 /// The save stack at the point where paths split. Groups can open and close
@@ -542,6 +743,12 @@ fn distinct_sorted(names: &[u32]) -> Vec<u32> {
 }
 
 impl Env {
+    pub fn probe(&self) -> Vec<(&'static str, usize)> {
+        crate::probe_sz!("e.slots" => self.slots, "e.level" => self.level, "e.journal" => self.journal, "e.marks" => self.marks, "e.trail" => self.trail, "e.trailed" => self.trailed, "e.lows" => self.lows, "e.floors" => self.floors, "e.changed" => self.changed, "e.recent" => self.recent, "e.stamp" => self.stamp, "e.aliases" => self.aliases, "e.read_log" => self.read_log, "e.reads" => self.reads)
+    }
+}
+
+impl Env {
     pub fn with_capacity(n: usize) -> Self {
         Self {
             slots: crate::fixed::Chunked::filled(n, None),
@@ -641,7 +848,21 @@ impl Env {
             return;
         }
         let mut reads = self.reads.borrow_mut();
+        if reads.paused {
+            return;
+        }
         reads.moot.remove(&sym.0);
+        reads.shared |= kind == ReadKind::Value && reads.pending.contains(&sym.0);
+        if !reads.quiet && !reads.ambient.is_empty() {
+            let looked = match reads.ambient.get(&sym.0) {
+                Some(Amb::Int(_)) => kind == ReadKind::Value,
+                Some(Amb::Text(_)) => matches!(kind, ReadKind::Meaning | ReadKind::Kept | ReadKind::Copy),
+                None => false,
+            };
+            if looked && let Some(amb) = reads.ambient.remove(&sym.0) {
+                reads.settle(&amb);
+            }
+        }
         let kind = match kind {
             ReadKind::Meaning if reads.copying == Some(sym.0) => ReadKind::Copy,
             kind => kind,
@@ -800,6 +1021,159 @@ impl Env {
         }
     }
 
+    /// Whether a load is recorded on one path: only there a value is kept as a function of
+    /// the load's leaves, as only there its writes are recorded ([`Env::note_write`]).
+    pub fn symbolic(&self) -> bool {
+        self.tracking.get() && self.paths == 0
+    }
+
+    /// What the content of `sym` is as a function of the load's leaves, if the load made it one.
+    pub fn amb(&self, sym: Sym) -> Option<Amb> {
+        self.reads.borrow().ambient.get(&sym.0).cloned()
+    }
+
+    /// The load left `sym` holding `amb`, if `holds` (said after the write, which retires
+    /// what the slot held). Else, or where a rewind may undo the write, or where the load
+    /// has written a slot `amb` names since it read it, the content is not kept as a
+    /// function: everything `amb` names is read exactly.
+    pub fn set_amb(&self, sym: Sym, amb: Amb, holds: bool) {
+        if !self.tracking.get() {
+            return;
+        }
+        let symbolic = self.symbolic();
+        let mut reads = self.reads.borrow_mut();
+        let mut sources = Vec::new();
+        amb.sources(&mut sources);
+        let written = |reads: &Reads, (s, kind): &(Sym, ReadKind)| {
+            reads.written.get(&s.0).copied().unwrap_or(0) & kind.bit() != 0
+        };
+        if !holds || !symbolic || sources.iter().any(|source| written(&reads, source)) {
+            return reads.settle(&amb);
+        }
+        reads.sources.extend(sources.into_iter().map(|(s, _)| s.0));
+        reads.ambient.insert(sym.0, amb);
+    }
+
+    /// The meaning read of `sym` since its parts read were `before` was a copy of its text
+    /// into a hole: it counts as [`ReadKind::Copy`], as a text copied through does.
+    pub fn copied_not_read(&self, sym: Sym, before: u8) {
+        if !self.tracking.get() {
+            return;
+        }
+        let mut reads = self.reads.borrow_mut();
+        let read = reads.read.entry(sym.0).or_insert(0);
+        *read = *read & (before | !ReadKind::Meaning.bit()) | ReadKind::Copy.bit();
+    }
+
+    /// A served segment left `sym` holding `amb`: the load recorded from here on holds it so
+    /// too, unless a later served segment wrote a slot it names (which that one keyed on).
+    pub fn restore_amb(&self, sym: Sym, amb: Amb) {
+        let mut reads = self.reads.borrow_mut();
+        let mut sources = Vec::new();
+        amb.sources(&mut sources);
+        if sources.iter().all(|(s, kind)| reads.written.get(&s.0).copied().unwrap_or(0) & kind.bit() == 0) {
+            reads.sources.extend(sources.into_iter().map(|(s, _)| s.0));
+            reads.ambient.insert(sym.0, amb);
+        }
+    }
+
+    /// What `amb` names is read exactly: its consumer could not keep it as a function.
+    pub fn settle_amb(&self, amb: &Amb) {
+        if self.tracking.get() {
+            self.reads.borrow_mut().settle(amb);
+        }
+    }
+
+    /// Reads of slots with an [`Amb`] while `on` are the reader's to account for.
+    pub fn quiet(&self, on: bool) {
+        self.reads.borrow_mut().quiet = on;
+    }
+
+    /// Before a read of the integer `sym` holds: what it is as an expression. The load's own
+    /// function of its leaves, or the slot as a leaf while the load has not written its
+    /// value. `None` where no load is recorded or a rewind may undo the read. The read
+    /// itself is logged as any read, then [`Env::scanned`] completes this.
+    pub fn scanning(&self, sym: Sym) -> Option<Scanned> {
+        if !self.symbolic() {
+            return None;
+        }
+        let reads = self.reads.borrow();
+        let bit = ReadKind::Value.bit();
+        let expr = match reads.ambient.get(&sym.0) {
+            Some(Amb::Int(expr)) => expr.clone(),
+            Some(Amb::Text(_)) => return None,
+            None if reads.written.get(&sym.0).copied().unwrap_or(0) & bit == 0 => Rc::new(Expr::Leaf(sym)),
+            None => return None,
+        };
+        let mut leaves = Vec::new();
+        expr.leaves(&mut leaves);
+        // The exact reads the read is about to add: those are its own to take back.
+        let undo = leaves.iter().filter(|s| reads.read.get(&s.0).copied().unwrap_or(0) & bit == 0);
+        let undo = undo.map(|s| (s.0, bit)).collect();
+        Some(Scanned { expr, value: 0, undo, serial: 0 })
+    }
+
+    /// After the read [`Env::scanning`] prepared gave `value`: the plain read settled the
+    /// slot's function, which stands again for the consumer to keep or not.
+    pub fn scanned(&self, mut scanned: Scanned, sym: Sym, value: i64) -> Scanned {
+        let mut reads = self.reads.borrow_mut();
+        if !matches!(*scanned.expr, Expr::Leaf(_)) {
+            reads.ambient.insert(sym.0, Amb::Int(scanned.expr.clone()));
+        }
+        // From here on a read of the slot or of a leaf is someone else's.
+        reads.serial += 1;
+        reads.pending = scanned.undo.iter().map(|(s, _)| *s).chain([sym.0]).collect();
+        reads.shared = false;
+        (scanned.value, scanned.serial) = (value, reads.serial);
+        scanned
+    }
+
+    /// The consumer of `scanned` keeps its expression: the exact reads its scan logged are
+    /// taken back. Only when no other scan came and nothing read those slots since, else
+    /// they stay and `false` says the expression is not worth keeping.
+    pub fn retract(&self, scanned: &Scanned) -> bool {
+        let mut reads = self.reads.borrow_mut();
+        if !self.symbolic() || reads.serial != scanned.serial || reads.shared {
+            return false;
+        }
+        reads.pending.clear();
+        reads.kept.push(scanned.expr.clone());
+        for (sym, bits) in &scanned.undo {
+            if let Some(read) = reads.read.get_mut(sym) {
+                *read &= !bits;
+                if *read == 0 {
+                    reads.read.remove(sym);
+                }
+            }
+        }
+        true
+    }
+
+    /// Whether the load recorded wrote `kind` of `sym` since tracking began.
+    pub fn written_part(&self, sym: Sym, kind: ReadKind) -> bool {
+        self.reads.borrow().written.get(&sym.0).copied().unwrap_or(0) & kind.bit() != 0
+    }
+
+    /// An expression a served segment kept in place of exact reads: the load recorded
+    /// around it keeps it too ([`Env::take_guards`]).
+    pub fn keep(&self, expr: Rc<Expr>) {
+        if self.tracking.get() {
+            self.reads.borrow_mut().kept.push(expr);
+        }
+    }
+
+    /// A test the load decided on its leaves.
+    pub fn guard(&self, guard: Guard) {
+        self.reads.borrow_mut().guards.push(guard);
+    }
+
+    /// The tests decided since the last call, and the expressions kept in place of exact
+    /// reads since then.
+    pub fn take_guards(&self) -> (Vec<Guard>, Vec<Rc<Expr>>) {
+        let mut reads = self.reads.borrow_mut();
+        (std::mem::take(&mut reads.guards), std::mem::take(&mut reads.kept))
+    }
+
     /// A segment begins: nothing is assigned since.
     pub fn begin_segment(&self) {
         let mut reads = self.reads.borrow_mut();
@@ -953,19 +1327,19 @@ impl Env {
         // Each name once: read whole if any read took more than its meaning.
         let end = memo.reads.len();
         memo.reads.get(from.reads..)?;
-        let (mut logged, mut at) = (Vec::new(), from.reads);
-        // A part that overlaps the last one is skipped: the log has its reads.
+        // The log's own reads and the parts ended records took, a part that
+        // overlaps the last one skipped: the log has its reads.
+        let mut pieces: Vec<&[u32]> = Vec::new();
+        let mut at = from.reads;
         for (&start, (stop, names)) in memo.parts.range(from.reads..) {
             if start < at {
                 continue;
             }
-            logged.extend_from_slice(&memo.reads[at..start]);
-            logged.extend_from_slice(names);
+            pieces.extend([&memo.reads[at..start], &names[..]]);
             at = *stop;
         }
-        logged.extend_from_slice(&memo.reads[at..end]);
-        logged.sort_unstable_by_key(|r| (r & !(1 << 31), std::cmp::Reverse(r >> 31)));
-        logged.dedup_by_key(|r| *r & !(1 << 31));
+        pieces.push(&memo.reads[at..end]);
+        let logged = self.distinct.of(pieces.into_iter().flatten().copied());
         let reads: Vec<(u32, bool)> = logged.iter().map(|r| (r & !(1 << 31), r >> 31 == 1)).collect();
         // The parts inside this one are in it.
         drop(memo.parts.split_off(&from.reads));
@@ -1032,9 +1406,7 @@ impl Env {
         }
         let log = self.read_log.borrow();
         self.read_asked.set(log.len());
-        let mut syms: Vec<u32> = log.get(from..)?.iter().map(|r| r.0).collect();
-        syms.sort_unstable();
-        syms.dedup();
+        let syms = self.distinct.of((from <= log.len()).then(|| log.iter_from(from))?.map(|r| r.0));
         Some(syms.into_iter().map(Sym).collect())
     }
 
@@ -1047,13 +1419,19 @@ impl Env {
         }
         let log = self.read_log.borrow();
         self.read_asked.set(log.len());
-        let mut met: Vec<Sym> = (log.get(from..)?.iter())
+        let mut met: Vec<Sym> = ((from <= log.len()).then(|| log.iter_from(from))?)
             .filter(|&&(sym, stamp)| stamp <= at && syms.binary_search(&Sym(sym)).is_ok())
             .map(|&(sym, _)| Sym(sym))
             .collect();
         met.sort_unstable();
         met.dedup();
         Some(met)
+    }
+
+    /// Reads while `on` are not noted, writes still are: a served segment inside a
+    /// recording, whose reads the recording takes on by name. The previous setting.
+    pub fn pause_reads(&self, on: bool) -> bool {
+        std::mem::replace(&mut self.reads.borrow_mut().paused, on)
     }
 
     pub fn track_reads(&self, on: bool) -> bool {
@@ -1112,17 +1490,17 @@ impl Env {
     /// The name's definition sites, to link a dependency-graph edge to.
     /// Whatever they are, a package cache links the edge again on replay,
     /// so this reads nothing.
-    pub fn link_defs(&self, sym: Sym) -> Vec<NodeId> {
-        self.slot(sym).map(|b| b.defs.clone()).unwrap_or_default()
+    pub fn link_defs(&self, sym: Sym) -> Defs {
+        self.slot(sym).map(|b| Defs::from_slice(&b.defs)).unwrap_or_default()
     }
 
     /// The name's definition sites, when what is done depends on whether
     /// there are any.
-    pub fn defs(&self, sym: Sym) -> Vec<NodeId> {
+    pub fn defs(&self, sym: Sym) -> Defs {
         if self.tracking.get() {
             self.note_read(sym, ReadKind::Defs);
         }
-        self.slot(sym).map(|b| b.defs.clone()).unwrap_or_default()
+        self.slot(sym).map(|b| Defs::from_slice(&b.defs)).unwrap_or_default()
     }
 
     pub fn is_defined(&self, sym: Sym) -> bool {
@@ -1274,8 +1652,9 @@ impl Env {
     pub fn merge_recent(&mut self, top: usize, to: usize) {
         let (top, to) = (top as u32, to as u32);
         if to > top {
-            for d in &mut self.recent_depth {
-                *d = match *d {
+            // Monotone in the depth, so a folded log stays one ([`Env::fold_recent`]).
+            for w in &mut self.recent {
+                w.depth = match w.depth {
                     d if d <= top => d,
                     d if d <= to => top,
                     d => d - (to - top),
@@ -1369,9 +1748,7 @@ impl Env {
             self.effective += 1;
             self.slot_changes += 1;
         }
-        self.recent.push(sym.0);
-        self.recent_at.push(self.assignments);
-        self.recent_depth.push(if global { 0 } else { self.marks.len() as u32 });
+        self.log_write(sym.0, if global { 0 } else { self.marks.len() as u32 });
         let stamp = self.stamp.set(i, self.assignments);
         if (global || self.marks.is_empty()) && writes & ReadKind::Meaning.bit() != 0 && self.paths == 0 {
             self.drop_moot(sym.0);
@@ -1675,6 +2052,10 @@ impl Env {
                         None => self.aliases.remove(&Sym(sym)),
                     };
 
+                    // The group's value ends here for good ([`Env::rewind`] settles the rest).
+                    if self.tracking.get() && self.paths == 0 {
+                        self.reads.borrow_mut().ambient.remove(&sym);
+                    }
                     self.log(index);
                     self.level[index] = level;
                     self.stamp.set(index, stamp);
@@ -1706,62 +2087,105 @@ impl Env {
     /// The names assigned since [`Env::clear_recent`], and a way to put them
     /// back, for a package cache that replays a load.
     pub fn recent(&self) -> Vec<Sym> {
-        self.recent.iter().map(|s| Sym(*s)).collect()
+        self.recent.iter().map(|w| Sym(w.sym)).collect()
     }
 
     pub fn set_recent(&mut self, recent: Vec<Sym>) {
-        self.recent = recent.into_iter().map(|s| s.0).collect();
-        self.recent_at = vec![0; self.recent.len()];
-        self.recent_depth = vec![0; self.recent.len()];
-        self.recent_from = self.assignments;
+        self.clear_recent();
+        self.recent = recent.into_iter().map(|s| Write { sym: s.0, depth: 0, at: 0 }).collect();
     }
 
     pub fn clear_recent(&mut self) {
         self.recent.clear();
-        self.recent_at.clear();
-        self.recent_depth.clear();
         self.recent_from = self.assignments;
+        self.recent_kept = 0;
+    }
+
+    /// Logs the write of `sym` made now. A log past `limits.write_log`
+    /// that doubled since its last fold is folded first.
+    fn log_write(&mut self, sym: u32, depth: u32) {
+        if self.recent.len() >= self.sets.write_log.max(2 * self.recent_kept) {
+            self.fold_recent();
+        }
+        self.recent.push(Write { sym, depth, at: self.assignments });
+    }
+
+    /// Bounds the log by the names it holds, not by the writes of code
+    /// that reads no source for long: of each name its first write stays, and each
+    /// later one made less deep than all before it. The first write of a
+    /// name at most some depth deep is always one of these, so the log
+    /// still says what was written since it began. A mark made before the
+    /// fold reads as one made before a clear: its own first writes may be
+    /// gone (dropping a later write is not sound for a mark between the
+    /// two, whose name a rewind may since have put back).
+    fn fold_recent(&mut self) {
+        let mut least: std::collections::HashMap<u32, u32, crate::engine::tex::NameHash> = Default::default();
+        self.recent.retain(|w| match least.entry(w.sym) {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(w.depth);
+                true
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                let less = w.depth < *e.get();
+                if less {
+                    e.insert(w.depth);
+                }
+                less
+            }
+        });
+        self.recent.shrink_to(2 * self.recent.len());
+        self.recent_from = self.assignments;
+        self.recent_kept = self.recent.len();
+    }
+
+    /// Whether the log holds every write made after assignment `mark`: it
+    /// was not cleared, set or folded since.
+    pub fn logged_since(&self, mark: u64) -> bool {
+        self.recent_from <= mark
+    }
+
+    /// The log's part after assignment `mark`, all of it for a mark the
+    /// log no longer answers for ([`Env::logged_since`]): never too little.
+    fn recent_after(&self, mark: u64) -> &[Write] {
+        match self.logged_since(mark) {
+            true => &self.recent[self.recent.partition_point(|w| w.at <= mark)..],
+            false => &self.recent,
+        }
     }
 
     /// The names written after assignment `at`, sorted and deduplicated,
     /// including writes undone since. `None` when the log was cleared since.
     pub fn written_since(&self, at: u64) -> Option<Vec<Sym>> {
-        if self.recent_from > at {
-            return None;
-        }
-        Some(
-            distinct_sorted(&self.recent[self.recent_at.partition_point(|&s| s <= at)..])
-                .into_iter()
-                .map(Sym)
-                .collect(),
-        )
+        let names: Vec<u32> = self.logged_since(at).then(|| self.recent_after(at).iter().map(|w| w.sym).collect())?;
+        Some(distinct_sorted(&names).into_iter().map(Sym).collect())
     }
 
-    pub fn recent_len(&self) -> usize {
-        self.recent.len()
+    /// The names assigned after assignment `mark`, each once (all in the
+    /// log for a mark it no longer answers for). Writes undone by a group
+    /// end or a rewind are left out.
+    pub fn recent_since(&self, mark: u64) -> Vec<Sym> {
+        self.recent_within(mark, u32::MAX)
     }
 
-    /// The names assigned since `recent_len` was `from`, each once (all of them
-    /// if the list was cleared since). Writes undone by a group end or a
-    /// rewind are left out.
-    pub fn recent_since(&self, from: usize) -> Vec<Sym> {
-        self.recent_within(from, u32::MAX)
+    /// The names in the whole log, as [`Env::recent_since`] gives them.
+    pub fn recent_all(&self) -> Vec<Sym> {
+        self.recent_names(&self.recent, u32::MAX)
     }
 
     /// Like [`Env::recent_since`], but only writes that outlive the groups
     /// above `depth`: global ones and local ones made at most `depth` groups
     /// deep. A local write deeper was undone when its group ended (tex.web
     /// § 283), whatever stamp a resume gave the name since.
-    pub fn recent_within(&self, from: usize, depth: u32) -> Vec<Sym> {
-        let from = if from > self.recent.len() { 0 } else { from };
+    pub fn recent_within(&self, mark: u64, depth: u32) -> Vec<Sym> {
+        self.recent_names(self.recent_after(mark), depth)
+    }
+
+    fn recent_names(&self, log: &[Write], depth: u32) -> Vec<Sym> {
         // Loops write the same few names over and over: keep each name's
         // first write in one pass, then sort only the distinct names.
         let mut first: std::collections::HashMap<u32, u64, crate::engine::tex::NameHash> = Default::default();
-        let depths = self.recent_depth.get(from..).unwrap_or_default().iter().chain(std::iter::repeat(&0));
-        for ((&sym, &at), &d) in self.recent[from..].iter().zip(&self.recent_at[from..]).zip(depths) {
-            if d <= depth {
-                first.entry(sym).or_insert(at);
-            }
+        for w in log.iter().filter(|w| w.depth <= depth) {
+            first.entry(w.sym).or_insert(w.at);
         }
         let mut syms: Vec<Sym> = first
             .into_iter()
@@ -1829,9 +2253,7 @@ impl Env {
         self.assignments += 1;
         self.effective += 1;
         self.slot_changes += 1;
-        self.recent.push(i as u32);
-        self.recent_at.push(self.assignments);
-        self.recent_depth.push(self.level[i]);
+        self.log_write(i as u32, self.level[i]);
         self.stamp.set(i, self.assignments);
     }
 
@@ -1871,6 +2293,34 @@ impl Env {
             let mut reads = self.reads.borrow_mut();
             reads.touched.insert(i as u32);
             reads.splices.remove(&(i as u32));
+            if !reads.ambient.is_empty() {
+                // The old content may come back (a rewind, a group's end): its leaves are
+                // read exactly. A leaf about to change: so is every function of it.
+                let back = self.paths > 0 || self.level.get(i).is_none_or(|l| *l != self.marks.len() as u32);
+                if let Some(amb) = reads.ambient.remove(&(i as u32))
+                    && back
+                {
+                    reads.settle(&amb);
+                }
+                if reads.sources.contains(&(i as u32)) {
+                    let mut named = Vec::new();
+                    let of: Vec<u32> = reads
+                        .ambient
+                        .iter()
+                        .filter(|(_, amb)| {
+                            named.clear();
+                            amb.sources(&mut named);
+                            named.iter().any(|(s, _)| s.0 == i as u32)
+                        })
+                        .map(|(slot, _)| *slot)
+                        .collect();
+                    for slot in of {
+                        if let Some(amb) = reads.ambient.remove(&slot) {
+                            reads.settle(&amb);
+                        }
+                    }
+                }
+            }
         }
         if let Some(&floor) = self.floors.last() {
             let prev = self.trailed[i];
@@ -1987,10 +2437,10 @@ impl Env {
     /// What the running path changed since `fork`.
     pub fn path(&mut self, fork: &Fork) -> PathEnv {
         debug_assert_eq!(self.floors.get(fork.level), Some(&fork.trail), "the fork is open");
-        let (trail, slots, level, walked) = (&self.trail[fork.trail..], &self.slots, &self.level, &self.walked);
+        let (trail, slots, level, walked) = (self.trail.iter_from(fork.trail), &self.slots, &self.level, &self.walked);
         let slots = self.changed.get_mut(fork.level).map_or_else(Changed::new, |map| {
             let entry = |sym: u32| (sym, (slots[sym as usize].clone(), level[sym as usize]));
-            map.get_or_insert_with(|| Changed::collect(trail.iter().map(|e| entry(e.0)), walked)).clone()
+            map.get_or_insert_with(|| Changed::collect(trail.map(|e| entry(e.0)), walked)).clone()
         });
         let low = self.lows.get(fork.level).copied().unwrap_or(fork.marks.len());
         PathEnv { slots, journal: self.journal.clone(), marks: self.marks.clone(), low, corr: self.corr.clone() }
@@ -2000,6 +2450,13 @@ impl Env {
     pub fn rewind(&mut self, fork: &Fork) {
         self.switches += 1;
         self.effective += 1;
+        // Slots go back without a write: no function of the load's leaves outlives that.
+        if self.tracking.get() && self.trail.len() > fork.trail {
+            let mut reads = self.reads.borrow_mut();
+            for (_, amb) in std::mem::take(&mut reads.ambient) {
+                reads.settle(&amb);
+            }
+        }
 
         let mut popped = Vec::new();
         while self.trail.len() > fork.trail {
@@ -2701,6 +3158,8 @@ pub struct SetLimits {
     pub intervals: usize,
     /// Control sequences typed text names ([`Typed::named`]).
     pub text_names: usize,
+    /// Writes the log holds before it is folded ([`Env::fold_recent`]).
+    pub write_log: usize,
 }
 
 impl Default for SetLimits {
@@ -2712,6 +3171,7 @@ impl Default for SetLimits {
             values: crate::engine::value::MAY_VALUES,
             intervals: crate::engine::value::MAY_INTERVALS,
             text_names: 8,
+            write_log: 1 << 20,
         }
     }
 }
@@ -2810,7 +3270,9 @@ pub fn widen_slot(
     let (xv, yv) = (x.value.num(), y.value.num());
     let toks = typed_toks_join(&[&x.value, &y.value], typed, true);
     let mut joined = join(old.clone(), new, sets, Some(typed))?;
-    if meaning_grows {
+    // Only `undefined` joined the meanings the head had: nothing grows past
+    // this join, so it is its own widening, and its code keeps its texts.
+    if meaning_grows && defined_grows(x, &joined) {
         use crate::engine::builtins::{Cond, Primitive};
         let switch = matches!(joined.meaning.prim(), Some(Primitive::If(_)));
         // The texts are kept only while they are no more than the head
@@ -2854,6 +3316,13 @@ pub fn widen_slot(
         };
     }
     Some(joined)
+}
+
+/// Whether `new` may have a defined meaning `old` may not.
+fn defined_grows(old: &Binding, new: &Binding) -> bool {
+    let members = |b: &Binding| b.may.as_deref().map_or_else(|| vec![b.meaning.clone()], <[Meaning]>::to_vec);
+    let had = members(old);
+    members(new).iter().any(|m| *m != Meaning::Undefined && !had.iter().any(|h| one_meaning(h, m)))
 }
 
 /// Whether `b` is a set of meanings, each a macro with parameters.
@@ -2936,7 +3405,7 @@ fn macro_hull(b: &Binding, hull: &TextHull<'_>) -> Option<Meaning> {
     let mut first: Option<&crate::engine::tex::MacroDef> = None;
     for m in &members {
         let Meaning::Macro(d) = m else { return None };
-        let plain = d.parameter_text.items.is_empty() && !d.parameter_text.brace_end && d.arg_spec.is_none();
+        let plain = d.plain();
         let f = *first.get_or_insert(d);
         if !plain || (d.long, d.outer, d.protected) != (f.long, f.outer, f.protected) {
             return None;
@@ -3597,6 +4066,52 @@ fn maybe_undefined(set: &[Meaning]) -> Option<&Meaning> {
     }
 }
 
+/// How many tokens all `texts` share at their beginning and at their end,
+/// the end not reaching into the beginning. Widened, typed text next to the
+/// middle joins it: the next pass then meets one typed token, not one more
+/// beside it.
+fn common_ends(texts: &[&[Token]], typed: &Typed, widen: bool) -> (usize, usize) {
+    let first = texts[0];
+    let mut head =
+        (0..first.len()).take_while(|&i| texts.iter().all(|t| t.get(i).is_some_and(|x| x.tok == first[i].tok))).count();
+    let mut tail = (0..first.len() - head)
+        .take_while(|&i| {
+            texts.iter().all(|t| t.len() - head > i && t[t.len() - 1 - i].tok == first[first.len() - 1 - i].tok)
+        })
+        .count();
+    while widen && head > 0 && typed.classify(&first[head - 1]).is_some() {
+        head -= 1;
+    }
+    while widen && tail > 0 && typed.classify(&first[first.len() - tail]).is_some() {
+        tail -= 1;
+    }
+    (head, tail)
+}
+
+/// The shape of a family of texts (an expl3 kind's constants): the ends all
+/// share around typed text of the classes between them, at least one token
+/// when each middle has one. `None` for fewer than two texts or no common end.
+pub fn ends_hull(texts: &[&[Token]], typed: &Typed) -> Option<Vec<Token>> {
+    let (head, tail) = (texts.len() >= 2).then(|| common_ends(texts, typed, true))?;
+    if head + tail == 0 {
+        return None;
+    }
+    let first = texts[0];
+    let (mut class, mut one) = (TextClass::EMPTY, true);
+    for t in texts {
+        let middle = &t[head..t.len() - tail];
+        one &= typed.holds_one(middle);
+        for x in middle {
+            class = class.union(typed.class_of(x).map_or_else(|| TextClass::of(x.tok), |c| c.0));
+        }
+    }
+    let span = first.get(head).or(first.last()).map_or(Span::default(), |t| t.span);
+    let mut text = first[..head].to_vec();
+    text.extend(typed.text(class, one, None, span));
+    text.extend_from_slice(&first[first.len() - tail..]);
+    Some(text)
+}
+
 /// One macro for the parameterless macros `set`: their common beginning
 /// and end, and typed unknown text for what lies between, when that is
 /// balanced and holds no control sequence. `None` otherwise.
@@ -3614,21 +4129,7 @@ fn typed_join(set: &[Meaning], typed: &Typed, widen: bool) -> Option<Meaning> {
         def.get_or_insert(d);
     }
     let first = texts[0];
-    let mut head =
-        (0..first.len()).take_while(|&i| texts.iter().all(|t| t.get(i).is_some_and(|x| x.tok == first[i].tok))).count();
-    let mut tail = (0..first.len() - head)
-        .take_while(|&i| {
-            texts.iter().all(|t| t.len() - head > i && t[t.len() - 1 - i].tok == first[first.len() - 1 - i].tok)
-        })
-        .count();
-    // Widened, typed text next to the middle joins it: the next pass then
-    // meets one typed token, not one more beside it.
-    while widen && head > 0 && typed.classify(&first[head - 1]).is_some() {
-        head -= 1;
-    }
-    while widen && tail > 0 && typed.classify(&first[first.len() - tail]).is_some() {
-        tail -= 1;
-    }
+    let (head, tail) = common_ends(&texts, typed, widen);
     let mut class = TextClass::EMPTY;
     let mut one = true;
     // The hull of the middles' bounds, each the sum of its tokens'.
@@ -3729,6 +4230,59 @@ mod tests {
 
     use super::*;
 
+    /// A record's reads are each name once, by name, a read of the whole value winning over
+    /// a read of the meaning, whether the read was its own or an ended inner record's. Pins
+    /// the merge of an inner record's sorted part into the outer one's raw reads.
+    #[test]
+    fn a_record_reads_each_name_once_with_inner_parts_merged() {
+        let mut env = Env::with_capacity(8);
+        let outer = env.memo_open();
+        env.get(Sym(5));
+        env.kept(Sym(3));
+        let inner = env.memo_open();
+        env.kept(Sym(3));
+        env.get(Sym(2));
+        env.kept(Sym(7));
+        env.kept(Sym(2));
+        let reads = |r: Option<(Vec<(u32, bool)>, _, _)>| r.expect("not full").0;
+        assert_eq!(reads(env.memo_since(inner)), [(2, true), (3, false), (7, false)]);
+        env.memo_floor(Some(outer));
+        env.kept(Sym(2));
+        env.get(Sym(3));
+        env.kept(Sym(1));
+        assert_eq!(reads(env.memo_since(outer)), [(1, false), (2, true), (3, true), (5, true), (7, false)]);
+    }
+
+    /// The shape of a family is the ends all its texts share: l3fp's
+    /// constants all are `\s__fp \__fp_chk:w` ... `;`, so a widened fp keeps
+    /// the delimiters its parsers read. Pins a widened fp read as any text,
+    /// whose `;` scan ran away to the end of the file.
+    #[test]
+    fn the_ends_a_family_shares_stay_around_typed_text() {
+        let mut interner = Interner::default();
+        for pad in ["x0", "x1", "x2"] {
+            interner.intern(pad);
+        }
+        let cs = |n: &str, i: &mut Interner| Token::new(Tok::Cs(i.intern(n)), Span::default());
+        let (fp, chk, exact) =
+            (cs("s__fp", &mut interner), cs("__fp_chk:w", &mut interner), cs("s__fp_exact", &mut interner));
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
+        let chr = |c, cat| Token::new(Tok::Chr(c, cat), Span::default());
+        let other = |c| chr(c, Catcode::Other);
+        let zero = [fp, chk, other('0'), other('0'), exact, other(';')];
+        let one =
+            [fp, chk, other('1'), other('0'), chr('{', Catcode::Begin), other('1'), chr('}', Catcode::End), other(';')];
+        let shape = ends_hull(&[&zero, &one], &typed).expect("a shape");
+        assert_eq!(shape.len(), 4, "{shape:?}");
+        assert_eq!((shape[0], shape[1], shape[3]), (fp, chk, other(';')));
+        let middle = shape[2];
+        assert!(middle.cs().is_some() && !zero.contains(&middle) && !one.contains(&middle), "the middle is typed text");
+        assert!(ends_hull(&[&zero], &typed).is_none(), "one text tells no shape");
+        assert!(ends_hull(&[&zero, &[other('x')]], &typed).is_none(), "no common end");
+    }
+
     /// Macros alike but for `\long` join to that text, nothing in between.
     #[test]
     fn hull_of_empty_texts_is_empty() {
@@ -3777,6 +4331,37 @@ mod tests {
         let two = syms[bounded_index(TextClass::DIGIT, true, 2, 0).expect("bounded")];
         assert_eq!(d.replacement_text.iter().map(|t| t.tok).collect::<Vec<_>>(), vec![Tok::Cs(two)]);
         assert!(!b.certain);
+    }
+
+    /// A loop head where a name was defined on one pass and not yet on
+    /// another: only `undefined` joins its meaning, which the join itself
+    /// bounds. The widening keeps the text (here code, a call with an
+    /// argument and `+40`), so the parser still runs it. Pins the hull that
+    /// made pgfmath's stripped expression and its dispatch macros any text.
+    #[test]
+    fn maybe_undefined_at_a_head_keeps_its_text() {
+        let interner = Interner::default();
+        let syms: Vec<Sym> = (0..TYPED_NAMES as u32).map(|i| Sym(1000 + i)).collect();
+        let minted = Default::default();
+        let typed = Typed { interner: &interner, syms: &syms, digits: Sym(1), more: Sym(2), minted: &minted };
+        let other = |c| Token::new(Tok::Chr(c, Catcode::Other), Span::default());
+        let text = vec![Token::new(Tok::Cs(Sym(7)), Span::default()), other('+'), other('4'), other('0')];
+        let def = Meaning::Macro(Rc::new(crate::engine::tex::MacroDef {
+            parameter_text: Default::default(),
+            arg_spec: None,
+            replacement_text: text.into(),
+            long: false,
+            outer: false,
+            protected: false,
+        }));
+        let old = Binding::builtin(def.clone());
+        let new = Binding { may: Some(vec![def.clone(), Meaning::Undefined].into()), ..Binding::builtin(def.clone()) };
+        for reach in [Reach::Joined, Reach::Havoc] {
+            let b = widen_slot(&Some(old.clone()), Some(new.clone()), SetLimits::default(), &typed, reach)
+                .expect("a binding");
+            let may = b.may.as_deref().expect("still maybe undefined");
+            assert!(may.contains(&Meaning::Undefined) && may.contains(&def), "{reach:?}: {may:?}");
+        }
     }
 
     /// Numbers joined at a loop head keep the operator between them, and
@@ -4086,6 +4671,64 @@ mod tests {
         assert_eq!(reads(inner), [(1, true), (2, false)], "the inner record logs its own reads");
         env.memo_read(3, false);
         assert_eq!(reads(outer), [(1, true), (2, true), (3, false)]);
+    }
+
+    /// The write log is bounded by the names and group depths it holds, not
+    /// by how often code assigns, and folding it loses nothing: read from
+    /// its start it says what the whole log says, read from a mark made
+    /// before a fold never less, from a later one the same. Pins the abort
+    /// of a `\foreach` that assigned for minutes (one entry per write: 2 GiB).
+    #[test]
+    fn a_folded_write_log_says_what_the_whole_one_says() {
+        const NAMES: u32 = 6;
+        const DEPTHS: u32 = 3;
+        const WRITES: u64 = 1500;
+        const CLEAR: u64 = 5;
+        let mut cats = crate::engine::tex::CatcodeTable::default();
+        let mut whole = Env::with_capacity(8);
+        let mut folded = whole.clone();
+        whole.sets.write_log = usize::MAX;
+        folded.sets.write_log = 4;
+        let (mut marks, mut forks, mut seed) = (vec![0u64], Vec::new(), 1u64);
+        let (bound, mut grown, mut shallower) = (2 * (NAMES * (DEPTHS + 1)) as usize, 0, 0);
+        for n in 0..WRITES {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            let (pick, sym) = ((seed >> 33) % 16, Sym(1 + (seed >> 40) as u32 % NAMES));
+            for (i, env) in [&mut whole, &mut folded].into_iter().enumerate() {
+                match pick {
+                    0 if (env.marks.len() as u32) < DEPTHS => env.push_group(GroupKind::Simple, Span::default()),
+                    1 if !env.marks.is_empty() => _ = env.pop_group(&mut cats),
+                    2 => forks.push(env.fork()),
+                    3 => env.merge_recent(1, DEPTHS as usize),
+                    // A token read from a file: the log starts over, inside groups too.
+                    5 if n % CLEAR == 0 => env.clear_recent(),
+                    // A rewind puts back what the fork saw, stamps too: a later write is undone.
+                    4 if !forks.is_empty() => {
+                        let fork = forks.remove(forks.len() + i - 2);
+                        env.rewind(&fork);
+                        env.unfork(fork);
+                    }
+                    _ => env.set(sym, int(n as i64), pick % 2 == 0),
+                }
+            }
+            assert_eq!(whole.assignments, folded.assignments);
+            marks.push(whole.assignments);
+            assert_eq!(folded.recent_all(), whole.recent_all(), "after {n} steps");
+            for &mark in marks.iter().rev().step_by(31) {
+                let exact = folded.logged_since(mark);
+                assert!(!exact || folded.written_since(mark) == whole.written_since(mark));
+                for depth in 0..=DEPTHS {
+                    let (f, w) = (folded.recent_within(mark, depth), whole.recent_within(mark, depth));
+                    assert!(if exact { f == w } else { w.iter().all(|s| f.contains(s)) }, "mark {mark}, depth {depth}");
+                }
+            }
+            assert!(folded.recent.len() <= bound, "{} entries", folded.recent.len());
+            grown = grown.max(whole.recent.len());
+            let first = |sym: u32| whole.recent.iter().find(|w| w.sym == sym).map_or(0, |w| w.depth);
+            shallower += usize::from(whole.recent.last().is_some_and(|w| w.depth < first(w.sym)));
+        }
+        assert!(grown > 4 * bound, "the whole log grows with the writes: {grown}");
+        assert!(shallower > 0, "the case a fold must keep: a name written again less deep than its first write");
     }
 
     /// A path rebased onto where the running path stands resumes from a

@@ -13,68 +13,57 @@ async function open(p, example) {
   await p.s('Page.reload', { ignoreCache: false });
   await sleep(500);
   await p.until(`document.readyState === 'complete'`, 30000);
-  if (!await p.until(`document.querySelector('#play-status')?.dataset.done === 'ready'`, 120000)) throw new Error('the playground did not start');
-  await p.eval(`document.querySelector('[data-example=${J(example)}]').click()`);
-  await p.until(`satexHealth().example === ${J(example)} && satexHealth().text?.length > 10`, 30000);
+  if (!await p.drv.until({ sel: '#play-status[data-done=ready]' }, 120000)) throw new Error('the playground did not start');
+  await p.drv.act({ press: { sel: `[data-example="${example}"]` } });
+  await p.drv.until([{ health: { example } }, { srcMatch: '^[^]{11}' }], 30000);
 }
 async function file(p, name) {
-  await p.eval(`document.querySelector('#play-files-tree .file[data-name=${J(name)}]')?.click()`);
-  if (!await p.until(`satexHealth().file === ${J(name)}`, 20000)) throw new Error(`${name} not opened`);
+  await p.drv.act({ press: { sel: `#play-files-tree .file[data-name="${name}"]` } });
+  if (!await p.drv.until({ health: { file: name } }, 20000)) throw new Error(`${name} not opened`);
 }
 /** A build of the text now: Compile pressed, its pages drawn; the status line after it. */
 async function build(p, ms = 180000) {
-  await p.eval(`document.querySelector('.side-tabs [data-panel=play-pdf]').click()`);
+  const d = p.drv;
+  await d.act({ press: { sel: '.side-tabs [data-panel=play-pdf]' } });
   await sleep(200);
-  await p.until(`!document.querySelector('#play-pdf.pdf-running')`, ms);
+  await d.until('built', ms);
   // any page's image counts: an edit on page 3 redraws page 3 only, page 1 keeps the build it was drawn from
-  await p.eval(`(self.__b0 = new Set([...document.querySelectorAll('#play-pdf .pdf-page img')].map((i) => i.__build).filter(Boolean)), document.getElementById('pdf-compile').click())`);
-  const ok = await p.until(`(() => { const is = [...document.querySelectorAll('#play-pdf .pdf-page img')]; return is[0]?.naturalWidth > 100 && is.some((i) => i.__build && (!self.__b0.has(i.__build) || i.__build.text === satexHealth().text && /in cache/.test(document.getElementById('pdf-status').textContent))) && satexPdfWords().length && !document.querySelector('#play-pdf.pdf-running'); })()`, ms);
+  await d.act({ mark: 'builds' });
+  await d.act({ press: { sel: '#pdf-compile' } });
+  const ok = await d.until(['drawn', 'newBuild', 'words', 'built'], ms);
   await sleep(600);
-  return { ok: !!ok, status: await p.eval(`document.getElementById('pdf-status')?.textContent ?? ''`) };
+  return { ok: !!ok, status: (await d.run({ buildState: true })).status };
 }
-/** The screen box of the `nth` page word `word` (scrolled into view). */
+/** The last page word `w` asked for and not found, for a failure message. */
+let missing = null;
+/** The screen box of the `nth` page word `w` (scrolled into view), waited for up to 10 s: a build landing replaces the
+ * pages and their words come a moment later. */
 async function word(p, w, nth = 0) {
-  return p.eval(`(async () => {
-    // a build landing replaces the pages: their words come a moment later, so the word is waited for
-    for (let k = 0; k < 40 && !satexPdfWords().filter((x) => x[5] === ${J(w)})[${nth}]; k++) await new Promise((ok) => setTimeout(ok, 250));
-    const ws = satexPdfWords().filter((x) => x[5] === ${J(w)}), x = ws[${nth}]; if (!x) { self.__missing = { want: ${J(w)}, words: satexPdfWords().map((x) => x[5]).join(' ').slice(0, 300), build: document.querySelector('#play-pdf .pdf-page img')?.__build?.text === satexHealth().text, status: document.getElementById('pdf-status')?.textContent }; return null; }
-    const img = () => document.querySelector('#play-pdf .pdf-page[data-page="' + x[0] + '"] img'), sc = document.querySelector('#play-pdf .pdf-pages'), dpi = satexPdfWords().dpi;
-    let r = img().getBoundingClientRect(), k = r.width / (img().naturalWidth * 72 / dpi);
-    const s = sc.getBoundingClientRect(), y = r.top + x[2] * k;
-    if (y < s.top + 120 || y > s.bottom - 200) { sc.scrollTop += y - (s.top + s.height * 0.4); await new Promise((ok) => setTimeout(ok, 500)); }
-    r = img().getBoundingClientRect(); k = r.width / (img().naturalWidth * 72 / dpi);
-    return { l: r.left + x[1] * k, t: r.top + x[2] * k, r: r.left + x[3] * k, b: r.top + x[4] * k, k };
-  })()`);
+  const t = { word: w, nth };
+  if (!await p.drv.until(t, 10000)) { missing = { want: w, status: (await p.drv.run({ buildState: true })).status }; return null; }
+  const b = await p.drv.word({ ...t, scroll: [120, 200] });
+  return b && { l: b[0], t: b[1], r: b[2], b: b[3], k: b[6] };
 }
 const mid = (w) => w && [(w.l + w.r) / 2, (w.t + w.b) / 2];
 async function rclick(p, [x, y]) {
   await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
   await sleep(120);
   for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x, y, button: 'right', clickCount: 1 });
-  return p.until(`document.querySelector('.pa-root') && [...document.querySelectorAll('.pa-root > button')].map((b) => b.querySelector('span').textContent)`, 4000);
+  return await p.drv.until({ sel: '.pa-root' }, 4000) ? p.drv.run({ labels: { sel: '.pa-root > button' } }) : null;
 }
 /** Through the menu by its labels: each row hovered (a submenu opens), the last one clicked. */
-async function choose(p, path) {
-  for (let i = 0; i < path.length; i++) {
-    const at = await p.eval(`(() => { const ms = [...document.querySelectorAll('.pa-menu')], m = ms.at(-1); const b = [...m.querySelectorAll(':scope > button')].find((b) => b.querySelector('span').textContent === ${J(path[i])}); if (!b) return { no: [...m.querySelectorAll(':scope > button')].map((b) => b.querySelector('span').textContent) }; const r = b.getBoundingClientRect(); return [r.left + Math.min(40, r.width / 2), r.top + r.height / 2]; })()`);
-    if (!Array.isArray(at)) throw new Error(`no ${J(path[i])} in ${J(at?.no)}`);
-    await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
-    await sleep(140);
-    if (i === path.length - 1) for (const type of ['mousePressed', 'mouseReleased']) await p.s('Input.dispatchMouseEvent', { type, x: at[0], y: at[1], button: 'left', clickCount: 1 });
-  }
-}
+const choose = (p, path) => p.drv.menu(path);
 async function typeIn(p, value) {
-  if (!await p.until(`document.querySelector('.tikz-input input')`, 3000)) throw new Error('no input box');
-  await p.eval(`(() => { const i = document.querySelector('.tikz-input input'); i.value = ${J(value)}; i.focus(); })()`);
+  if (!await p.drv.until({ sel: '.tikz-input input' }, 3000)) throw new Error('no input box');
+  await p.drv.act({ fill: { sel: '.tikz-input input', value } });
   await p.key('Enter');
 }
 async function undo(p) {
-  await p.eval(`document.querySelector('.cm-content').focus()`);
-  await p.s('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'z', code: 'KeyZ', modifiers: 2, windowsVirtualKeyCode: 90 });
-  await p.s('Input.dispatchKeyEvent', { type: 'keyUp', key: 'z', code: 'KeyZ', modifiers: 2, windowsVirtualKeyCode: 90 });
+  await p.drv.act({ focus: '.cm-content' });
+  await p.drv.key('z', { ctrl: true });
   await sleep(200);
 }
-const text = (p) => p.eval(`satexHealth().text`);
+const text = (p) => p.drv.text();
 /** The text after a write from `t0`: a write is the server's round trip and waits behind a running analysis, so the wait
  * ends when the text changed, or when the server sat idle for `idle` ms without it (null). Then the written version's
  * own analysis is waited for. */
@@ -82,23 +71,23 @@ async function written(p, t0, idle = 8000, ms = 180000) {
   const start = Date.now();
   let calm = start, t1 = null;
   while (Date.now() - start < ms) {
-    const h = await p.eval(`(() => { const h = satexHealth(); return { changed: h.text !== ${J(t0)}, text: h.text, idle: !h.busy && !h.running && !h.due && !h.queued && !h.pending }; })()`);
+    const x = await p.drv.health(), h = { changed: x.text !== t0, text: x.text, idle: !x.busy && !x.running && !x.due && !x.queued && !x.pending };
     if (h.changed) { t1 = h.text; break; }
     // idle for `idle` ms in a row since the action: the write is not coming
     if (!h.idle) calm = Date.now(); else if (Date.now() - calm > idle) break;
     await sleep(250);
   }
-  if (t1) await p.until(`(() => { const h = satexHealth(); return h.shown != null && h.shown >= h.version && !h.running && !h.due; })()`, ms);
+  if (t1) await p.drv.until({ shownCurrent: true }, ms);
   return t1 || null;
 }
-const toastNow = (p) => p.eval(`document.getElementById('play-toast')?.textContent ?? ''`);
+const toastNow = (p) => p.drv.run({ toast: true });
 
 /** One action: open the menu at `at()`, follow `path` (`then`: the rest, an input), check the text, build it, undo. */
 async function act0(results, p, name, at, path, want, o = {}) {
   const r = { name, fails: [], info: {} };
   try {
     const t0 = await text(p), xy = await at();
-    if (!xy) throw new Error(`no target on the page: ${J(await p.eval('self.__missing ?? null'))}`);
+    if (!xy) throw new Error(`no target on the page: ${J(missing)}`);
     const rows = await rclick(p, xy);
     if (!rows) throw new Error('no menu');
     r.info.rows = rows.join(' | ');
@@ -122,7 +111,7 @@ async function act0(results, p, name, at, path, want, o = {}) {
     if (await text(p) !== t0) r.fails.push('one Ctrl+Z did not give the text back');
     if (o.compile !== false && !o.keep) await build(p);
   } catch (e) { r.fails.push(String(e.message ?? e).slice(0, 300)); await p.shot(`${name}-fail.png`).catch(() => {}); }
-  await p.eval(`document.querySelectorAll('.pa-menu, .tikz-input, .pa-mix').forEach((e) => e.remove())`);
+  await p.drv.act({ remove: '.pa-menu, .tikz-input, .pa-mix' });
   results.push(r);
   return r;
 }
@@ -143,8 +132,29 @@ export async function tikz(p, sc) {
     // the path src -> run: between the two words; run -> out (bend left=30): above the chord's middle
     const between = (a, c, lift = 0) => async () => { const x = await word(p, a), y = await word(p, c); return [(x.r + y.l) / 2, (mid(x)[1] + mid(y)[1]) / 2 - lift * (y.l - x.r)]; };
     await act(p, 'node-shape-diamond', node('run'), ['Shape', 'Diamond'], /\\node\[diamond, box, right=of src\] \(run\)/, { shot: true });
-    await act(p, 'node-shape-cloud-lib', node('run'), ['Shape', 'Cloud'], /\\usetikzlibrary\{arrows\.meta,positioning,backgrounds\}\n\\usetikzlibrary\{shapes\.symbols\}\n[^]*\\node\[cloud, box, right=of src\] \(run\)/);
+    // the library joins the preamble's list (CHANGELOG: a widget's TikZ library joins the existing list, never twice)
+    await act(p, 'node-shape-cloud-lib', node('run'), ['Shape', 'Cloud'], /\\usetikzlibrary\{arrows\.meta,positioning,backgrounds,shapes\.symbols\}\n[^]*\\node\[cloud, box, right=of src\] \(run\)/,
+      { excerpt: (t) => t.slice(0, t.indexOf('\\end{tikzpicture}') + 17) });
     await act(p, 'node-shape-polygon', node('run'), ['Shape', 'Regular polygon', '6 sides'], /\\node\[regular polygon, regular polygon sides=6, box, right=of src\] \(run\)/);
+    // Shape ▸: every row shows TeX's own picture of its shape, from previews.json; a collapsed one (a trapezium drawn
+    // as a line, preview.rs before its text box) counts as none
+    {
+      const r = { name: 'node-shape-previews', fails: [], info: {} };
+      try {
+        if (!await rclick(p, await node('run')())) throw new Error('no menu');
+        const at = await p.eval(`(() => { const b = [...document.querySelectorAll('.pa-menu')].at(-1).querySelectorAll(':scope > button'); const x = [...b].find((e) => e.querySelector('span').textContent === 'Shape'); if (!x) return null; const q = x.getBoundingClientRect(); return [q.left + 30, q.top + q.height / 2]; })()`);
+        if (!at) throw new Error('no Shape');
+        await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at[0], y: at[1] });
+        await p.until(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1); return [...m.querySelectorAll(':scope > button')].every((b) => b.querySelector('img.pa-img')?.naturalWidth > 0); })()`, 3000);
+        const got = await p.eval(`(() => { const m = [...document.querySelectorAll('.pa-menu')].at(-1), b = [...m.querySelectorAll(':scope > button')]; return { rows: b.length, bare: b.filter((e) => { const i = e.querySelector('img.pa-img'); return !(i?.naturalWidth > 4 && i.naturalHeight > 4); }).map((e) => e.querySelector('span').textContent) }; })()`);
+        r.info = got;
+        await p.shot('node-shape-previews.png');
+        if (got.rows < 15) r.fails.push(`only ${got.rows} shapes`);
+        if (got.bare.length) r.fails.push(`no picture: ${J(got.bare)}`);
+      } catch (e) { r.fails.push(String(e.message)); }
+      await p.eval(`document.querySelectorAll('.pa-menu').forEach((e) => e.remove())`);
+      results.push(r);
+    }
     await act(p, 'node-style-drawcolor', node('run'), ['Style', 'Draw color', 'red'], /\\node\[box, right=of src, draw=red\] \(run\)/, { shot: true });
     await act(p, 'node-style-fillmix', node('run'), ['Style', 'Fill color', 'Mix…'], /\\node\[box, right=of src, fill=red!30\] \(run\)/, { then: async () => {
       if (!await p.until(`document.querySelector('.pa-mix')`, 3000)) throw new Error('no mixer');
@@ -319,6 +329,17 @@ export async function tikz(p, sc) {
         const t1 = await p.until(`satexHealth().text !== ${J(t0)} && satexHealth().text`, 5000);
         if (!t1 || !/\\node\[box, right=of src, rotate=180\] \(run\)|\\node\[box, right=of src, rotate=90\] \(run\)/.test(t1)) r.fails.push(`text: ${J((t1 || '').match(/\\node[^;]*\(run\)/)?.[0])}`);
         r.info.wrote = (t1 || '').match(/\\node[^;]*\(run\)/)?.[0];
+        // built turned, the hover outline turns with the node and stays on its text
+        await build(p);
+        const w = await word(p, 'run');
+        if (w) {
+          await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: mid(w)[0], y: mid(w)[1] });
+          const o = await p.until(`(() => { const e = document.querySelector('#play-pdf .pdf-tikz'); if (!e) return null; const q = e.getBoundingClientRect(); return { rot: e.style.rotate, c: [q.left + q.width / 2, q.top + q.height / 2] }; })()`, 3000);
+          r.info.outline = o;
+          if (!o || !/^-(90|180)deg$/.test(o.rot)) r.fails.push(`the outline does not turn: ${J(o)}`);
+          else if (Math.hypot(o.c[0] - mid(w)[0], o.c[1] - mid(w)[1]) > 6) r.fails.push(`the outline stands off the turned node: ${J(o.c)} vs ${J(mid(w))}`);
+          if (process.env.MENU_SHOTS) await p.shot(`node-rotate-outline-${process.env.MENU_SHOTS}.png`);
+        }
         await undo(p);
         await build(p);
       } catch (e) { r.fails.push(String(e.message)); }
@@ -460,4 +481,4 @@ export async function tikz(p, sc) {
   const fails = results.flatMap((r) => r.fails.map((f) => `${r.name}: ${f}`));
   return { name: sc.name, fails, perf: [], info: { actions: results.length, failed: results.filter((r) => r.fails.length).map((r) => r.name) } };
 }
-export { open, file, build, word, mid, rclick, choose, undo, text, written, act0 };
+export { open, file, build, word, mid, rclick, choose, undo, text, written, act0, toastNow, missing };

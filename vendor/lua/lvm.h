@@ -83,7 +83,7 @@
    ? (slot = NULL, 0) \
    : (slot = f(hvalue(t), k), \
      ttisnil(slot) ? 0 \
-     : (luaC_barrierback(L, hvalue(t), v), \
+     : (satex_guard(L, hvalue(t)), luaC_barrierback(L, hvalue(t), v), \
         setobj2t(L, cast(TValue *,slot), v), \
         1)))
 

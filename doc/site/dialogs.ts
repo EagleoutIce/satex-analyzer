@@ -54,7 +54,7 @@ const satexDialogs = (() => {
   --c-sel: color-mix(in srgb, var(--c-accent) 14%, transparent); --c-hover: color-mix(in srgb, var(--c-accent) 7%, transparent);
   --ease: cubic-bezier(.2, .7, .2, 1); }
 .sd { color: var(--c-fg); background: var(--c-bg); font: 13px/1.45 system-ui, sans-serif; display: flex; flex-direction: column; min-height: 0; }
-dialog.sd-dialog { width: min(1180px, 96vw); max-width: none; height: min(88vh, 50rem); padding: 0; border: 1px solid var(--c-border); border-radius: 14px; color: var(--c-fg); background: var(--c-bg); }
+dialog.sd-dialog { width: min(1180px, 96vw); max-width: none; height: fit-content; max-height: min(88vh, 50rem); padding: 0; border: 1px solid var(--c-border); border-radius: 14px; color: var(--c-fg); background: var(--c-bg); }
 dialog.sd-dialog[open] { display: flex; }
 dialog.sd-dialog > .sd { flex: 1; min-width: 0; }
 /* the popup frame: any dialog with a header gets the same tools and states */
@@ -81,7 +81,8 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-body { flex: 1; min-height: 0; overflow: auto; padding: .9rem 1rem; display: grid; gap: 1.1rem; grid-template-columns: minmax(0, 1fr) minmax(17rem, 23rem); }
 .sd-body > * { min-width: 0; }
 @media (max-width: 760px) { .sd-body { grid-template-columns: 1fr; padding: .7rem; } .sd > header { padding-left: .8rem; } }
-@media (max-width: 600px) { dialog.sd-dialog { width: 100vw; height: 100dvh; max-height: none; margin: 0; border-radius: 0; border: 0; } .pop-tools .pop-btn:nth-child(2) { display: none; } }
+@media (max-width: 600px) { dialog.sd-dialog { width: 100vw; height: 100dvh; max-height: none; margin: 0; border-radius: 0; border: 0; } .pop-tools .pop-btn:nth-child(2) { display: none; }
+  .sd > header { flex-wrap: nowrap; } .sd > header h3 { white-space: nowrap; } .sd > header .sd-sub { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } }
 .sd button, .sd select, .sd input, .sd textarea { font: inherit; color: inherit; max-width: 100%; }
 .sd select:focus-visible, .sd input:focus-visible, .sd textarea:focus-visible, .sd [tabindex]:focus-visible { outline: 2px solid var(--c-accent); outline-offset: 1px; }
 .sd input, .sd select, .sd textarea { background: var(--c-bg); border: 1px solid var(--c-border); border-radius: 6px; padding: .2rem .35rem; min-width: 0; }
@@ -145,8 +146,9 @@ dialog.pop.pop-peek::backdrop { opacity: 0; }
 .sd-grid tr:hover .sd-rsel.none, .sd .sd-rsel:focus { opacity: 1; border-color: var(--c-border); }
 .sd-grid tr.sd-rule td { height: 3px; border: 0; }
 .sd-grid tr.sd-rule td.sd-ruled { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 100% var(--w, 1px) no-repeat; }
-/* the outer gutters hold the table's outer vertical rules at their middle: a rule runs from one to the other, never past them */
-.sd-grid tr.sd-rule td.sd-rh + td.sd-ruled { background-size: 50% var(--w, 1px); background-position: 100% 50%; } .sd-grid tr.sd-rule td.sd-ruled:last-child { background-size: 50% var(--w, 1px); background-position: 0 50%; }
+/* a data cell spans the gutter left of it, so a rule runs along the cells: over the first gutter, and into the last one
+   only to meet a right outer vertical rule at its middle */
+.sd-grid tr.sd-rule td.sd-ruled:last-child { background: none; } .sd-grid tr.sd-rule td.sd-ruled.sd-to-bar:last-child { background: linear-gradient(var(--c-fg), var(--c-fg)) 0 50% / 50% var(--w, 1px) no-repeat; }
 .sd-grid tr.sd-end td { height: 1.5rem; vertical-align: middle; }
 .sd-grid .sd-chips { white-space: nowrap; padding-left: .4rem !important; }
 .sd-grid td.sd-vcol, .sd-grid th.sd-vcol { width: 1.2rem; min-width: 1.2rem; padding: 0 !important; cursor: pointer; border: 0; position: relative; }
@@ -299,6 +301,8 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
   // ------------------------------------------------------------ store
 
   /** What survives a reload: JSON under `satex:<key>`, dropped when written by another layout version. */
+  /** Two presses on one table cell within this many ms are a double click (opens the cell's input). */
+  const DOUBLE_MS = 500;
   const VERSION = 1;
   const store = {
     get<T = any>(key: string, fallback: T | null = null): T | null {
@@ -1180,10 +1184,14 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
     const styleSeg = h('span', { class: 'sd-seg', role: 'group', 'aria-label': 'how the rows are written' },
       seg('format', 'Format', 'Write one row per line with the & lined up'), seg('compact', 'Compact', 'Write one row per line without padding'));
     const msg = h('span', { class: 'sd-note', role: 'status' });
+    /** tabularray's form and back (server `tblr`/`tabular`): its label follows the table's environment. */
+    const tabularray = () => /^(long|tall)?tblr$/.test(t().env);
+    const convert = h('button', { type: 'button', 'data-op': 'convert', onclick: () => f.refresh(tabularray() ? 'tabular' : 'tblr') });
     main.append(h('div', { class: 'sd-bar' },
       styleSeg, h('span', { class: 'sd-sep' }),
       h('button', { type: 'button', title: `Use booktabs rules (\\toprule, \\midrule, \\bottomrule) and drop vertical rules${pkg('booktabs')}`, onclick: () => f.refresh('booktabs') }, 'booktabs'),
       h('button', { type: 'button', title: `Align numeric columns at the decimal mark with siunitx S columns${pkg('siunitx')}`, onclick: () => f.refresh('siunitx') }, 'Numbers → S'),
+      convert,
       h('span', { class: 'sd-sep' }),
       msg));
     const grid = h('table', { class: 'sd-grid', role: 'grid', 'aria-label': 'the table\'s cells', 'aria-multiselectable': 'true' });
@@ -1258,13 +1266,15 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       const main = items.find((x) => RULES.includes(x)) ?? '';
       const w = main === '\\toprule' || main === '\\bottomrule' ? '--w:2px' : main === '\\midrule' ? '--w:1.2px' : '';
       const tds: HTMLElement[] = [];
-      for (let g = 0; g < 2 * s.cols.length + 1; g++) if (!taken.has(g)) tds.push(h('td', { class: main ? 'sd-ruled' : '', style: w }));
+      for (let g = 0; g < 2 * s.cols.length + 1; g++) if (!taken.has(g)) tds.push(h('td', { class: main ? 'sd-ruled' + (g === 2 * s.cols.length && s.seps[s.cols.length]?.includes('|') ? ' sd-to-bar' : '') : '', style: w }));
       const label = k === 0 ? 'Insert a row at the top' : k === s.rows.length ? 'Insert a row at the bottom' : `Insert a row between ${k} and ${k + 1}`;
       return h('tr', { class: 'sd-rule' }, h('td', { class: 'sd-rh' }, h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: () => { change((s) => T.insertRow(s, k)); select([k, focus[1]]); } }, '+')), tds);
     }
     function draw() {
       const s = t(), map = T.layout(s), n = s.cols.length;
       for (const b of styleSeg.children) b.setAttribute('aria-pressed', String(b.dataset.style === T.styleOf(s)));
+      convert.textContent = tabularray() ? '→ tabular' : '→ tblr';
+      convert.title = tabularray() ? 'Write the table as tabular (refused where tabular cannot say the same)' : `Write the table as tabularray's tblr: columns as colspec, spans as \\SetCell${pkg('tabularray')}`;
       const vbar = (k: number, tag: 'th' | 'td' = 'th') => {
         const label = k === 0 ? 'Insert a column at the start' : k === n ? 'Insert a column at the end' : `Insert a column between ${k} and ${k + 1}`;
         const ins = tag === 'th' ? h('button', { type: 'button', class: 'sd-ins', title: label, 'aria-label': label, onclick: (e: Event) => { e.stopPropagation(); change((s) => T.insertCol(s, k)); select([focus[0], k]); } }, '+') : null;
@@ -1450,17 +1460,21 @@ tr:hover > .sd-rh .sd-del, .sd-colh:hover .sd-del, .sd-del:focus-visible { opaci
       input.onblur = () => { if (editing && !editing.done) finish(true); };
     }
     const at = (e: Event): [number, number] | null => { const td = (e.target as Element).closest?.<HTMLElement>('td.sd-cell'); return td ? [+td.dataset.r!, +td.dataset.c!] : null; };
-    let dragging = false;
+    let dragging = false, last: { p: [number, number]; t: number } | null = null;
+    // a double click is a second press on the same cell within DOUBLE_MS: each press redraws the grid (select), so the
+    // cell first pressed is gone by the release and the browser fires neither click nor dblclick
     grid.addEventListener('pointerdown', (e) => {
       const p = at(e);
       if (!p || e.button || editing && (e.target as Element).closest('input')) return;
       e.preventDefault();
+      const again = !e.shiftKey && last && last.p[0] === p[0] && last.p[1] === p[1] && e.timeStamp - last.t < DOUBLE_MS;
+      last = again ? null : { p, t: e.timeStamp };
+      if (again) return edit(...p);
       dragging = true;
       select(p, e.shiftKey);
     });
     grid.addEventListener('pointerover', (e) => { const p = at(e); if (dragging && p && (p[0] !== focus[0] || p[1] !== focus[1])) select(p, true); });
     addEventListener('pointerup', () => { dragging = false; });
-    grid.addEventListener('dblclick', (e) => { const p = at(e); if (p) edit(...p); });
     grid.addEventListener('keydown', (e) => {
       if (editing || !(e.target as Element).closest('td.sd-cell')) return;
       // a short row's missing cell stands for one cell

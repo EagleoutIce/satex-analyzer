@@ -281,13 +281,7 @@ impl TypePlugin for Typing {
         let col =
             crate::engine::source::with(a.plugins.engine.encoding(), || crate::engine::source::col_of_byte(old, slash));
         let at = crate::engine::tex::Span::new(e.file, e.line, col);
-        let undefined = |m: crate::analysis::facts::MeaningKind| {
-            matches!(
-                m,
-                crate::analysis::facts::MeaningKind::Undefined
-                    | crate::analysis::facts::MeaningKind::UndefinedApproximated
-            )
-        };
+        let undefined = |m: crate::analysis::facts::MeaningKind| m.undefined();
         let met: Vec<_> = a.facts.expansions.iter().filter(|x| x.span == at).collect();
         if met.is_empty() || !met.iter().all(|x| undefined(x.meaning)) {
             return None;

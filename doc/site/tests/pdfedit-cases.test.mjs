@@ -92,7 +92,7 @@ test("Editing in the PDF (pdfedit.ts)", async () => {
     const type = (text, at, keys, inline) => { let t = text, f = null; for (const c of keys) { const [a, b, body, step] = E.typed(t, at, c, inline, false, f); f = E.grow(f, a, b, body.length); t = t.slice(0, a) + body + t.slice(b); at = a + step; } return [t, at]; };
     // the caret ends before the text's `b`, or inside the pair just opened
     const ends = (want, at = want.lastIndexOf('b')) => [want, at];
-    assert.deepEqual(type('ab', 1, '_%&#{}~^'), ends('a\\_\\%\\&\\#\\{\\}\\textasciitilde{}\\textasciicircum{}b'));
+    assert.deepEqual(type('ab', 1, '_%&#{}~^'), ends('a\\_\\%\\&\\#\\{\\}~\\textasciicircum{}b'), 'a tie stays a tie');
     assert.deepEqual(type('ab', 1, '$x_1$ y'), ends('a\\(x_1\\) yb'), 'default: `$` types LaTeX\'s `\\(`, `$` steps over `\\)`');
     assert.deepEqual(type('ab', 1, '$x_1$ y', '$'), ends('a$x_1$ yb'), 'math typed raw, the closer stepped over');
     const opened = '\\(p\\) a\\(\\)b';
@@ -244,20 +244,21 @@ test("A tint on the PDF marks the glyphs a run of the row set, found by their pl
   assert.deepEqual(E.locate(texts, row, g, g + 8), [[6, 2, 11]], 'after math the page spells otherwise');
   assert.equal(E.locate(['x!', 'x!'], 'x!', 1, 1), null, 'a row the page spells twice: no guess');
 });
-// The math control: one Insert menu per Type bar (inline, display and align*), inline in the convention's
+// The math control: one Insert menu per Type bar (Math ▸ inline, display and align*), inline in the convention's
 // delimiters, nothing inside math. Pins the two `$x$`/`\[x\]` buttons inside the Type legend.
 test("The math control", async () => {
   const E = self.satexPdfEdit;
   assert.deepEqual(E.mathAt('ab', 1, 'inline'), [1, 1, '\\(\\)', 2], 'LaTeX\'s \\( by default');
   assert.deepEqual(E.mathAt('ab', 1, 'inline', '$'), [1, 1, '$ $', 1], '`$ $`: `$$` is display math');
   assert.deepEqual(E.mathAt('ab', 1, 'display'), [1, 1, '\\[\\]', 2]);
-  assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\\begin{align*}\n\n\\end{align*}', '\\begin{align*}\n'.length]);
+  assert.deepEqual(E.mathAt('ab', 1, 'align'), [1, 1, '\n\\begin{align*}\n  \\end{align*}\n', '\n\\begin{align*}\n  '.length], 'own lines, no blank line inside');
   assert.deepEqual(E.mathAt('a\\(x\\)b', 4, 'display'), [4, 4, '', 0], 'in math: nothing');
   const html = readFileSync(new URL('./play.html', SITE), 'utf8');
-  const groups = [...html.matchAll(/<span class="math-group"[^]*?<\/details><\/span>/g)].map((m) => m[0]);
+  // one Insert button per Type bar: its menu (refactor.ts `insertMenu`) holds the math under Math ▸
+  const groups = [...html.matchAll(/<span class="math-group"[^]*?<\/span>/g)].map((m) => m[0]);
   assert.equal(groups.length, 2, 'one in the Typeset bar, one in the PDF bar');
-  for (const g of groups) assert.deepEqual([...g.matchAll(/data-math="(\w+)"/g)].map((m) => m[1]), ['inline', 'display', 'align'], 'each once, in the Insert menu');
-  assert.ok(!/data-math="[$\\]/.test(html), 'the old $x$ and \\[x\\] buttons are gone');
+  for (const g of groups) assert.match(g, /<button type="button" class="small ins-open" aria-haspopup="menu"/);
+  assert.ok(!/data-math=/.test(html), 'the old math buttons are gone: Math ▸ in the Insert menu');
 });
 // One origin tint per spot: an argument's word inside its macro's run keeps its tint, the run is cut around it
 // (pins the double box "Helmlo [World]"); rows apart and other pages stay whole.
@@ -521,6 +522,17 @@ test('afterCall: the end of the call whose argument closes there', async () => {
   assert.equal(E.afterCall(t, at('} \\cmd')), null, 'a group no macro opens');
   assert.equal(E.afterCall(t, at('world')), null, 'no brace');
 });
+// The run sets a call's output at the call's last character; the call's start bounds that output on the left: a click
+// before "Hello" of `\greet{world}` goes before `\greet` (caret2, user 2026-11-21 18:15: it went into `{|Hello, #1!}`).
+test('callStart: the call whose last character ends there', () => {
+  const E = self.satexPdfEdit, t = 'With \\model, \\greet{world}! \\pair{a}[b]{c} x {\\bf y} \\{z\\}', at = (s) => t.indexOf(s);
+  assert.equal(E.callStart(t, at(', \\greet')), at('\\model'), 'a parameterless call');
+  assert.equal(E.callStart(t, at('!')), at('\\greet'), 'back over its argument');
+  assert.equal(E.callStart(t, at(' x')), at('\\pair'), 'back over brace and bracket arguments');
+  assert.equal(E.callStart(t, at(' \\{')), null, 'a group no name opens');
+  assert.equal(E.callStart(t, t.length), null, 'an escaped brace closes nothing');
+  assert.equal(E.callStart(t, at('With') + 4), null, 'text');
+});
 // A caret right after a display formula's closer takes the display's row, not the paragraph's (pdfedit.ts
 // `displayEnd`). Pins the caret 231 px off after `\[…\]` typed in the PDF (user 2026-11-19): only math displays
 // count, `\end{itemize}` or inline `\end{math}` keep the paragraph's row.
@@ -546,4 +558,110 @@ test("Column gaps (pdfedit.ts)", async () => {
   assert.equal(apply(set, E.gap(set, ...at(set, 'p{2cm}', 'r')).edits('1pt')), set.replace('4pt', '1pt'), 'rewritten in place');
   assert.equal(apply(set, E.gap(set, ...at(set, 'p{2cm}', 'r')).edits(null)), t, 'dropped');
   for (const sep of ['|', '!{x}', '@{}', '@{\\hspace{1pt}}@{\\hspace{1pt}}']) assert.equal(E.gap(`{l${sep}r}`, 2, 2 + sep.length), null, `${sep}: not one length`);
+});
+// Intuition: Backspace and Delete in Type mode take one character as the reader sees it (a grapheme cluster), as the
+// editor does: an emoji's two UTF-16 units, a letter with its combining accent, a flag's two regional indicators.
+// Pins Backspace after 😀 leaving a lone surrogate in the source (an invalid file, a broken build), and an arrow
+// putting the Type caret between its two halves.
+test('erased: one grapheme cluster, never half a surrogate pair', () => {
+  const E = self.satexPdfEdit, back = (t) => { const [a, b] = E.erased(t, t.length, true); return t.slice(0, a) + t.slice(b); };
+  assert.equal(back('ab😀'), 'ab');
+  assert.equal(back('café'), 'caf');
+  assert.equal(back('a🇩🇪'), 'a');
+  assert.equal(back('ße'), 'ß');
+  const [a, b] = E.erased('😀b', 0, false);
+  assert.equal('😀b'.slice(0, a) + '😀b'.slice(b), 'b', 'Delete too');
+  assert.deepEqual(E.erased('$😀$', 3, true), [0, 4], "a formula's only character takes the formula with it");
+  assert.deepEqual(E.erased('a\\%', 3, true), [1, 3], 'an escape stays whole');
+  const v = '\\verb|x😀|';
+  assert.equal(v.slice(0, E.erased(v, v.length - 1, true)[0]), '\\verb|x', 'in verbatim too');
+  // the arrows step the same way: the caret never lands inside 😀, where the next key would split it
+  assert.equal(E.cluster('a😀b', 1, false), 3);
+  assert.equal(E.cluster('a😀b', 3, true), 1);
+});
+// Insert ▸ Math ▸ Aligned at a page caret wrote `\begin{align*}\n\n\end{align*}` glued to the word: the empty line in it is
+// a \par, so the build failed ("Paragraph ended before \align* was complete"). The environment goes on lines of its own,
+// with no empty line inside, the caret on its body's line.
+test('Insert math: align* on its own lines, no blank line inside', async () => {
+  const E = self.satexPdfEdit, put = (t, at) => { const [a, b, s, c] = E.mathAt(t, at, 'align'); return [t.slice(0, a) + s + t.slice(b), a + c]; };
+  const [mid, c1] = put('Some numbers. More', 13);
+  assert.equal(mid, 'Some numbers.\n\\begin{align*}\n  \\end{align*}\n More');
+  assert.equal(mid.slice(c1), '\\end{align*}\n More');
+  assert.ok(!/\n[ \t]*\n/.test(mid), 'no blank line');
+  assert.equal(put('Some numbers.\n', 13)[0], 'Some numbers.\n\\begin{align*}\n  \\end{align*}\n');
+  assert.deepEqual(E.mathAt('a b', 1, 'display'), [1, 1, '\\[\\]', 2]);
+});
+
+// Intuition: the typing echo draws a word typed into `\textit{` or after `\small` in that style before the build sets it
+// (user 2026-11-22: "the typeset preview is not doing italic, fontsize"). Pins the source-side style at the caret.
+test('styleAt: calls around the caret and switches before it in its group', () => {
+  const S = self.satexPdfEdit, at = (t, n) => S.styleAt(t, t.indexOf(n));
+  assert.deepEqual(at('a \\textit{b X} c', 'X'), { it: true, bf: null, tt: null, size: null });
+  assert.deepEqual(at('a \\textit{b} X', 'X'), { it: null, bf: null, tt: null, size: null });
+  assert.equal(at('{\\small a \\textbf{X}}', 'X').size, 9);
+  assert.equal(at('{\\small a \\textbf{X}}', 'X').bf, true);
+  assert.equal(at('{\\fontsize{14pt}{17pt}\\selectfont X}', 'X').size, 14);
+  assert.equal(at('\\section{Intro X}', 'X').size, 14.4);
+  assert.equal(at('\\textit{\\textup{X}}', 'X').it, false);
+  assert.equal(at('{\\small a} X', 'X').size, null);
+});
+
+// The typing echo keeps a centered row centered (user 2026-11-22): the source decides where the build's line boxes are
+// not known. `center` and `\centering` in force, a caption's text; `flushleft`, `minipage`, a closed group end it.
+test('centeredAt: center, \\centering in its group or environment, captions', () => {
+  const S = self.satexPdfEdit, at = (t, n) => S.centeredAt(t, t.indexOf(n));
+  assert.equal(at('\\begin{center}Hello X\\end{center}', 'X'), true);
+  assert.equal(at('\\begin{center}a\\end{center} X', 'X'), false, 'after the environment');
+  assert.equal(at('\\begin{figure}\\centering X\\end{figure}', 'X'), true);
+  assert.equal(at('\\begin{figure}\\centering\\end{figure} X', 'X'), false, '\\centering ends with its environment');
+  assert.equal(at('{\\centering a} X', 'X'), false, 'and with its group');
+  assert.equal(at('\\begin{figure}\\caption{A X}\\end{figure}', 'X'), true);
+  assert.equal(at('\\begin{center}\\begin{minipage}{3cm}X\\end{minipage}\\end{center}', 'X'), false);
+  assert.equal(at('\\begin{center}\\begin{itemize}\\item X\\end{itemize}\\end{center}', 'X'), true, 'a list inherits');
+  assert.equal(at('% \\begin{center}\nX', 'X'), false, 'a comment counts for nothing');
+  assert.equal(at('\\centering\\raggedright X', 'X'), false);
+});
+// Typing in a table cell widens its column for every row (tex.web § 801): `{lcr}` rows `ab & mid & z`, `abc & m & zz`,
+// `a & middle & zzz`; `ab` typed to 40 bp makes column 0 16 bp wider than its widest cell `abc` (24 bp). The columns
+// after it move by that, a `c` column's cells by half, an `r` one's by all; a centered table moves back by half; a
+// shorter cell than the column's widest leaves it. Pins the echo moving only the typed row (was: other rows stayed).
+test("Table laid out again around a typed cell (pdfedit.ts tableShift)", async () => {
+  const E = self.satexPdfEdit;
+  const box = { page: 1, file: 'a.tex', line: 9, kind: '(', x: 100, y: 200, w: 160, h: 50, d: 2 };
+  const w = (x, r, y, t) => [1, x, y - 7, r, y, t];
+  const words = [w(106, 122, 160, 'ab'), w(150, 170, 160, 'mid'), w(230, 236, 160, 'z'), w(106, 130, 175, 'abc'), w(156, 164, 175, 'm'), w(226, 236, 175, 'zz'),
+    w(106, 112, 190, 'a'), w(144, 176, 190, 'middle'), w(222, 236, 190, 'zzz')];
+  const cols = [{ k: 0, x: 106, w: 24 }, { k: 1, x: 144, w: 32 }, { k: 2, x: 222, w: 14 }].map((c) => ({ ...c, page: 1, t: 150, d: 202, n: 0 }));
+  const S = E.tableShift(words, box, cols, 'lcr', words[0], 40, null);
+  assert.equal(S.k, 0); assert.equal(S.delta, 16, 'the column as wide as the typed cell now');
+  assert.deepEqual(S.own, [words[0]]);
+  assert.deepEqual([3, 6].map((i) => S.dx.get(words[i])), [0, 0], 'the column is `l`: its other cells stay');
+  assert.deepEqual([1, 4, 7, 2, 5, 8].map((i) => S.dx.get(words[i])), [16, 16, 16, 16, 16, 16], 'the columns after move by the growth');
+  assert.equal(S.left, 106);
+  const C = E.tableShift(words, box, cols, 'lcr', words[4], 44, null);
+  assert.deepEqual([C.delta, C.dx.get(words[1]), C.dx.get(words[7]), C.dx.get(words[2]), C.left], [12, 6, 6, 12, 144 + (44 - 44) / 2], '`c`: half the growth');
+  const R = E.tableShift(words, box, cols, 'lcr', words[2], 20, null);
+  assert.deepEqual([R.delta, R.dx.get(words[5]), R.left], [6, 6, 222], '`r`: all of it, the cell right-aligned');
+  const M = E.tableShift(words, box, cols, 'lcr', words[0], 40, true);
+  assert.deepEqual([M.s, M.dx.get(words[3]), M.dx.get(words[2])], [-8, -8, 8], 'a centered table: half back');
+  assert.equal(E.tableShift(words, box, cols, 'lcr', words[0], 18, null).delta, 0, 'shorter than `abc`: the column keeps its width');
+  assert.equal(E.tableShift(words, box, cols, 'pcr', words[0], 40, null), null, 'a `p` column keeps its width');
+});
+// A `\multicolumn` span (a cell's words over two columns) counts for no column (tex.web § 801): a column it covers growing
+// by 16 bp moves a centered span by 8; a span typed wider than its columns widens its last one by what it needs past the
+// first one's left. Pins the echo cutting a span at the column's edges (was: its halves drawn apart).
+test("Spans in a table laid out again (pdfedit.ts tableShift)", async () => {
+  const E = self.satexPdfEdit;
+  const box = { page: 1, file: 'a.tex', line: 9, kind: '(', x: 100, y: 200, w: 160, h: 65, d: 2 };
+  const w = (x, r, y, t) => [1, x, y - 7, r, y, t];
+  const head = w(110, 170, 145, 'Heading');
+  const words = [head, w(230, 236, 145, 'q'), w(106, 122, 160, 'ab'), w(150, 170, 160, 'mid'), w(230, 236, 160, 'z'), w(106, 130, 175, 'abc'), w(156, 164, 175, 'm'), w(226, 236, 175, 'zz'),
+    w(106, 112, 190, 'a'), w(144, 176, 190, 'middle'), w(222, 236, 190, 'zzz')];
+  const cols = [{ k: 0, x: 106, w: 24 }, { k: 1, x: 144, w: 32 }, { k: 2, x: 222, w: 14 }].map((c) => ({ ...c, page: 1, t: 135, d: 202, n: 0 }));
+  const S = E.tableShift(words, box, cols, 'lcr', words[2], 40, false);
+  assert.deepEqual([S.delta, S.dx.get(head), S.dx.get(words[1])], [16, 8, 16], 'a centered span over the grown column: half');
+  assert.ok(S.col.includes(head), 'a span is drawn again whole');
+  const H = E.tableShift(words, box, cols, 'lcr', head, 100, false);
+  assert.deepEqual([H.k, H.delta, H.left, H.dx.get(words[4]), H.dx.get(words[9])], [1, 30, 106, 30, 15], 'a typed span widens its last column');
+  assert.equal(E.tableShift(words, box, cols, 'lcr', head, 50, false).delta, 0, 'a span within its columns changes none');
 });

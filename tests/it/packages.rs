@@ -69,7 +69,7 @@ fn a_package_that_redefines_a_kernel_command_keeps_the_observed_meaning() {
 
 #[test]
 fn expl3_code_keeps_its_names_and_its_catcodes() {
-    if !installed() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
         return;
     }
     let analysis = analyze(
@@ -147,7 +147,9 @@ fn an_image_is_looked_for_where_graphicspath_says_and_in_what_the_driver_reads()
         .collect();
     // pdflatex's log: `<figs/tree.png, id=1, ...>` and
     // `! LaTeX Error: File `nowhere' not found.`
-    assert!(found.contains(&("figs/tree.png".to_string(), true)), "{found:?}");
+    // TeX Live 2022's graphics joins `figs/` and the name with one more `/`, and its
+    // pdflatex logs `<figs//tree.png, …>` too.
+    assert!(found.iter().any(|(k, d)| k.replace("//", "/") == "figs/tree.png" && *d), "{found:?}");
     let missing: Vec<String> = satex::linter::lint(&analysis)
         .iter()
         .filter(|f| f.get("code").and_then(|c| c.as_str()) == Some("missing-graphic"))
@@ -385,7 +387,7 @@ fn biblatex_citations_and_resources_are_observed_from_what_it_writes() {
 
 #[test]
 fn acro_acronyms_are_observed_from_what_acro_writes_and_its_errors() {
-    if !installed() {
+    if !crate::support::installed_file_has("acro2.sty", "") {
         return;
     }
     let analysis = analyze(
@@ -494,6 +496,48 @@ fn a_theme_is_read_after_the_class_it_expects() {
     assert!(found.facts.diagnostics.iter().any(|d| d.code == "expected-load" && d.message.contains("beamer")));
     let off = Config { load: Load { expect_detect: false, ..cfg.load.clone() }, ..cfg };
     assert!(undefined(&Machine::analyze(source, Some(&path), &off)) > 0);
+}
+
+/// A package analyzed alone is read as a document loads it (`load.alone`): under a class, by
+/// `\usepackage`, before an empty body. Read by itself it ran outside every package, as nothing
+/// in LaTeX does: `\ProcessOptions` and `\@currname` had no package (todonotes: `Unknown option
+/// \opt@.`), no class had set the page (geometry: `\paperwidth (0.0pt) too short`), and the
+/// kernel never took expl3 syntax back at the file's end (siunitx: `expl-syntax-left-on`).
+/// The file stays the run's own: its definitions are no package's, and its findings are reported.
+#[test]
+fn a_package_alone_is_read_as_a_document_loads_it() {
+    if !installed() {
+        return;
+    }
+    let dir =
+        crate::support::scratch_dir(crate::support::tmp_root().join(format!("satex-alone-{}", std::process::id())));
+    let path = dir.join("alonedemo.sty");
+    let source = "\\ProvidesExplPackage{alonedemo}{2024-01-01}{1.0}{demo}
+\\DeclareOption*{\\PackageWarning{alonedemo}{Unknown~option~`\\CurrentOption'}}
+\\ProcessOptions\\relax
+\\RequirePackage{geometry}
+\\tl_const:Nx \\c__alonedemo_name_tl { \\@currname . \\@currext }
+\\cs_new:Npn \\__alonedemo_orphan: { }
+";
+    std::fs::write(&path, source).unwrap();
+    let mut cfg = crate::support::config();
+    cfg.apply_profile(satex::project::config::Profile::Package).unwrap();
+    let errors = |a: &Analysis| -> Vec<String> {
+        let wrong = |r: &&satex::queries::query::Record| {
+            r["severity"] == "error" || r["code"] == "expl-syntax-left-on" || r["code"] == "catcode-escapes-group"
+        };
+        satex::linter::lint(a).iter().filter(wrong).map(|r| format!("{} {}", r["code"], r["message"])).collect()
+    };
+    let loaded = Machine::analyze(source, Some(&path), &cfg);
+    assert_eq!(errors(&loaded), Vec::<String>::new());
+    let name = loaded.interner.lookup("c__alonedemo_name_tl").and_then(|s| loaded.env.meaning(s).as_macro().cloned());
+    let text = name.map(|m| satex::engine::tex::detokenize(&m.replacement_text, &loaded.interner));
+    assert_eq!(text.as_deref(), Some("alonedemo.sty"));
+    let own = loaded.facts.defs.iter().find(|d| loaded.interner.name(d.name) == "__alonedemo_orphan:").unwrap();
+    assert_eq!((own.package, own.span.file), (None, loaded.main_file));
+    // By itself, as before: no document, no package.
+    let bare = Config { load: Load { alone: String::new(), ..cfg.load.clone() }, ..cfg };
+    assert!(!errors(&Machine::analyze(source, Some(&path), &bare)).is_empty());
 }
 
 /// A package that uses a command it never loads is read again with the

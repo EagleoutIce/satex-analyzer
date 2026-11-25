@@ -29,6 +29,7 @@ pub mod repair;
 pub(crate) mod shared;
 pub mod sourcetext;
 pub mod spacing;
+pub mod spelled;
 pub mod style;
 pub mod suppress;
 pub mod tables;
@@ -77,6 +78,7 @@ pub fn all() -> impl Iterator<Item = &'static Rule> {
         .chain(lists::RULES)
         .chain(xref::RULES)
         .chain(clones::RULES)
+        .chain(spelled::RULES)
 }
 
 /// Which lint family a [`Rule`] belongs to. `satex lint --filter category=…`
@@ -367,6 +369,10 @@ pub fn url(code: &str) -> String {
     format!("{}wiki/lints.html#{code}", env!("CARGO_PKG_HOMEPAGE"))
 }
 
+/// Marks, until [`lint_run`] has paired the findings, one that were an
+/// error if the run were certain at its place: it still explains TeX's.
+const POSSIBLE: &str = "possible";
+
 /// What one [`Rule`] can see and write while it runs: the finished
 /// [`Analysis`], and the [`Record`]s it has produced so far via
 /// [`Report::add`].
@@ -474,6 +480,11 @@ impl<'a> Report<'a> {
         self.index
     }
 
+    /// The `.bib` databases the document loads and its style's data model.
+    pub fn bib(&self) -> &'a bibdb::Bib {
+        self.index.bib.get_or_init(|| bibdb::Bib::of(self.analysis, self.sources))
+    }
+
     pub fn edits(&self) -> fix::Edits<'a> {
         fix::Edits { analysis: self.analysis, sources: self.sources }
     }
@@ -490,7 +501,20 @@ impl<'a> Report<'a> {
         if !self.wanted(span) {
             return;
         }
+        // satex's own marks for what the run could not compute never reach the author
+        let (name, message) = (&*crate::linter::shared::readable(name), crate::linter::shared::readable(&message));
+        let fix = fix.map(|f| crate::linter::shared::readable(&f));
+        // An error is in every run. Where the run's facts at its place are
+        // not ([`Index::unsure`]), it is a possible error, and says why.
+        let unsure = self.index.unsure(span).filter(|_| severity == Severity::Error);
+        let (severity, message) = match unsure {
+            Some(unsure) => (unsure.severity(), format!("{message}{}", unsure.note())),
+            None => (severity, message),
+        };
         let mut record = crate::queries::query::place(self.analysis, span);
+        if unsure.is_some() {
+            record.insert(POSSIBLE.into(), json!(true));
+        }
         record.insert("code".into(), json!(self.rule.code));
         record.insert("number".into(), json!(self.rule.number()));
         record.insert("category".into(), json!(self.rule.category.as_str()));
@@ -518,6 +542,12 @@ impl<'a> Report<'a> {
                 self.rule.code,
                 applicability.as_str()
             );
+            // A possible finding holds on some runs only: its fix is right
+            // there alone, so `--fix` never applies it unasked.
+            let applicability = match unsure {
+                Some(_) => fix::Applicability::Unsafe,
+                None => applicability,
+            };
             record.insert("applicability".into(), json!(applicability.as_str()));
             record.insert("edits".into(), edits.iter().map(fix::Edit::to_json).collect());
         }
@@ -544,12 +574,10 @@ impl<'a> Report<'a> {
         (at, Some(note))
     }
 
-    /// A finding on an error raised after `cause`, which may have led to
-    /// it: one severity lower, naming the cause, without edits.
-    /// A finding that may only follow from an earlier gap: a possible one,
-    /// so a note, never a warning or an error.
-    pub fn add_doubted(&mut self, span: Span, name: &str, message: String, cause: &str) {
-        self.add_as(Severity::Info, span, name, format!("{message} (may follow from {cause}: check that first)"), None);
+    /// A finding that is not certain for `cause`: a possible one, never an
+    /// error, naming the cause, without edits.
+    pub fn add_doubted(&mut self, span: Span, name: &str, message: String, cause: &shared::Unsure) {
+        self.add_as(cause.severity(), span, name, format!("{message}{}", cause.note()), None);
     }
 
     /// A finding that the analysis may cause rather than the document: a
@@ -579,8 +607,17 @@ impl<'a> Report<'a> {
         let unread = |d: &&crate::analysis::facts::Diagnostic| {
             matches!(d.code, "file-not-read" | "analysis-ended-early" | "limit-reached")
         };
-        let d = self.analysis.facts.diagnostics.iter().find(unread)?;
-        Some(format!(" (it may be {later} later: at {}, {})", self.place(d.span), d.message))
+        if let Some(d) = self.analysis.facts.diagnostics.iter().find(unread) {
+            return Some(format!(" (it may be {later} later: at {}, {})", self.place(d.span), d.message));
+        }
+        // a budget (`limits.seconds`) stopped the run: what it did not reach may hold it
+        let hit = self.analysis.exhausted.then(|| self.analysis.limits.last()).flatten()?;
+        Some(format!(
+            " (it may be {later} later: limits.{} = {} stopped the run at {})",
+            hit.key,
+            hit.value,
+            self.place(hit.at)
+        ))
     }
 
     pub fn cs(&self, sym: Sym) -> String {
@@ -674,16 +711,89 @@ pub fn lint_settled(analysis: &Analysis) -> Vec<Record> {
 
 /// [`lint`]'s findings in the document's own files (`origin` `document`), the others never built.
 pub fn lint_document(analysis: &Analysis) -> Vec<Record> {
-    crate::analysis::probe::within_run(analysis.started, || lint_run(analysis, true, |_| true))
+    lint_document_keeping(analysis, None).0
+}
+
+/// [`lint_document`], with the findings the lint of the run before (`prior`) left for this one
+/// kept where they stand ([`Kept`]), and what this lint leaves for the next.
+pub fn lint_document_keeping(analysis: &Analysis, prior: Option<(&Analysis, &Kept)>) -> (Vec<Record>, Kept) {
+    let mut kept = Kept::of(analysis);
+    let lint = || lint_kept(analysis, true, |_| true, prior, &mut kept);
+    let records = crate::analysis::probe::within_run(analysis.started, lint);
+    (records, kept)
+}
+
+/// The rules whose findings stand across an edit that changed only what is typeset. Each
+/// reads the run's bindings, calls, graph (never where a vertex stands), definitions, loads,
+/// diagnostics, expansions and occurrences, comparing places only with each other, and source
+/// text only through [`fix::Sources`]: what [`Analysis::same_but_text`] and [`Kept`] check.
+/// Not the text as set ([`text::View`]), nor a table that check leaves out.
+const KEPT: [&str; 3] = ["unused-definition", "unguarded-recursion", "duplicate-label"];
+
+/// What a lint leaves for the lint of the next run: per rule of [`KEPT`] its findings and the
+/// source files it read, as they were.
+pub struct Kept {
+    /// The [`Analysis::run`] linted.
+    run: u64,
+    rules: crate::fixed::HashMap<&'static str, (Vec<Record>, Vec<fix::Read>)>,
+    /// The rules whose findings this lint took from the last one.
+    pub stood: Vec<&'static str>,
+}
+
+impl Kept {
+    fn of(analysis: &Analysis) -> Kept {
+        Kept { run: analysis.run, rules: Default::default(), stood: Vec::new() }
+    }
+
+    /// `rule`'s findings of the last lint, where they are this run's too: the run is `prior`
+    /// apart from the text typeset, the files the rule read are as they were, and no finding
+    /// names an edited line (a place there moved, and what a fix writes there changed).
+    fn stands(
+        &self,
+        rule: &Rule,
+        analysis: &Analysis,
+        sources: &fix::Sources,
+    ) -> Option<&(Vec<Record>, Vec<fix::Read>)> {
+        let found = self.rules.get(rule.code)?;
+        let window = analysis.since.as_ref()?.window;
+        let edited = |line: u64| window.is_some_and(|(_, lo, hi)| (u64::from(lo)..=u64::from(hi)).contains(&line));
+        // any line number of an edited line, of whichever file, and any place written out (`file:line:col`)
+        fn names(value: &serde_json::Value, edited: &dyn Fn(u64) -> bool) -> bool {
+            match value {
+                serde_json::Value::Object(map) => (map.iter())
+                    .any(|(key, v)| key.ends_with("line") && v.as_u64().is_some_and(edited) || names(v, edited)),
+                serde_json::Value::Array(list) => list.iter().any(|v| names(v, edited)),
+                serde_json::Value::String(text) => {
+                    (text.split(':').skip(1)).any(|part| !part.is_empty() && part.parse().is_ok_and(edited))
+                }
+                _ => false,
+            }
+        }
+        let unread = found.1.iter().all(|(path, text)| sources.same(path, text.as_deref()));
+        (unread && !found.0.iter().any(|r| r.values().any(|v| names(v, &edited)))).then_some(found)
+    }
 }
 
 pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rule) -> bool) -> Vec<Record> {
+    lint_kept(analysis, document, wanted, None, &mut Kept::of(analysis))
+}
+
+fn lint_kept(
+    analysis: &Analysis,
+    document: bool,
+    wanted: impl Fn(&Rule) -> bool,
+    prior: Option<(&Analysis, &Kept)>,
+    kept: &mut Kept,
+) -> Vec<Record> {
     let mut out = Vec::new();
+    let mut laps = crate::util::progress::Laps::new(analysis.settings.verbose >= 2, "lint");
     let sources = fix::Sources::default();
     crate::util::progress::bar("lint: the text as set", 0, 2, (0, 0), (0, 0), None, &[]);
     let text = text::View::of(analysis, &sources);
+    laps.lap("text view");
     crate::util::progress::bar("lint: what the run defined and used", 1, 2, (0, 0), (0, 0), None, &[]);
     let index = Index::of(analysis);
+    laps.lap("index");
     let mut raised: crate::fixed::HashSet<usize> = crate::fixed::HashSet::default();
     let rules: Vec<&Rule> = all()
         .filter(|rule| wanted(rule) && !analysis.settings.lint_off.iter().any(|c| c == rule.code || c == rule.number()))
@@ -692,6 +802,9 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
     let seconds = analysis.settings.limits.seconds;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
     let mut skipped = Vec::new();
+    // The last lint's findings, where this run is that one apart from the text typeset.
+    let prior = prior.filter(|(run, last)| last.run == run.run && analysis.same_but_text(run)).map(|(_, last)| last);
+    laps.lap("same but text");
     for (i, &rule) in rules.iter().enumerate() {
         if seconds > 0 && std::time::Instant::now() > deadline {
             skipped.push(rule.code);
@@ -716,15 +829,39 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             out: Vec::new(),
         };
         let since = std::time::Instant::now();
-        (rule.run)(&mut report);
+        let keeps = KEPT.contains(&rule.code);
+        let stands = prior.filter(|_| keeps).and_then(|last| last.stands(rule, analysis, &sources));
+        let read = match stands {
+            Some((found, read)) => {
+                report.out = found.clone();
+                read.clone()
+            }
+            None => {
+                sources.read();
+                (rule.run)(&mut report);
+                sources.read()
+            }
+        };
         analysis.timings.rule(rule.code, since.elapsed(), report.out.len());
         // One finding per source site: a rule met again there (a macro body
-        // used several times) says nothing new.
+        // used several times) says nothing new. TeX's errors are its own list:
+        // two messages at one place are two errors (`Missing { inserted`, then
+        // its `Missing } inserted`).
         let mut sites = crate::fixed::HashSet::default();
+        let raised_rule = rule.code == "raised-error";
         report.out.retain(|r| match (r.get("path"), r.get("line").and_then(|v| v.as_u64())) {
-            (Some(path), Some(line)) => sites.insert((path.clone(), line, r.get("col").and_then(|v| v.as_u64()))),
+            (Some(path), Some(line)) => {
+                let message = r.get("message").filter(|_| raised_rule).cloned();
+                sites.insert((path.clone(), line, r.get("col").and_then(|v| v.as_u64()), message))
+            }
             _ => true,
         });
+        if keeps && stands.is_none() {
+            kept.rules.insert(rule.code, (report.out.clone(), read));
+        } else if let Some(found) = stands {
+            kept.rules.insert(rule.code, found.clone());
+            kept.stood.push(rule.code);
+        }
         let start = out.len();
         out.append(&mut report.out);
         if rule.code == "raised-error" {
@@ -732,6 +869,22 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
         }
     }
     crate::util::progress::clear();
+    laps.lap("rules");
+    // One fact, one finding: where a finding of the first rule stands at a related place,
+    // the second rule's finding there is part of it.
+    const COVERS: [(&str, &str); 1] = [("unreferenced-numbered-display", "unused-label")];
+    for (by, of) in COVERS {
+        // by line: one rule may stand at the command, the other at its argument
+        let at = |r: &Record| (r.get("path").cloned(), r.get("line").cloned());
+        let code = |r: &Record| r.get("code").and_then(|c| c.as_str()).map(str::to_string);
+        let covered: crate::fixed::HashSet<_> = (out.iter().filter(|r| code(r).as_deref() == Some(by)))
+            .flat_map(|r| r.get("related").and_then(|v| v.as_array()).cloned().unwrap_or_default())
+            .filter_map(|p| p.as_object().map(|p| (p.get("path").cloned(), p.get("line").cloned())))
+            .collect();
+        if !covered.is_empty() {
+            out.retain(|r| code(r).as_deref() != Some(of) || !covered.contains(&at(r)));
+        }
+    }
     if !skipped.is_empty() {
         crate::util::progress::note!(
             "satex: limits.seconds = {seconds} was reached by the lint rules: {} not run ({}). Raise it with --set limits.seconds=<larger>",
@@ -742,9 +895,11 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
     // A raised error another rule explains at the same place is its: that
     // rule's error, or a correctness note that the error follows from an
     // earlier one. Never a warning or a style note that happens to stand there
-    // (`\count` is plain TeX), which would hide TeX's error.  The places
-    // a raised error stands at are few, so the line alone sieves the rest out
-    // before any place is built.
+    // (`\count` is plain TeX), which would hide TeX's error.  Each such finding
+    // stands for one of TeX's errors, so it hides one raised error there (the
+    // one its message quotes, else the first), and never a surer one: an
+    // error is not hidden behind a note. The places a raised error stands at
+    // are few, so the line alone sieves the rest out before any place is built.
     if !raised.is_empty() {
         fn place(r: &Record) -> (Option<&str>, Option<u64>, Option<u64>) {
             (
@@ -753,29 +908,55 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
                 r.get("col").and_then(|v| v.as_u64()),
             )
         }
+        let rank = |r: &Record| match r.get("severity").and_then(|v| v.as_str()) {
+            Some("error") => 2,
+            Some("warning") => 1,
+            _ => 0,
+        };
+        // Spacing aside: a rule may print a name's trailing space twice.
+        let text = |r: &Record| {
+            let m = r.get("message").and_then(|v| v.as_str()).unwrap_or_default();
+            m.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches('.').to_string()
+        };
         let line = |r: &Record| r.get("line").and_then(|v| v.as_u64());
         let lines: crate::fixed::HashSet<_> = raised.iter().map(|i| line(&out[*i])).collect();
-        let mut explained: crate::fixed::HashSet<_> = crate::fixed::HashSet::default();
+        let mut order: Vec<usize> = raised.iter().copied().collect();
+        order.sort_unstable();
+        let mut keep = vec![true; out.len()];
+        // A note that quotes a surer raised error takes its severity: one finding names both.
+        let mut lift = Vec::new();
         for (i, record) in out.iter().enumerate() {
             let severity = record.get("severity").and_then(|v| v.as_str());
             let correctness = record.get("category").and_then(|v| v.as_str()) == Some("correctness")
                 && severity != Some("warning")
                 || severity == Some("error");
-            if correctness && !raised.contains(&i) && lines.contains(&line(record)) {
-                explained.insert(place(record));
+            let correctness = correctness || record.contains_key(POSSIBLE);
+            if !correctness || raised.contains(&i) || !lines.contains(&line(record)) {
+                continue;
+            }
+            let (at, said) = (place(record), text(record));
+            let open = |j: &usize| keep[*j] && place(&out[*j]) == at;
+            let quoted = order.iter().copied().filter(open).find(|j| said.contains(text(&out[*j]).as_str()));
+            let weaker = |j: &usize| rank(&out[*j]) <= rank(record);
+            if let Some(j) = quoted.filter(|j| !weaker(j)) {
+                lift.push((i, out[j].get("severity").cloned()));
+                keep[j] = false;
+            } else if let Some(j) = quoted.or_else(|| order.iter().copied().filter(open).find(weaker)) {
+                keep[j] = false;
             }
         }
-        let mut keep = vec![true; out.len()];
-        for &i in &raised {
-            keep[i] = !explained.contains(&place(&out[i]));
+        for (i, severity) in lift {
+            if let Some(severity) = severity {
+                out[i].insert("severity".into(), severity);
+            }
         }
-        drop(explained);
         let mut at = 0;
         out.retain(|_| {
             at += 1;
             keep[at - 1]
         });
     }
+    out.iter_mut().for_each(|r| _ = r.remove(POSSIBLE));
     // A file the run writes holds what LaTeX, BibTeX or makeindex wrote
     // there: only an error in it, which still stops the build, is the
     // document's to know about.
@@ -795,7 +976,10 @@ pub(crate) fn lint_run(analysis: &Analysis, document: bool, wanted: impl Fn(&Rul
             matches!(r.get("code").and_then(|v| v.as_str()), Some("limit-reached" | "analysis-ended-early"))
         });
     }
-    suppress::apply(analysis, out)
+    laps.lap("sieve");
+    let out = suppress::apply(analysis, out);
+    laps.lap("suppress");
+    out
 }
 
 /// The files a project takes as given, never its own to fix: those its
@@ -872,33 +1056,62 @@ pub fn cites(rule: &Rule) -> String {
 
 /// The rules whose findings in the project's own files are so many that
 /// they may be its style: one record each, with the count and the question
-/// an editor asks. Empty when `prompt` is off.
+/// an editor asks, the count per file and the places (one per line) an
+/// editor shows to judge by. Empty when `prompt` is off.
 pub fn style_candidates(records: &[Record], prompt: &crate::project::config::StylePrompt) -> Vec<Record> {
     if !prompt.enabled {
         return Vec::new();
     }
     let text = |r: &Record, key: &str| r.get(key).and_then(|v| v.as_str()).unwrap_or_default().to_string();
-    let mut by_rule: std::collections::BTreeMap<String, (Vec<String>, serde_json::Value)> = Default::default();
+    // per rule: the findings' names and places, in the order the run found them
+    let mut by_rule: std::collections::BTreeMap<String, (Vec<String>, Vec<serde_json::Value>)> = Default::default();
     // Copied code is a finding to act on, whatever the project is used to: never its style.
     let asked = |code: &str| code != "clones" && !prompt.keep.iter().any(|k| k == code);
     for r in records.iter().filter(|r| text(r, "origin") == "document") {
         if prompt.categories.contains(&text(r, "category")) && asked(&text(r, "code")) {
-            let first = || json!({ "path": r.get("path"), "line": r.get("line"), "col": r.get("col") });
-            by_rule.entry(text(r, "code")).or_insert_with(|| (Vec::new(), first())).0.push(text(r, "name"));
+            // the marked span: the finding's first edit when it stays on the line, else its column
+            let end = r
+                .get("edits")
+                .and_then(|e| e.get(0))
+                .and_then(|e| e.get("end"))
+                .filter(|e| e.get("line") == r.get("line"));
+            let at = json!({ "path": r.get("path"), "line": r.get("line"), "col": r.get("col"), "end": end.and_then(|e| e.get("col")) });
+            let entry = by_rule.entry(text(r, "code")).or_default();
+            entry.0.push(text(r, "name"));
+            entry.1.push(at);
         }
     }
     by_rule
         .into_iter()
         .filter(|(_, (names, _))| names.len() >= prompt.min_findings)
-        .filter_map(|(code, (names, first))| {
+        .filter_map(|(code, (names, spots))| {
             let rule = explanation(&code)?;
+            let mut files: Vec<(String, usize)> = Vec::new();
+            for path in spots.iter().map(|s| s["path"].as_str().unwrap_or_default().to_string()) {
+                match files.iter_mut().find(|(p, _)| *p == path) {
+                    Some((_, n)) => *n += 1,
+                    None => files.push((path, 1)),
+                }
+            }
+            // the places to judge by before answering, one per line
+            let mut examples: Vec<&serde_json::Value> = Vec::new();
+            for s in &spots {
+                if !examples.iter().any(|e| e["path"] == s["path"] && e["line"] == s["line"]) {
+                    examples.push(s);
+                }
+            }
             let mut record = serde_json::Map::new();
             record.insert("number".into(), json!(rule.number()));
             record.insert("code".into(), json!(rule.code));
             record.insert("count".into(), json!(names.len()));
             record.insert("summary".into(), json!(rule.summary));
             record.insert("question".into(), json!(style_question(&label(rule.code), &names)));
-            record.insert("first".into(), first);
+            record.insert("first".into(), spots[0].clone());
+            record.insert("examples".into(), json!(examples));
+            record.insert(
+                "files".into(),
+                json!(files.iter().map(|(path, count)| json!({ "path": path, "count": count })).collect::<Vec<_>>()),
+            );
             Some(record)
         })
         .collect()

@@ -1,135 +1,42 @@
 {
- "bold": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "burst-3rows": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "click-macro-start": {
-  "owner": "playground Type clicks (main session)",
-  "since": "2026-11-19",
-  "match": "^end \\(click",
-  "why": "as demo-macro-row: the end of a macro's output maps past the definition's closing brace"
- },
- "demo-garble": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "demo-macro-row": {
-  "owner": "playground Type clicks (main session)",
-  "since": "2026-11-19",
-  "why": "a click at the end of a macro's output (`TinyNet,` of \\model) puts the caret after the definition's `}` (312, want 311): the key lands outside the definition and the build fails"
- },
- "emph": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "page-foot": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "prose-dollar": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "tex-hyphen-edge": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "tex-ligatures": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "why": "a click after a ligature (`fi` in `fine`) lands one character early, the typed word is not set where expected; the landing jump as the others"
- },
- "tikz-node": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "title-human": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "type-through-builds": {
-  "owner": "playground echo layout (ui-48 echo helper)",
-  "since": "2026-11-19",
-  "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)",
-  "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"
- },
- "fz-ts-footnote-row": {
-  "owner": "server (Rust typeset rows); client side checked by ui-51",
-  "why": "after typing in a footnote's text the run's own satex/typeset rows (satexTypesetOrigins) hold the footnote twice: the new text (line 3) and the old `1A short note.` (line 8), also after the run lands; the client shows what it gets. Needs the server to drop the previous run's footnote insert. Timing dependent (1 of 3 runs)",
-  "since": "2026-11-19"
- },
- "sync-usetikzlibrary": {
-  "owner": "server (Rust rerun from a checkpoint); evidence by ui-51",
-  "why": "the client is in sync (last didChange text == editor text, findings version == sent version), but the wasm run of the final text reads `\\\\use`/`\\\\useti` (the name as an earlier run met it mid-typing) followed by `tikzlibrary…` as text: a rerun resumes inside line 3 with the old token; native `satex lint` of the final text is clean",
-  "since": "2026-11-19"
- },
- "sync-stray-brace": {
-  "owner": "server (wasm analysis); evidence by ui-51",
-  "why": "the wasm server publishes an empty diagnostics list for the text's version (raw publishDiagnostics captured: `diagnostics: []`), also with the brace there from the start (no resume), while native `satex lint` of the same text reports C013 `Too many }'s` at 8:18: the client shows what it gets",
-  "since": "2026-11-19"
- },
- "tc-type-begin-arg": {
-  "owner": "server (Rust: environment effects for the echo) + Type-mode echo",
-  "since": "2026-11-19",
-  "match": "^caret jumped",
-  "why": "the echo no longer prints the environment's name, but sets \\begin{center} Quokka \\end{center} on the row typed in, while TeX starts a centred row a \\topsep lower: the caret jumps ~50 px as the build lands. A fix without a name table needs the run to report, per environment name, what its begin code leaves: the vertical space it adds (\\topsep, \\partopsep, \\parskip as \\@trivlist adds them, ltlists.dtx) and the paragraph shape it sets (\\leftskip, \\rightskip, \\parfillskip: \\centering's 0pt plus 1fil), e.g. in the page view's run lengths or a satex/envEffect query"
- },
- "forest-sibling": {
-  "owner": "server (wasm text sync); evidence by ui-61",
-  "why": "under load the snapshot printer answers `a place outside the text` (src/lsp/snapshot.rs edits_of): the wasm server holds an older, shorter text of hello.tex than the editor, though the client sent the scenario's text (didChange v2, 1359 chars) before the request. Intermittent: passed 1 of 2 runs (forest-sibling 2 of 3); evidence target/scratch/ui-61/dbg-forest.log",
-  "since": "2026-11-19",
-  "match": "^source unchanged \\(toast: a place outside the text\\)"
- },
- "col-align": {
-  "owner": "server (wasm text sync); evidence by ui-61",
-  "why": "under load the run of the scenario's text reports findings on every line (squiggles from \\documentclass on, 8 findings for a clean text) and the columns query gives no table, so no chip shows; passed 1 of 3 runs. The client side (chips once the columns arrive, without another pointer move) is fixed Flaky since 2026-11-20: green in 2 of 3 runs (\"pages dimmed\" once).",
-  "since": "2026-11-19",
-  "match": "^no column chip"
- },
- "insert-hello": {
-  "owner": "snapshot printer package provider (src/lsp/snapshot.rs write, linter::shared::provider)",
-  "since": "2026-11-19",
-  "match": "ins-figure-toolbar: (no graphicx load|build: no PDF|the widget open: null)",
-  "why": "a new \\includegraphics[width=…] in a document without graphics loads: the snapshot printer's provider picks graphics, whose \\includegraphics takes no key options, so the build fails (2 errors) and the image dialog finds no figure; graphicx is the package a keyed call needs"
- },
- "tc-type-begin-enter": {
-  "owner": "server (Rust: environment effects for the echo) + Type-mode echo",
-  "since": "2026-11-19",
-  "match": "^caret jumped",
-  "why": "the same root as tc-type-begin-arg: the echo sets the environment's body on the row typed in, TeX a centred row a \\topsep lower"
- },
- "tc-type-align-loads": {
-  "owner": "server (Rust: src/caches/exports.rs `scan`) + Type-mode echo",
-  "since": "2026-11-19",
-  "match": "^(source lacks|compile:|caret jumped|settle: not settled)",
-  "why": "the exports index records only names defined as a control sequence (`\\def\\align`, amstex.sty), never an environment defined by a braced name (`\\newenvironment{align}`, amsmath.sty): align is offered with `\\usepackage{amstex}`, which is obsolete and errors; then the echo's environment row (tc-type-begin-arg); the echo of a display's body (x typed into align or equation, no load needed) stays after the build has it, so the page never settles"
- },
- "tc-type-load-keeps-caret": {
-  "owner": "server (Rust: src/caches/exports.rs `scan`) + Type-mode echo",
-  "since": "2026-11-19",
-  "match": "^(compile:|caret jumped|settle: not settled)",
-  "why": "x lands (the check this scenario guards); the build fails on the \\usepackage{amstex} the exports index offers for align (tc-type-align-loads) and the echo's environment row jumps (tc-type-begin-arg); the echo of a display's body (x typed into align or equation, no load needed) stays after the build has it, so the page never settles"
- }
+ "table-span-typed": {"owner": "tablelive (landing caret, playground.js pdfTypeDraw)", "since": "2026-11-22", "match": "caret moved [\\d.]+ -> [\\d.]+ px when the build landed$", "why": "the echo of a typed \\multicolumn span matches the build (words, chips), but once the build lands the caret after the span's last letter is put before the next cell's word (`top`), 13 px right"},
+ "swap-pdf-typing": {"owner": "main (echo push, playground.js pdfRelay)", "since": "2026-11-22", "match": "^layer pdf-env gone", "why": "Type mode: while the echo pushes the rows below the typed paragraph, pdfRelay hides a mark taller than a row that the push reaches (`pdf-relay-hid`: the itemize frame below) until the keys rest and a build lands; the pages, the scroll and the other layers hold in every frame"},
+ "demo-garble": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)", "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"},
+ "demo-macro-row": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-21", "match": "^caret jumped", "why": "the click and the key are right since caret2 (the end of `TinyNet,` is after `\\model,`, 2 typed there, the call's glyphs kept in the echo); the echo sets `,2` in the fallback Latin Modern face (the page's cmr subset lacks `2`), 2% larger than the page: the caret steps 8 px when the build lands"},
+ "prose-dollar": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)", "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"},
+ "tex-hyphen-edge": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)", "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"},
+ "tex-ligatures": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "why": "a click after a ligature (`fi` in `fine`) lands one character early, the typed word is not set where expected; the landing jump as the others"},
+ "tikz-node": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)", "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"},
+ "title-human": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)", "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"},
+ "type-through-builds": {"owner": "playground echo layout (ui-48 echo helper)", "since": "2026-11-19", "match": "^(caret jumped|caret stepped back|pages scrolled|echo [\\d.]+px past|echo font|final caret at|echo rows overlap|echo wrapped)", "why": "the echo's rows and font differ from the landed build: the caret jumps when the build lands, the echo runs past the margin, its font is not the page's width"},
+ "sync-stray-brace": {"owner": "server (wasm analysis); evidence by ui-51", "why": "the wasm server publishes an empty diagnostics list for the text's version (raw publishDiagnostics captured: `diagnostics: []`), also with the brace there from the start (no resume), while native `satex lint` of the same text reports C013 `Too many }'s` at 8:18: the client shows what it gets", "since": "2026-11-19"},
+ "tc-type-begin-arg": {"owner": "server (Rust: environment effects for the echo) + Type-mode echo", "since": "2026-11-19", "match": "^caret jumped", "why": "the echo no longer prints the environment's name, but sets \\begin{center} Quokka \\end{center} on the row typed in, while TeX starts a centred row a \\topsep lower: the caret jumps ~50 px as the build lands. A fix without a name table needs the run to report, per environment name, what its begin code leaves: the vertical space it adds (\\topsep, \\partopsep, \\parskip as \\@trivlist adds them, ltlists.dtx) and the paragraph shape it sets (\\leftskip, \\rightskip, \\parfillskip: \\centering's 0pt plus 1fil), e.g. in the page view's run lengths or a satex/envEffect query"},
+ "tc-type-begin-enter": {"owner": "server (Rust: environment effects for the echo) + Type-mode echo", "since": "2026-11-19", "match": "^caret jumped", "why": "the same root as tc-type-begin-arg: the echo sets the environment's body on the row typed in, TeX a centred row a \\topsep lower"},
+ "tc-type-align-loads": {"owner": "server (Rust: src/caches/exports.rs `scan`) + Type-mode echo", "since": "2026-11-19", "match": "^(source lacks|compile:|caret jumped|settle: not settled)", "why": "the exports index records only names defined as a control sequence (`\\def\\align`, amstex.sty), never an environment defined by a braced name (`\\newenvironment{align}`, amsmath.sty): align is offered with `\\usepackage{amstex}`, which is obsolete and errors; then the echo's environment row (tc-type-begin-arg); the echo of a display's body (x typed into align or equation, no load needed) stays after the build has it, so the page never settles"},
+ "tc-type-load-keeps-caret": {"owner": "server (Rust: src/caches/exports.rs `scan`) + Type-mode echo", "since": "2026-11-19", "match": "^(compile:|caret jumped|settle: not settled)", "why": "x lands (the check this scenario guards); the build fails on the \\usepackage{amstex} the exports index offers for align (tc-type-align-loads) and the echo's environment row jumps (tc-type-begin-arg); the echo of a display's body (x typed into align or equation, no load needed) stays after the build has it, so the page never settles"},
+ "table-nested-edit": {"owner": "main session: wasm rebuild with widgets land-03 (src/lsp/tabular.rs nested env)", "since": "2026-11-20", "match": "^(Apply after a cell edit wrote nothing|after the edit:)", "why": "the playground's wasm parses a tabular nested in a cell as two outer rows (fixed natively in land-03, lsp::tabular::tests::a_nested_tabular_is_one_cell); the dialog then shows a bogus row 3, Enter after an edit pads it, and Apply writes nothing"},
+ "enter-in-list": {"owner": "preview (echo of a typed \\item)", "why": "Enter on an item's line writes the next \\item (source right), but the echo sets the typed item's words on the row typed in, not as a new item a row lower with its label: the caret jumps when the build lands", "since": "2026-11-21", "match": "caret jumped"},
+ "listing": {"owner": "caretcomp", "why": "a listing typed into from the PDF: the echo measures its row in the text font, the landed build's glyphs sit up to 6 px left, so the caret jumps on landing (the click and the typing work since 2026-11-21: verbatim characters are no macro output)", "since": "2026-11-21", "match": "caret jumped"},
+ "u-table-add-col-while-editing": {"owner": "preview (table widget)", "since": "2026-11-21", "match": "page error .*replaceChildren", "why": "table widget: + (column at the end) while a cell is being edited throws NotFoundError replaceChildren (blur handler); the column is not added"},
+ "u-tikz-drag-node-text": {"owner": "preview (TikZ on the page)", "since": "2026-11-21", "match": "^the text has", "why": "Type mode on (default): a drag that starts on a node's text does nothing, no move, no ghost, no selection"},
+ "u-edit-latency-slides": {"owner": "paramcache (incremental runs)", "since": "2026-11-21", "match": "findings of the edit came after", "why": "slides.tex: one typed letter reruns the whole document (run 2, ~4 s) instead of resuming: the findings come after 4 s, want 2 s. (The stale-forever list, a run installed but never published after a widget question moved the cancel counter, is fixed by caretcomp 2026-11-21: publish_installed.)"},
+ "demo-sum": {"owner": "preview (caret at a formula's end, typecaret open item)", "since": "2026-11-22", "match": "^caret jumped", "why": "the echo draws $\\sum_i x_42$ right (∑ in the math fallback, x italic, 42 lowered: the check this scenario guards), but once the build lands the caret after the closing $ goes to the formula's start (76 px back): the formula's source tokens pair with its first page word, so the caret's word is ∑, not x42 (pdfTypeDraw, B === g.text)"},
+ "demo-sum-typed": {"owner": "preview (caret at a formula's end, typecaret open item)", "since": "2026-11-22", "match": "^(caret jumped|caret vanished|echo font)", "why": "the stacked previews (a second ∑, a bar of one) are fixed and guarded here (echo rows overlap); open: a build of the formula typed so far (`\\(\\su`, error-recovered) lands and the caret goes where that page ends it (after `by`, 30 px back), and the row's echo mixes the page face with the fallback"},
+ "title-centered": {"owner": "sumlag (landing caret in a macro argument)", "since": "2026-11-22", "match": "^pdf-title-centered: the caret moved", "why": "the echo of a centered \\maketitle title is centered now (other words within 2.5 bp of the landed build, sa\\TeX moved as page pixels); open: after the build lands the caret goes 2 characters back (Sampleq|qq, 14 px): the landing caret in a macro argument read elsewhere (\\title), typecaret's pdfTypeDraw landing"},
+ "pagebreak": {"owner": "main (sweep round)", "since": "2026-11-22", "match": ".", "why": "red on HEAD 40766a3d too (ctxmenu sweep 2026-11-22); cause not traced yet"},
+ "fz-thanks-mark": {"owner": "main (sweep round, \\thanks placement)", "since": "2026-11-22", "match": ".", "why": "red on HEAD 40766a3d too: the \\thanks mark placement in the echo (pgkeys, ctxmenu sweeps 2026-11-22)"},
+ "fz-title-author-start": {"owner": "main (sweep round, \\thanks placement)", "since": "2026-11-22", "match": ".", "why": "fails as fz-thanks-mark does: title/author start with a \\thanks (pgkeys 2026-11-22)"},
+ "math-burst": {"owner": "main (sweep round, PE.aligned)", "since": "2026-11-22", "match": "caret", "why": "red on HEAD 40766a3d too: caret jumps 71 px when a fast-typed formula's build lands; pgkeys land-02-align.patch pairs words with split glyphs but does not fix it yet"},
+ "burst-3rows": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^caret\\ jumped", "why": "pre-existing: caret jumped 1x without a key (max 18px, {'from':[1070.6,453.3,1.5,9.4],'to':[1052.8,453.3,1.5,9.4],'t':15948,'keys':175,'echoes':[['canvas',' quokka zebu womba"},
+ "page-foot": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^caret\\ jumped", "why": "pre-existing: caret jumped 1x without a key (max 343px, {'from':[904.1,762.8,1.5,9.7],'to':[1247.6,749.7,1.5,9.7],'t':12403,'keys':175,'echoes':[['canvas',' quokka zebu wom b"},
+ "bold": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^caret\\ jumped", "why": "pre-existing: caret jumped 1x without a key (max 7px, {'from':[1030,307.1,1.5,9.7],'to':[1023,307.1,1.5,9.7],'t':7614,'keys':7,'echoes':[['canvas',' Quokka ',[871.9,304.3,377"},
+ "fz-hyphen": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": ".", "why": "pre-existing: echo 10.5px past the text's right edge (the click went to `Sentence 0`, not the hyphenated `Sen-` of Sentence 1; fixed by e2e-caret). Now: the echo of `SenQtence` and the landed caret stand rows below the clicked one (caret jumped 25px when the build landed)"},
+ "title-markup": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^caret\\ jumped", "why": "pre-existing: caret jumped 1x without a key (max 6px, {'from':[1018.5,428.3,1.5,13.6],'to':[1024.6,428.3,1.5,13.6],'t':15386,'keys':10,'echoes':[['canvas',' a  x 1  and ',[98"},
+ "math-sum": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^landed:\\ 'ok'\\ moved\\ by\\ \\-", "why": "pre-existing: landed: 'ok' moved by -5.8,2.1 px from the preview"},
+ "tint-thesis": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^no\\ origin\\ tints\\ drawn", "why": "pre-existing: no origin tints drawn"},
+ "paper-dark": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^original/loool:\\ no\\ relaid\\ tint\\ reaches\\ t", "why": "pre-existing: original/loool: no relaid tint reaches the caret (tints [], caret [962,279,2,9])"},
+ "tikz-drawing": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": "^node\\-shape\\-cloud\\-lib:\\ text:\\ want\\ /\\\\\\\\uset", "why": "pre-existing: node-shape-cloud-lib: text: want /\\\\usetikzlibrary\\{arrows\\.meta,positioning,backgrounds\\}\\n\\\\usetikzlibrary\\{shapes\\.symbols\\}\\n[^]*\\\\node\\[cloud, box, right=o"},
+ "fz-pdf-caret-after-end": {"owner": "main (night sweep 2026-11-23: red on 40766a3d's site too)", "since": "2026-11-23", "match": ".", "why": "pre-existing: step 2 w:xqtotoa [echo-lost] page words under the echo neither moved nor drawn: ['paragraph','with','more','text.']"},
+ "u-insert-tikz-picture": {"owner": "main (snapshot printer provider probes, src/lsp/snapshot.rs + playground.js insertAt)", "since": "2026-11-23", "match": "unchanged after the steps", "why": "Insert of a tikz picture writes after 3-9 s: the snapshot printer probes the provider by running tikz with the call (linter::shared::provider_for, probe) before it answers; the page waits for the whole write. Root: write the body at once, the package load when the probe answers (or a probe-free provider for an environment the export index names once)."},
+ "u-insert-figure-with-a-drawing": {"owner": "main (snapshot printer provider probes, src/lsp/snapshot.rs + playground.js insertAt)", "since": "2026-11-23", "match": "unchanged after the steps", "why": "Insert of a tikz picture writes after 3-9 s: the snapshot printer probes the provider by running tikz with the call (linter::shared::provider_for, probe) before it answers; the page waits for the whole write. Root: write the body at once, the package load when the probe answers (or a probe-free provider for an environment the export index names once)."}
 }

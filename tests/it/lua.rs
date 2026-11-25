@@ -41,9 +41,19 @@ fn an_extension_reads_its_general_texts() {
 
 #[test]
 fn a_conditional_print_is_a_gap_not_a_guess() {
-    let analysis = primitives("\\directlua{if os.clock() > 1 then tex.print(\"\\\\def\\\\a{}\") end}");
-    assert!(undefined(&analysis, "a"));
-    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
+    let analysis = primitives(r"\directlua{if os.clock() > 1 then tex.print('\string\\def\string\\a{}') end}");
+    // one run per outcome of the test: defined on one, not on the other
+    assert!(!undefined(&analysis, "a") && !defined(&analysis, "a"));
+}
+
+/// luaotfload.lua stops the run when `status.safer_option` is not 0; an unknown value
+/// left every LuaTeX document without luaotfload, so fonts and tagging went unknown.
+/// Pins: the value is that of a run without `--safer`.
+#[test]
+fn a_run_is_not_safer() {
+    let analysis =
+        primitives(r"\directlua{if status.safer_option == 0 then tex.print('\string\\def\string\\a{}') end}");
+    assert!(defined(&analysis, "a"));
 }
 
 #[test]
@@ -170,9 +180,6 @@ fn a_chunk_runs_loops_tables_and_string_format() {
 
 #[test]
 fn a_test_of_an_unknown_value_is_unknown() {
-    // `status.cs_count` is not known: neither branch is taken for sure.
-    let analysis = primitives("\\directlua{if status.cs_count then tex.print('a') else tex.print('b') end}");
-    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
     let analysis = primitives("\\directlua{local t = type(os.name) if t then tex.sprint(t) end}\\edef\\out{x}");
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
     // The clock is unknown: neither `a` nor `b` is printed for sure, and
@@ -183,10 +190,16 @@ fn a_test_of_an_unknown_value_is_unknown() {
         )
     };
     assert!(defined(&primitives(&source("1 > 0")), "a"));
-    for test in ["os.clock() + 1", "os.clock() == 0", "type(os.clock()) == 'number'", "not os.clock()"] {
+    // Its type cannot be asked: the run stops, a gap.
+    let analysis = primitives(&source("type(os.clock()) == 'number'"));
+    assert!(undefined(&analysis, "a") && undefined(&analysis, "b"));
+    assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
+    // A test of it has both outcomes, a run each (`status.cs_count` is not known either).
+    for test in ["os.clock() + 1", "os.clock() == 0", "not os.clock()", "os.clock() < 2", "status.cs_count"] {
         let analysis = primitives(&source(test));
-        assert!(undefined(&analysis, "a") && undefined(&analysis, "b"), "{test}");
-        assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"), "{test}");
+        for name in ["a", "b"] {
+            assert!(!undefined(&analysis, name) && !defined(&analysis, name), "{test}: \\{name}");
+        }
     }
 }
 
@@ -260,4 +273,269 @@ fn lua_run_off_leaves_the_output_unknown() {
     let analysis = Machine::analyze(&format!("\\catcode`\\{{=1 \\catcode`\\}}=2 {source}"), None, &cfg);
     assert!(undefined(&analysis, "a"));
     assert!(analysis.facts.diagnostics.iter().any(|d| d.code == "lua-output"));
+}
+
+/// One Lua state serves every path. A global one arm of an undecided conditional sets is not
+/// what the run without that arm reads: after the join `x` is 0 or 1, so neither test of it
+/// is decided. Pins: the sibling path and the joined path read the arm's `x = 1` as certain.
+#[test]
+fn a_global_one_arm_sets_is_not_what_the_other_path_reads() {
+    let analysis = primitives(
+        r"\directlua{x = 0}
+\ifodd\uniformdeviate 7 \directlua{x = 1}\fi
+\ifnum\directlua{tex.print(x)}=1 \def\one{}\else\def\zero{}\fi",
+    );
+    assert!(!defined(&analysis, "one"), "x is 0 where the arm did not run");
+    assert!(!undefined(&analysis, "zero"), "x is 0 where the arm did not run");
+}
+
+/// The arm that does not set the global reads it while the other arm's run is already in the
+/// one state. Pins: the `\else` arm read `x = 1`, which only the first arm's run holds.
+#[test]
+fn an_arm_does_not_read_what_its_sibling_arm_set() {
+    let analysis = primitives(
+        r"\directlua{x = 0}
+\ifodd\uniformdeviate 7 \directlua{x = 1}\else
+\ifnum\directlua{tex.print(x)}=0 \def\zero{}\else\def\wrong{}\fi\fi",
+    );
+    assert!(!undefined(&analysis, "zero"), "the arm that sets nothing reads the 0 from before the choice");
+}
+
+/// A path that waits at its `\fi` while its sibling runs is no longer inside the conditional
+/// when it goes on. Two choices in a row: the second one's arms each start from a state the
+/// first one's arms both ran in. Pins: a counter stepped on every path read as their sum.
+#[test]
+fn a_counter_stepped_on_each_path_is_not_their_sum() {
+    let analysis = primitives(
+        r"\directlua{n = 0}
+\ifodd\uniformdeviate 7 \directlua{n = n + 1}\else\directlua{n = n + 1}\fi
+\ifnum\directlua{tex.print(n)}=2 \def\two{}\fi
+\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi",
+    );
+    assert!(!defined(&analysis, "two"), "no run steps twice");
+    assert!(!undefined(&analysis, "one"), "every run steps once");
+}
+
+/// Without any undecided choice the one state is the run's own: nothing is given up.
+#[test]
+fn a_run_without_choices_keeps_its_lua_state_exact() {
+    let analysis = primitives(
+        r"\directlua{n = 0}\directlua{n = n + 1}\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi
+\ifodd\uniformdeviate 7 \def\a{}\fi
+\directlua{n = n + 1}\ifnum\directlua{tex.print(n)}=2 \def\two{}\fi",
+    );
+    assert!(defined(&analysis, "one"));
+    assert!(defined(&analysis, "two"), "a choice that runs no Lua leaves the state exact");
+}
+
+/// A run that writes no state it found leaves the state's identity alone, so the paths of an
+/// undecided choice stay in step: both arms call a pure compare in an old table (as expl3's
+/// `\str_if_eq` calls `l3kernel.strcmp`), and the run after the join still runs.
+/// Pins: every run, even a pure one, advanced the state's last run, so after the first arm's
+/// compare its sibling and the joined path were out of step and every later run was unknown.
+#[test]
+fn a_run_that_writes_nothing_keeps_forked_paths_in_step() {
+    let analysis = primitives(
+        r"\directlua{cmp = {} function cmp.eq(a, b) tex.print(a == b and 1 or 0) end n = 0}
+\ifodd\uniformdeviate 7 \ifnum\directlua{cmp.eq('a', 'a')}=1 \fi\else\ifnum\directlua{cmp.eq('a', 'b')}=0 \fi\fi
+\directlua{local t = {} t.v = 1 n = n + t.v}\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi",
+    );
+    assert!(defined(&analysis, "one"), "the pure compares left both paths in step");
+}
+
+/// Node type, whatsit subtype and mode numbers are the engine's own tables: `node.id`,
+/// `node.subtype` agree with `node.types()`, `node.whatsits()`, and `tex.getmodevalues()` names
+/// `horizontal`. lualinksplit (loaded by every `\DocumentMetadata` under LuaTeX) asks for
+/// `pdf_start_link` and the modes. Pins: a hand-written whatsit table knew 7 subtypes, with
+/// `save_pos`, `late_lua`, `user_defined` one off (LuaHBTeX 1.24 has `late_special` at 4), and the
+/// three functions were unknown, so loading lualinksplit failed.
+#[test]
+fn node_and_mode_numbers_are_the_engines() {
+    let analysis = primitives(
+        r"\directlua{local w, t = node.whatsits(), node.types()
+local ok = w[node.subtype('late_lua')] == 'late_lua' and w[node.subtype('pdf_start_link')] == 'pdf_start_link'
+  and t[node.id('glyph')] == 'glyph' and w[node.subtype('late_special')] == 'late_special'
+local horizontal for k, v in pairs(tex.getmodevalues()) do if v == 'horizontal' then horizontal = k end end
+if ok and horizontal then tex.print('\string\\gdef\string\\ok{}') end}",
+    );
+    assert!(defined(&analysis, "ok"));
+}
+
+/// A run that fails on something unknown before it writes leaves the state as it was, so the
+/// paths of an undecided choice stay in step: one arm's run stops at `status.list()`, and the
+/// runs after the join still run. The VM counts the write mlua makes when it raises the error
+/// (the metatable of a pooled error userdata), which is not the run's.
+/// Pins: every failed run counted as a change of the state; expl3 under LuaTeX then lost the
+/// state on all but one path after the first failed `\directlua`, and every later string
+/// compare (`l3kernel.strcmp`) was unknown there: 60k forks and no tagging facts in a tagged
+/// LuaLaTeX document.
+#[test]
+fn a_run_that_fails_before_writing_keeps_forked_paths_in_step() {
+    let analysis = primitives(
+        r"\directlua{n = 0}
+\ifodd\uniformdeviate 7 \directlua{tex.print(status.list().x)}\fi
+\directlua{n = n + 1}\ifnum\directlua{tex.print(n)}=1 \def\one{}\fi",
+    );
+    assert!(defined(&analysis, "one"), "the failed run wrote nothing: both paths stay in step");
+}
+
+/// The sound side of the test above: a run that writes and then fails changed the state, so
+/// the path without it does not read its write. Pins: the write count taken where the run
+/// failed must not drop the writes made before that point.
+#[test]
+fn a_run_that_writes_then_fails_puts_the_other_path_out_of_step() {
+    let analysis = primitives(
+        r"\directlua{n = 0}
+\ifodd\uniformdeviate 7 \directlua{n = 1 tex.print(status.list().x)}\fi
+\ifnum\directlua{tex.print(n)}=1 \def\one{}\else\def\zero{}\fi",
+    );
+    assert!(!defined(&analysis, "one"), "n is 0 where the arm did not run");
+    assert!(!undefined(&analysis, "zero"), "n is 0 where the arm did not run");
+}
+
+/// Every way Lua code writes state it found counts as a write: an upvalue, a raw set, a new
+/// key, a metatable, a coroutine resumed, a library table. One arm of an
+/// undecided choice writes; after the join the read is undecided, never the arm's value.
+/// Pins: a write tracking that misses a channel keeps both paths in step on a state only one
+/// of them changed, and the read is the arm's value as certain.
+#[test]
+fn every_kind_of_lua_write_puts_the_other_path_out_of_step() {
+    let cases = [
+        ("local c = 0 function bump() c = 1 end function get() return c end", "bump()", "get()"),
+        ("t = {v = 0}", "rawset(t, 'v', 1)", "t.v"),
+        ("t = {}", "t.v = 1", "t.v or 0"),
+        ("t = {}", "setmetatable(t, {__index = function() return 1 end})", "t.v or 0"),
+        (
+            "co = coroutine.create(function() coroutine.yield() end)",
+            "coroutine.resume(co) coroutine.resume(co)",
+            "coroutine.status(co) == 'dead' and 1 or 0",
+        ),
+        ("", "string.extra = 1", "string.extra or 0"),
+        ("", "pcall(function() x = 1 error('e') end)", "x or 0"),
+        ("t = {0}", "table.sort(t, function() return false end) t[1] = 1", "t[1]"),
+    ];
+    let missed: Vec<&str> = cases
+        .iter()
+        .filter(|(setup, write, read)| {
+            let analysis = primitives(&format!(
+                "\\directlua{{{setup}}}\n\\ifodd\\uniformdeviate 7 \\directlua{{{write}}}\\fi\n\
+                 \\ifnum\\directlua{{tex.print({read})}}=1 \\def\\one{{}}\\else\\def\\zero{{}}\\fi"
+            ));
+            // The path without the write reads 0: `\one` is not certain, `\zero` may be defined.
+            defined(&analysis, "one") || undefined(&analysis, "zero")
+        })
+        .map(|(_, write, _)| *write)
+        .collect();
+    assert!(missed.is_empty(), "writes read as certain on both paths: {missed:?}");
+}
+
+/// A run that stops at a test of an unknown value and wrote nothing runs once per outcome
+/// (the VM takes the outcomes the host gives, `satex_choose`), and what the runs print is one
+/// of their texts. Up to the test the later runs get what the first run's library calls
+/// returned, so the machine reads the scanned text once. Pins: expl3's `\tex_strcmp:D` under
+/// LuaTeX (`scan_string` twice, `<`, `==`, `put_next`) on an unknown string was unknown text,
+/// so every `\str_if_eq:nnTF` of unknown text ran garbage (tagpdf's namespace loop).
+#[test]
+fn a_test_of_an_unknown_value_in_a_run_that_writes_nothing_has_each_outcome() {
+    let analysis = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local s = token.scan_string() if s == 'a' then tex.sprint('\string\\def\string\\same{}') else tex.sprint('\string\\def\string\\other{}') end}{\x}\def\after{}",
+    );
+    assert!(!undefined(&analysis, "same") && !defined(&analysis, "same"), "the test may hold");
+    assert!(!undefined(&analysis, "other") && !defined(&analysis, "other"), "the test may fail");
+    assert!(defined(&analysis, "after"), "the text was scanned once");
+}
+
+/// The three results of a string comparison written as expl3 writes it for LuaTeX: tokens put
+/// back after two tests. `\ifnum` over them is undecided, each arm live, nothing else read.
+#[test]
+fn a_comparison_of_unknown_strings_puts_back_one_of_its_results() {
+    let analysis = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local minus, zero, one = token.new(45, 12), token.new(48, 12), token.new(49, 12)
+function cmp() local a, b = token.scan_string(), token.scan_string() if a < b then token.put_next(minus, one) else token.put_next(a == b and zero or one) end end}
+\ifcase\numexpr 1+\directlua{cmp()}{\x}{5}\relax \def\less{}\or \def\same{}\or \def\more{}\else \def\none{}\fi",
+    );
+    for name in ["less", "same", "more"] {
+        assert!(!undefined(&analysis, name) && !defined(&analysis, name), "\\{name} is one of the results");
+    }
+    assert!(undefined(&analysis, "none"), "a comparison gives -1, 0 or 1");
+}
+
+/// The sound side: a run per outcome is a reading without a guess only while it changes
+/// nothing. Past a test that was given an outcome the VM stops a run before it stores into
+/// state it found (`satex_guard`), and the host refuses calls that act on the machine
+/// (`token.set_macro`): the result is unknown, as when the run stopped at the test.
+/// Pins: an outcome's write must never be what a later run reads as certain.
+#[test]
+fn a_write_after_a_test_of_an_unknown_value_is_no_outcome() {
+    let writes = [
+        ("n = 0", "n = 1", "n"),
+        ("t = {v = 0}", "t.v = 1", "t.v"),
+        ("t = {}", "t.v = 1", "t.v or 0"),
+        ("t = {v = 0}", "rawset(t, 'v', 1)", "t.v"),
+        ("local c = 0 function bump() c = 1 end function get() return c end", "bump()", "get()"),
+        ("t = {}", "setmetatable(t, {__index = function() return 1 end})", "t.v or 0"),
+    ];
+    for (setup, write, read) in writes {
+        let analysis = primitives(&format!(
+            "\\edef\\x{{\\uniformdeviate 9 }}\\directlua{{{setup}}}\\directlua{{local s = token.scan_string() if s == 'a' then {write} end}}{{\\x}}\n\
+             \\ifnum\\directlua{{tex.print({read})}}=1 \\def\\one{{}}\\fi"
+        ));
+        assert!(!defined(&analysis, "one"), "{write}: only one outcome writes it");
+    }
+    let defines = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local s = token.scan_string() if s == 'a' then token.set_macro('made', 'x') end}{\x}",
+    );
+    assert!(!defined(&defines, "made"), "only one outcome defines it");
+}
+
+/// A run that stops on something unknown did not do what its rest does: a value that rest
+/// writes is unknown afterwards. TeX runs `n = 1` here (`os.clock()` is a number).
+/// Pins: the stopped run left the state as it found it, and a later run read the old value
+/// as certain, since only globals that were missing became unknown (`taint`).
+#[test]
+fn a_run_that_stops_before_a_write_leaves_the_written_value_unknown() {
+    let analysis = primitives(
+        r"\directlua{n = 0}\directlua{if type(os.clock()) == 'number' then n = 1 end}
+\ifnum\directlua{tex.print(n)}=0 \def\zero{}\fi",
+    );
+    assert!(!defined(&analysis, "zero"), "TeX prints 1");
+}
+
+/// More tests of unknown values than `lua.outcomes` runs can follow: the result is unknown,
+/// as before, never the text of some of the outcomes.
+#[test]
+fn more_outcomes_than_runs_allowed_is_unknown() {
+    let analysis = primitives(
+        r"\edef\x{\uniformdeviate 9 }\directlua{local s, n = token.scan_string(), 0 for i = 1, 20 do if s == i then n = n + 1 end end tex.sprint('\string\\def\string\\done{}')}{\x}",
+    );
+    assert!(!defined(&analysis, "done"), "the run was given up");
+}
+
+/// LuaLaTeX looks a package up with `kpse.find_file` and reads the path it gets back. The run's
+/// directory is the document's, so a file found there is named from there. Named from satex's
+/// own directory it was looked for at `dir/dir/foo.sty`: `satex -f dir/main.tex lint` gave
+/// "`foo.sty` is not in this installation" for a package beside the document, and only under
+/// LuaTeX and only from another directory.
+#[test]
+#[cfg(unix)]
+fn a_package_beside_a_lualatex_document_is_found_from_another_directory() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(
+        crate::support::tmp_root().join(format!("satex-lua-beside-{}", std::process::id())),
+    );
+    std::fs::write(dir.join("besidedoc.sty"), "\\ProvidesPackage{besidedoc}\n\\newcommand\\beside{x}\n").unwrap();
+    let source = "\\documentclass{article}\n\\usepackage{besidedoc}\n\\begin{document}\n\\beside\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), source).unwrap();
+    // The document by a relative path: up to the root, then down.
+    let here = std::env::current_dir().unwrap();
+    let up: std::path::PathBuf = here.components().skip(1).map(|_| "..").collect();
+    let main = up.join(dir.strip_prefix("/").unwrap()).join("main.tex");
+    let mut cfg = Config { engine: Some(Engine::LuaTeX), ..crate::support::config() };
+    cfg.load.classes = true;
+    let analysis = Machine::analyze(source, Some(&main), &cfg);
+    let load = analysis.facts.loads.iter().find(|l| l.name == "besidedoc").expect("the load");
+    assert_eq!(load.status, satex::analysis::facts::LoadStatus::Read);
+    assert!(defined(&analysis, "beside"));
 }

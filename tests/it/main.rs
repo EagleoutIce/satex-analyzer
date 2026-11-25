@@ -8,6 +8,7 @@ static ALLOCATOR: satex::analysis::budget::Counted = satex::analysis::budget::Co
 // test across all cores and cargo links one test binary instead of 49.
 
 mod assertions;
+mod bibdb;
 mod budgets;
 mod build_lints;
 mod cache_agreement;
@@ -19,6 +20,7 @@ mod chktex;
 mod classes;
 mod cli_rules;
 mod clones;
+mod coldwarm;
 mod colors;
 mod compile;
 #[cfg(unix)]
@@ -26,6 +28,7 @@ mod completions;
 mod compliance_matrix;
 mod corpus;
 mod counterexamples;
+mod crash;
 mod depp;
 mod determinism;
 mod differential;
@@ -90,12 +93,14 @@ mod successors;
 mod support;
 mod tables;
 mod tagging;
+mod templates;
 mod termination;
 mod tex_compliance;
 mod tex_semantics;
 mod trace_range;
 mod typed_mistakes;
 mod units;
+mod updates;
 mod warm;
 mod write_set;
 mod xref;

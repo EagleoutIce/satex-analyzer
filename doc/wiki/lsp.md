@@ -30,9 +30,12 @@ satex lsp --port 9257 --host 0.0.0.0
 | Rename | `textDocument/prepareRename`, `rename` | `satex query definitions`/`expansions`/`occurrences` |
 | Linked editing | `textDocument/linkedEditingRange` | a `\begin` name and its `\end`, paired by nesting in the open text |
 | Any query | `workspace/executeCommand` (`satex/query`) | a [query request](queries.md#json-requests). Without `file` it reads the open document |
+| New document | `satex/templates`, then `satex/newDocument` (a request, or `workspace/executeCommand`) | the templates of `src/data/templates.yaml`. `{template, options}`, `{from}` (a GitHub URL, a zip URL, a local zip or folder) or `{files}`: the project's files, its main file, its header line and where its files came from. With `dir` it writes them there |
 | Colors | `textDocument/documentColor`, `colorPresentation` | the [color plugin](type-plugins.md#color) |
 | Dialogs | `satex/view` (`{textDocument, position}`) | the [type plugins](type-plugins.md)' views: a color picker, a length converter |
 | Hyphenation | `satex/hyphenate` (`{textDocument, words}`) | per word the characters a hyphen may precede, from the last run's tables ([typesetting plugins](configuration.md#plugins)) |
+| Math symbols | `satex/mathwidths` (`{textDocument, symbols, size}`) | per symbol `[width, height, depth, italic]` in em of its font, from the run's math codes and family fonts (`size` 0 text, 1 script, 2 scriptscript), `null` where not known |
+| Font at a place | `satex/fontAt` (`{textDocument, path?, position, char?}`) | the font the run set the character before `position` in (`char` when given): `{style, family, series, shape}`, `style` its family, series and shape among the defaults (`bf it`), `null` where the run set no such character |
 | Line breaking | `satex/break` (`{textDocument, path, line, words, indent}`) | the lines the words break into: per line the word and character it ends before, whether at a hyphen, its glue ratio and order. `indent` is a box in sp, or `true` for `\parindent` |
 
 **Roots.** A file is analyzed through the root document that reads it. A file no root reads gets an information diagnostic `unreachable-file`. It is then read after a root's preamble, apart from that root's results.
@@ -48,6 +51,7 @@ satex lsp --port 9257 --host 0.0.0.0
 | after `\` | commands in scope: the signature beside the name (`[⟨options⟩]{⟨label⟩}`), a tab stop per argument named by its type (an optional one with its brackets), the signature help once accepted, the command's card as documentation. `data` carries `args` (`m`, `som`), `math` and a one-line `doc` |
 | after `\` or `\begin{` with 3 letters | below the names in scope, those of packages not loaded yet (the installation's index), each with the `\usepackage` it adds as `additionalTextEdits` (`completion.unloaded`) |
 | after `\` in math | math commands first (`$…$`, `\(…\)`, `\[…\]`, `completion.math_environments`): a command is math when its body reaches material only math mode takes within `completion.math_depth` expansions |
+| after `\` in text | a math command's edit sets it in math, the caret inside: `\(\sum\)`, or `$\sum$` without a LaTeX kernel or in a file that uses `$` (`conventions.math.inline`). Text is where the run set the characters around the cursor in text. `data.wrap` holds the delimiters. Off with `completion.wrap_math: false` |
 | `\begin{` | environment names |
 | a reference or citation argument | the document's labels or keys, by the argument's key kind (`\ref{` never offers citations) |
 | a file argument | matching files of its kind, the project's and the installation's |

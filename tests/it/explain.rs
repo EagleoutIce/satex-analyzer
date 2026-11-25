@@ -23,6 +23,9 @@ fn str_field<'a>(record: &'a Record, field: &str) -> Option<&'a str> {
 
 #[test]
 fn takes_is_a_min_max_object() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     // `s O{d} m`: one mandatory argument, three items total (star included).
     let analysis = analyze_kernel(r"\NewDocumentCommand\x{s O{d} m}{#3}");
     let record = explain_one(&analysis, "x");
@@ -215,6 +218,9 @@ fn section_is_star_optional_mandatory() {
 
 #[test]
 fn document_command_signature_from_the_probe() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let analysis = analyze_kernel(r"\NewDocumentCommand\qx{s O{d} m}{#3}");
     let record = explain_one(&analysis, "qx");
     assert_eq!(str_field(&record, "effective"), Some(r"\qx*?[d]{2}"));
@@ -494,6 +500,9 @@ fn delimited_macros_called_anywhere_are_followed() {
 
 #[test]
 fn document_commands_of_every_argument_type() {
+    if !crate::support::kernel_has("\\NewDocumentCommand") {
+        return;
+    }
     let analysis = analyze_kernel(
         r"\NewDocumentCommand\na{s t+ o O{df} m}{}
 \NewDocumentCommand\nb{r() R<>{rr} m}{}
@@ -1035,8 +1044,14 @@ fn a_package_overwriting_a_package_shows_the_whole_chain() {
     let chain = chain_of(&record);
     let packages: Vec<&str> = chain.iter().map(|(_, p)| p.as_str()).collect();
     assert_eq!(packages.first(), Some(&"kernel"), "{chain:?}");
-    // hyperref's own `\let\ref` is a scoped copy in `\pdfstringdef`, no definition
-    assert_eq!(packages, ["kernel", "nameref"], "{chain:?}");
+    // hyperref's own `\let\ref` is a scoped copy in `\pdfstringdef`, no definition.
+    // Before 2020 hyperref defines `\ref` itself and nameref skips its own.
+    let last = if crate::support::installed_file_has("hyperref.sty", "\\DeclareRobustCommand\\ref{") {
+        "hyperref"
+    } else {
+        "nameref"
+    };
+    assert_eq!(packages, ["kernel", last], "{chain:?}");
     assert_eq!(chain.last().map(|(r, _)| r.as_str()), Some("in force"));
 }
 
@@ -1143,4 +1158,48 @@ fn explaining_a_name_nothing_defines_says_so() {
         satex::queries::query::explain(&analysis, &["\\nosuch".into(), "known".into()], false).unwrap();
     assert!(records.iter().any(|r| r["name"] == "\\known"), "{records:?}");
     assert_eq!(hints, ["`\\nosuch` has no meaning the run gave it"], "{records:?}");
+}
+
+/// The text from the column `record` points at to its line's end.
+fn pointed_text(record: &Record) -> String {
+    let path = str_field(record, "path").expect("a path");
+    let line = record["line"].as_u64().expect("a line") as usize;
+    let col = record["col"].as_u64().expect("a column") as usize;
+    assert!(col >= 1, "columns count from 1: {record:?}");
+    let text = std::fs::read_to_string(path).unwrap();
+    text.lines().nth(line - 1).unwrap().chars().skip(col - 1).collect()
+}
+
+/// A kernel command a kernel macro defines for a name it was handed
+/// (`\DeclareTextFontCommand{\textit}` reaching the `\edef#1` inside
+/// `\declare@robustcommand@auxiii`) stands where the name was written.
+/// The site was the `\edef`'s when both are in `latex.ltx`: only a name
+/// from another file moved it.
+#[test]
+fn a_kernel_command_made_for_a_handed_name_stands_at_its_declaration() {
+    if !installed() {
+        return;
+    }
+    let analysis = analyze_kernel(r"\relax");
+    for name in ["textit", "textbf", "emph"] {
+        let record = explain_one(&analysis, name);
+        let rest = pointed_text(&record);
+        assert!(rest.starts_with(&format!("\\{name}")), "\\{name} points at {rest:?}: {record:?}");
+    }
+}
+
+/// The format cache keeps the column of each kernel definition: a run
+/// that installs the kernel from its cache points at `\label`'s line and
+/// column as the run that read `latex.ltx` did, never at column 0.
+#[test]
+fn kernel_sites_from_the_format_cache_keep_their_column() {
+    if !installed() {
+        return;
+    }
+    // Twice: the second run installs the format from its cache.
+    for _ in 0..2 {
+        let record = explain_one(&analyze_kernel(r"\relax"), "label");
+        let rest = pointed_text(&record);
+        assert!(rest.contains("\\label"), "points at {rest:?}: {record:?}");
+    }
 }

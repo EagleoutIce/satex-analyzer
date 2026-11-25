@@ -261,6 +261,7 @@ LUA_API lua_State *lua_newthread (lua_State *L) {
   L1 = &cast(LX *, luaM_newobject(L, LUA_TTHREAD, sizeof(LX)))->l;
   L1->marked = luaC_white(g);
   L1->tt = LUA_TTHREAD;
+  L1->satex_epoch = g->satex_epoch;
   /* link it on list 'allgc' */
   L1->next = g->allgc;
   g->allgc = obj2gco(L1);
@@ -326,6 +327,11 @@ LUA_API lua_State *lua_newstate (lua_Alloc f, void *ud) {
   g->totalbytes = sizeof(LG);
   g->GCdebt = 0;
   g->gcfinnum = 0;
+  g->satex_writes = 0;
+  g->satex_epoch = g->satex_epochs = 0;
+  g->satex_choices = g->satex_nchoices = g->satex_chosen = 0;
+  g->satex_asked = 0;
+  L->satex_epoch = 0;
   g->gcpause = LUAI_GCPAUSE;
   g->gcstepmul = LUAI_GCMUL;
   for (i=0; i < LUA_NUMTAGS; i++) g->mt[i] = NULL;

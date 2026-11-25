@@ -103,22 +103,26 @@ pub struct Vertex {
 /// `satex slice` walks.
 #[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct DependencyGraph {
-    pub vertices: Vec<Vertex>,
+    /// Shared in chunks by checkpoints and forks, stored as a plain list.
+    #[serde(with = "crate::fixed::flat")]
+    pub vertices: crate::fixed::Chunked<Vertex>,
     /// `limits.vertices` (0: none): past it a new site shares one overflow vertex, so
     /// the graph stops growing while the analysis goes on.
     pub cap: usize,
     overflow: Option<NodeId>,
     /// Outgoing edges, indexed by source vertex.
-    out: Vec<Vec<(NodeId, EdgeKind)>>,
+    #[serde(with = "crate::fixed::flat")]
+    out: crate::fixed::Chunked<Vec<(NodeId, EdgeKind)>>,
     /// Where each target sits in `out`, for the vertices with many outgoing
     /// edges: a call that runs a long loop reaches every vertex the loop
     /// makes, and finding an edge by scanning would make it quadratic.
-    wide: LookupMap<NodeId, LookupMap<NodeId, u32>>,
+    /// Shared with copies, each index copied once written.
+    wide: crate::fixed::SharedMap<NodeId, std::rc::Rc<LookupMap<NodeId, u32>>>,
     /// One vertex per source site.  A macro body that is read several times —
     /// because a package is analyzed under both arms of an undecided
     /// conditional, or because a loop is unrolled — describes the same
     /// program point every time.
-    sites: LookupMap<(Span, Sym, VertexTag), NodeId>,
+    sites: crate::fixed::HotMap<(Span, Sym, VertexTag), NodeId>,
     /// The last line a construct that began at a span reached, for the ones
     /// whose arguments ran past their own line.  Only spans that reach
     /// further than their own line are in here.
@@ -148,6 +152,10 @@ pub struct DependencyGraph {
     /// with the call a read was charged to, and each `made_by` among them
     /// as an edge of no kind; every extent noted.
     log: Option<GraphLog>,
+    /// Vertices only, no edges, extents or makers: set while building a
+    /// kernel whose graph is dropped once it is cached, which reads none of them.
+    #[serde(skip)]
+    pub vertices_only: bool,
 }
 
 #[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
@@ -159,6 +167,12 @@ pub struct GraphLog {
     /// Set while such a read's own edges are made, which are not logged.
     pub linking: bool,
     pub extents: Vec<(Span, u32)>,
+}
+
+impl DependencyGraph {
+    pub fn probe(&self) -> Vec<(&'static str, usize)> {
+        crate::probe_sz!("g.vertices" => self.vertices, "g.out" => self.out, "g.wide" => self.wide, "g.sites" => self.sites, "g.extents" => self.extents, "g.made_by" => self.made_by, "g.defs_of" => self.defs_of, "g.ends" => self.ends, "g.touched" => self.touched, "g.touched_readers" => self.touched_readers, "g.log" => self.log)
+    }
 }
 
 impl Vertex {
@@ -187,44 +201,56 @@ impl DependencyGraph {
     /// to where both runs met (`new`) for the ones the last run had there (`at`). The runs made
     /// the same vertices and edges up to there, apart from where on the `edited` lines a vertex
     /// sits, and the rest changed none of those. `false`, with `self` unchanged, otherwise.
+    ///
+    /// `sites` and `wide` are not compared: both follow from what is. A site is its vertex's
+    /// span, name and tag ([`DependencyGraph::push_site`], vertices are never removed or renamed),
+    /// so the sites differ exactly where the vertices do; `wide` indexes `out`. Only the
+    /// vertices that differ are read and written, so the cost is the edit's, not the graph's.
     pub(crate) fn splice(&mut self, new: &Self, at: &Self, edited: impl Fn(&Span) -> bool) -> bool {
         let moved =
             |a: &Vertex, b: &Vertex| edited(&a.span) && edited(&b.span) && Vertex { span: b.span, ..a.clone() } == *b;
         let n = at.vertices.len();
-        let moves: Vec<usize> = (0..n.min(new.vertices.len())).filter(|&i| new.vertices[i] != at.vertices[i]).collect();
-        let keyed = |a: &LookupMap<(Span, Sym, VertexTag), NodeId>, b: &LookupMap<(Span, Sym, VertexTag), NodeId>| {
-            a.iter().all(|(k, v)| edited(&k.0) || b.get(k) == Some(v))
-        };
+        if new.vertices.len() != n || self.vertices.len() < n {
+            return false;
+        }
+        let moves = new.vertices.differing(&at.vertices, |a, b| a == b);
         let extents =
             |a: &HashMap<Span, u32>, b: &HashMap<Span, u32>| a.iter().all(|(k, v)| edited(k) || b.get(k) == Some(v));
-        let alike = new.vertices.len() == n
-            && self.vertices.len() >= n
-            && moves.iter().all(|&i| moved(&new.vertices[i], &at.vertices[i]) && self.vertices[i] == at.vertices[i])
-            && (new.cap, new.overflow, new.reader) == (at.cap, at.overflow, at.reader)
-            && new.out == at.out
-            && new.wide == at.wide
-            && new.made_by == at.made_by
-            && new.defs_of == at.defs_of
-            && new.ends == at.ends
-            && new.touched == at.touched
-            && new.touched_readers == at.touched_readers
-            && new.log == at.log
-            && (new.sites.len(), new.extents.len()) == (at.sites.len(), at.extents.len())
-            && keyed(&new.sites, &at.sites)
-            && keyed(&at.sites, &new.sites)
-            && extents(&new.extents, &at.extents)
-            && extents(&at.extents, &new.extents);
+        let alike =
+            moves.iter().all(|&i| moved(&new.vertices[i], &at.vertices[i]) && self.vertices[i] == at.vertices[i])
+                && (new.cap, new.overflow, new.reader) == (at.cap, at.overflow, at.reader)
+                && new.out == at.out
+                && new.made_by == at.made_by
+                && new.defs_of == at.defs_of
+                && new.ends == at.ends
+                && new.touched == at.touched
+                && new.touched_readers == at.touched_readers
+                && new.log == at.log
+                && new.extents.len() == at.extents.len()
+                && extents(&new.extents, &at.extents)
+                && extents(&at.extents, &new.extents);
         if !alike {
             return false;
         }
+        let site = |v: &Vertex| (v.span, v.name, v.tag);
+        for &i in &moves {
+            self.sites.remove(&site(&at.vertices[i]));
+        }
         for i in moves {
             self.vertices[i].span = new.vertices[i].span;
+            self.sites.insert_mut(site(&new.vertices[i]), i as NodeId);
         }
-        self.sites.retain(|k, _| !edited(&k.0));
-        self.sites.extend(new.sites.iter().filter(|(k, _)| edited(&k.0)).map(|(k, v)| (*k, *v)));
         self.extents.retain(|k, _| !edited(k));
         self.extents.extend(new.extents.iter().filter(|(k, _)| edited(k)).map(|(k, v)| (*k, *v)));
         true
+    }
+
+    /// Whether the graph is `old` apart from where a vertex stands: the same vertices and edges.
+    pub fn alike_but_places(&self, old: &Self) -> bool {
+        let moved = |i: usize| Vertex { span: old.vertices[i].span, ..self.vertices[i].clone() } == old.vertices[i];
+        self.vertices.len() == old.vertices.len()
+            && self.vertices.differing(&old.vertices, |a, b| a == b).into_iter().all(moved)
+            && self.out == old.out
     }
 
     pub fn push(
@@ -262,6 +288,11 @@ impl DependencyGraph {
         let id = self.push_site(tag, name, key, span, within, cds);
         self.touch(id);
         id
+    }
+
+    /// A vertex a replayed segment reached: reached by a recording around it too.
+    pub fn reach(&mut self, id: NodeId) {
+        self.touch(id);
     }
 
     fn touch(&mut self, id: NodeId) {
@@ -308,7 +339,7 @@ impl DependencyGraph {
             return id;
         }
         let id = self.vertices.len() as NodeId;
-        self.sites.insert((vertex.span, vertex.name, vertex.tag), id);
+        self.sites.insert_mut((vertex.span, vertex.name, vertex.tag), id);
         self.out.push(Vec::new());
         self.vertices.push(vertex);
         id
@@ -323,9 +354,10 @@ impl DependencyGraph {
         within: Option<NodeId>,
         cds: &[ControlDep],
     ) -> NodeId {
-        if let Some(&id) = self.sites.get(&(span, name, tag)) {
-            let vertex = &mut self.vertices[id as usize];
-            if vertex.cds != cds {
+        if let Some(id) = self.sites.get_mut(&(span, name, tag)).map(|id| *id) {
+            // Only a change unshares the vertex's chunk.
+            if self.vertices[id as usize].cds != cds {
+                let vertex = &mut self.vertices[id as usize];
                 if cds.len() > 16 {
                     let keep: crate::fixed::HashSet<(NodeId, bool)> = cds.iter().map(|c| (c.on, c.taken)).collect();
                     vertex.cds.retain(|c| keep.contains(&(c.on, c.taken)));
@@ -345,7 +377,7 @@ impl DependencyGraph {
         if self.cap > 0 && self.vertices.len() + 1 >= self.cap {
             self.overflow = Some(id);
         }
-        self.sites.insert((span, name, tag), id);
+        self.sites.insert_mut((span, name, tag), id);
         self.out.push(Vec::new());
         self.vertices.push(Vertex { tag, name, key, span, cds: cds.to_vec(), within });
         // A control dependency is an edge like any other, so that slicing is
@@ -374,7 +406,7 @@ impl DependencyGraph {
 
     /// Record that the construct beginning at `span` reads as far as `line`.
     pub fn note_extent(&mut self, span: Span, line: u32) {
-        if line <= span.line {
+        if line <= span.line || self.vertices_only {
             return;
         }
         if let Some(log) = &mut self.log {
@@ -394,6 +426,11 @@ impl DependencyGraph {
         &self.extents
     }
 
+    /// Moves the recent sites into the shared table, before a checkpoint copies the graph.
+    pub fn settle(&mut self) {
+        self.sites.settle();
+    }
+
     /// The vertex already standing for this source site, if any.
     pub fn find(&self, span: Span, name: Sym, tag: VertexTag) -> Option<NodeId> {
         self.sites.get(&(span, name, tag)).copied()
@@ -406,6 +443,9 @@ impl DependencyGraph {
 
     /// Record that `call`'s expansion has just run the definition `def`.
     pub fn made_by(&mut self, def: NodeId, call: NodeId) {
+        if self.vertices_only {
+            return;
+        }
         if let Some(log) = &mut self.log {
             // In the order of the edges too: a read after it is charged to
             // this call, one before it to the one before.
@@ -418,6 +458,9 @@ impl DependencyGraph {
     }
 
     pub fn edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) {
+        if self.vertices_only {
+            return;
+        }
         let mention = kind.intersects(EdgeKind::MENTION);
         let kind = EdgeKind(kind.0 & !EdgeKind::MENTION.0);
         // A vertex inside a macro body stands for every expansion of it, so
@@ -457,12 +500,24 @@ impl DependencyGraph {
     }
 
     fn add_edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) {
+        if self.vertices_only {
+            return;
+        }
         if let Some(log) = &mut self.log
             && !log.linking
         {
             log.edges.push((from, to, kind, self.reader));
         }
         const WIDE: usize = 32;
+        // Only a new edge or kind unshares the vertex's chunk.
+        let Some(slot) = self.out.get(from as usize) else { return };
+        let at = match slot.len() < WIDE {
+            true => slot.iter().position(|(t, _)| *t == to),
+            false => self.wide.get(&from).and_then(|w| w.get(&to)).map(|&i| i as usize),
+        };
+        if at.is_some_and(|i| slot[i].1 | kind == slot[i].1) {
+            return;
+        }
         let Some(slot) = self.out.get_mut(from as usize) else { return };
         if slot.len() < WIDE {
             if let Some(e) = slot.iter_mut().find(|(t, _)| *t == to) {
@@ -472,10 +527,11 @@ impl DependencyGraph {
             }
             return;
         }
-        let index = self
-            .wide
-            .entry(from)
-            .or_insert_with(|| slot.iter().enumerate().map(|(i, (t, _))| (*t, i as u32)).rev().collect());
+        if self.wide.get(&from).is_none() {
+            let index = slot.iter().enumerate().map(|(i, (t, _))| (*t, i as u32)).rev().collect();
+            self.wide.insert_mut(from, std::rc::Rc::new(index));
+        }
+        let index = std::rc::Rc::make_mut(self.wide.get_mut(&from).expect("inserted"));
         match index.get(&to) {
             Some(&i) => slot[i as usize].1 |= kind,
             None => {
@@ -680,14 +736,48 @@ impl DependencyGraph {
 /// definitions rather than from the [`DependencyGraph`], so that macros that
 /// are never invoked are still covered. [`crate::analysis::machine::Analysis::calls`]
 /// holds the one for a run.
-#[derive(PartialEq, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CallGraph {
-    pub nodes: Vec<Sym>,
-    index: LookupMap<Sym, usize>,
-    pub edges: Vec<Vec<usize>>,
+    #[serde(with = "crate::fixed::flat")]
+    pub nodes: crate::fixed::Chunked<Sym>,
+    index: crate::fixed::SharedMap<Sym, usize>,
+    /// The nodes looked up lately, one table probe each (the trie takes about five
+    /// pointers, twice per macro call). `index` never drops a name, so an entry holds.
+    #[serde(skip)]
+    front: Front,
+    #[serde(with = "crate::fixed::flat")]
+    pub edges: crate::fixed::Chunked<Vec<usize>>,
     /// While a package cache is being captured: every distinct `node` and
     /// `add` since the last `clear` of its name, and every `clear`, in order.
     log: Option<(crate::fixed::LookupSet<CallEvent>, Vec<CallEvent>)>,
+}
+
+/// [`CallGraph::index`] entries in front of it. No part of the graph: a copy starts
+/// without, and any two are equal.
+#[derive(Default)]
+struct Front(crate::fixed::LookupMap<Sym, usize>);
+
+/// Entries [`Front`] holds before it starts over.
+const FRONT: usize = 1 << 12;
+
+impl Clone for Front {
+    fn clone(&self) -> Self {
+        Front::default()
+    }
+}
+
+impl PartialEq for Front {
+    fn eq(&self, _: &Self) -> bool {
+        true
+    }
+}
+
+/// `index` says where each of `nodes` stands ([`CallGraph::node`], the only writer of both):
+/// equal nodes have equal indices, and the lists skip the chunks two copies share.
+impl PartialEq for CallGraph {
+    fn eq(&self, other: &Self) -> bool {
+        self.nodes == other.nodes && self.edges == other.edges && self.log == other.log
+    }
 }
 
 /// One change to a [`CallGraph`], as a package cache replays it.
@@ -719,8 +809,21 @@ impl CallGraph {
     }
 
     /// Forget what `s` calls: a redefinition replaces it.
+    /// Where `s` is, if it is a node.
+    fn at(&mut self, s: Sym) -> Option<usize> {
+        if let Some(&i) = self.front.0.get(&s) {
+            return Some(i);
+        }
+        let i = *self.index.get(&s)?;
+        if self.front.0.len() >= FRONT {
+            self.front.0.clear();
+        }
+        self.front.0.insert(s, i);
+        Some(i)
+    }
+
     pub fn clear(&mut self, s: Sym) {
-        if let Some(&i) = self.index.get(&s) {
+        if let Some(i) = self.at(s) {
             let targets = std::mem::take(&mut self.edges[i]);
             if let Some((seen, _)) = &mut self.log {
                 for t in targets {
@@ -744,20 +847,19 @@ impl CallGraph {
 
     pub fn node(&mut self, s: Sym) -> usize {
         self.note(CallEvent::Node(s));
-        if let Some(&i) = self.index.get(&s) {
+        if let Some(i) = self.at(s) {
             return i;
         }
         let i = self.nodes.len();
         self.nodes.push(s);
-        self.index.insert(s, i);
+        self.index.insert_mut(s, i);
         self.edges.push(Vec::new());
         i
     }
 
     /// Whether `from` calls `to` already and no log waits for the edge.
-    pub fn has(&self, from: Sym, to: Sym) -> bool {
-        let at = |s| self.index.get(&s).copied();
-        self.log.is_none() && at(from).zip(at(to)).is_some_and(|(a, b)| self.edges[a].contains(&b))
+    pub fn has(&mut self, from: Sym, to: Sym) -> bool {
+        self.log.is_none() && self.at(from).zip(self.at(to)).is_some_and(|(a, b)| self.edges[a].contains(&b))
     }
 
     pub fn add(&mut self, from: Sym, to: Sym) {
@@ -771,7 +873,7 @@ impl CallGraph {
 
     /// Collapse parallel edges once, after the run.
     pub fn finish(&mut self) {
-        for targets in &mut self.edges {
+        for targets in self.edges.iter_mut() {
             targets.sort_unstable();
             targets.dedup();
         }
@@ -786,16 +888,14 @@ impl CallGraph {
     /// being a cycle of macros calling one another.
     pub fn recursive(&self) -> Vec<(Sym, Vec<Sym>)> {
         let mut out = Vec::new();
-        for component in strongly_connected(&self.edges) {
-            match component[..] {
-                [only] if self.edges[only].contains(&only) => out.push((self.nodes[only], vec![self.nodes[only]])),
-                [_] => {}
-                _ => {
-                    let cycle: Vec<Sym> = component.iter().map(|&node| self.nodes[node]).collect();
-                    out.extend(component.iter().map(|&node| (self.nodes[node], cycle.clone())));
-                }
+        strongly_connected(&self.edges, |component| match *component {
+            [only] if self.edges[only].contains(&only) => out.push((self.nodes[only], vec![self.nodes[only]])),
+            [_] => {}
+            _ => {
+                let cycle: Vec<Sym> = component.iter().map(|&node| self.nodes[node]).collect();
+                out.extend(component.iter().map(|&node| (self.nodes[node], cycle.clone())));
             }
-        }
+        });
         out
     }
 }
@@ -804,20 +904,21 @@ fn escape(s: &str) -> String {
     s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// The strongly connected components of `edges` (Tarjan), each closed
-/// before the ones that reach it, iteratively so a long chain of calls
-/// cannot overflow the stack.
-fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
+/// The strongly connected components of `edges` (Tarjan), each handed to `each` (in the order
+/// its nodes leave the stack) before the ones that reach it, iteratively so a long chain of
+/// calls cannot overflow the stack. One buffer for all of them: most components are one node,
+/// and a vector each cost the lint rule reading them most of its time in the browser.
+fn strongly_connected(edges: &crate::fixed::Chunked<Vec<usize>>, mut each: impl FnMut(&[usize])) {
     const NONE: usize = usize::MAX;
     let n = edges.len();
     let (mut index, mut low, mut on) = (vec![NONE; n], vec![0; n], vec![false; n]);
-    let (mut next, mut stack, mut out) = (0, Vec::new(), Vec::new());
+    let (mut next, mut stack, mut frames, mut component) = (0, Vec::new(), Vec::new(), Vec::new());
     for root in 0..n {
         if index[root] != NONE {
             continue;
         }
         // A frame: the node and how many of its edges are done.
-        let mut frames = vec![(root, 0)];
+        frames.push((root, 0));
         (index[root], low[root], next) = (next, next, next + 1);
         stack.push(root);
         on[root] = true;
@@ -839,7 +940,7 @@ fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
                 low[parent] = low[parent].min(low[v]);
             }
             if low[v] == index[v] {
-                let mut component = Vec::new();
+                component.clear();
                 while let Some(w) = stack.pop() {
                     on[w] = false;
                     component.push(w);
@@ -847,11 +948,10 @@ fn strongly_connected(edges: &[Vec<usize>]) -> Vec<Vec<usize>> {
                         break;
                     }
                 }
-                out.push(component);
+                each(&component);
             }
         }
     }
-    out
 }
 
 #[cfg(test)]
@@ -860,8 +960,38 @@ mod scc_tests {
     fn components_close_before_what_reaches_them() {
         // 0 -> 1 <-> 2, 3 -> 3, 4 alone.
         let edges = vec![vec![1], vec![2], vec![1], vec![3], vec![]];
-        let mut found = super::strongly_connected(&edges);
+        let mut found: Vec<Vec<usize>> = Vec::new();
+        super::strongly_connected(&edges.into(), |c| found.push(c.to_vec()));
         found.iter_mut().for_each(|c| c.sort());
         assert_eq!(found, [vec![1, 2], vec![0], vec![3], vec![4]]);
+    }
+}
+
+#[cfg(test)]
+mod vertices_only_tests {
+    use super::{DependencyGraph, EdgeKind, VertexTag};
+    use crate::engine::tex::{Span, Sym};
+
+    /// A kernel build keeps only vertices: its graph is dropped once the kernel is
+    /// cached. The ids must be the ones a full graph hands out, since the run keeps
+    /// them (open calls, control dependencies), while no edge is stored.
+    #[test]
+    fn a_vertices_only_graph_numbers_vertices_as_a_full_one_and_keeps_no_edges() {
+        let build = |vertices_only| {
+            let mut g = DependencyGraph { vertices_only, ..Default::default() };
+            let at = |line| Span { file: 1, line, col: 0 };
+            let a = g.push(VertexTag::MacroCall, Sym(1), at(1), None, &[]);
+            g.set_reader(Some(a));
+            let b = g.push(VertexTag::MacroCall, Sym(2), at(2), Some(a), &[]);
+            let again = g.push(VertexTag::MacroCall, Sym(2), at(2), Some(a), &[]);
+            g.edge(a, b, EdgeKind::READS);
+            g.made_by(b, a);
+            g.note_extent(at(1), 5);
+            ((a, b, again, g.len()), g.edge_count(), g.maker(b))
+        };
+        let (full, lean) = (build(false), build(true));
+        assert_eq!(full.0, lean.0);
+        assert!(full.1 > 0 && full.2.is_some());
+        assert_eq!((lean.1, lean.2), (0, None));
     }
 }

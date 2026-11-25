@@ -1,8 +1,8 @@
-use crate::analysis::facts::{LoadStatus, MeaningKind};
+use crate::analysis::facts::{LoadStatus, MeaningKind, Rest};
 use crate::engine::builtins::OccKind;
 use crate::engine::tex::{Span, Sym};
 use crate::linter::fix::{Applicability, Fix};
-use crate::linter::shared::own_runaway;
+use crate::linter::shared::{Unsure, own_runaway};
 use crate::linter::{Category, Ref, Report, Rule, Severity, Source};
 use crate::plugins::Provider;
 
@@ -113,8 +113,12 @@ text.",
         explanation: "\
 The run saw the macro's expansion reach the macro again, could not see the
 recursion end, and found no conditional (no `\\if…`, `\\else` or `\\fi`) to
-end it.  A macro nothing expands is judged by the names its replacement text
-holds.  A real run expands until TeX runs out of memory:
+end it, in any macro of the cycle or in one their replacement texts name.  A
+macro nothing expands is judged by the names its replacement text holds, and
+it calls a name only where the name stands to be expanded: not inside braces,
+not as the target of a definition or after `\\string`, and not as a quark
+(`\\def\\q{\\q}`, compared and never expanded).  A real run expands until
+TeX runs out of memory:
 `TeX capacity exceeded, sorry [main memory size]`.
 
 Fix by adding the test that stops it, or by removing the self-reference.",
@@ -440,37 +444,58 @@ Fix by adding `\\ExplSyntaxOff` after the code that needs it.",
 ];
 
 fn unguarded_recursion(report: &mut Report) {
-    use crate::engine::builtins::Primitive;
     use crate::engine::tex::Tok;
 
     let analysis = report.analysis();
-    let recursive: std::collections::BTreeMap<Sym, bool> =
-        report.index().recursion().iter().map(|r| (r.name, r.observed)).collect();
+    let recursive: std::collections::BTreeMap<Sym, (bool, &[Sym])> =
+        report.index().recursion().iter().map(|r| (r.name, (r.observed, &r.cycle[..]))).collect();
+    let prim = |token: &crate::engine::tex::Token| token.cs().and_then(|cs| analysis.env.meaning(cs).prim());
+    // Where the run cut a recursion or met a loop that never ends, per name.
+    let cut = |d: &&crate::analysis::facts::Diagnostic| matches!(d.code, "recursion-widened" | "endless-loop");
     let sites: crate::fixed::HashSet<crate::engine::tex::Span> =
-        analysis.facts.diagnostics.iter().filter(|d| d.code == "recursion-widened").map(|d| d.span).collect();
-    let widened: crate::fixed::HashSet<Sym> =
-        analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| e.name).collect();
+        analysis.facts.diagnostics.iter().filter(cut).map(|d| d.span).collect();
+    let widened: crate::fixed::HashMap<Sym, Span> =
+        analysis.facts.expansions.iter().filter(|e| sites.contains(&e.span)).map(|e| (e.name, e.span)).collect();
+    let mut testing = crate::fixed::HashMap::default();
     for def in &analysis.facts.defs {
-        let Some(&observed) = recursive.get(&def.name) else { continue };
+        let Some(&(observed, cycle)) = recursive.get(&def.name) else { continue };
         // A recursion the run saw end had something to stop it.
-        if observed && !widened.contains(&def.name) {
+        if observed && !widened.contains_key(&def.name) {
             continue;
         }
         let Some(mac) = &def.mac else { continue };
-        // An optional-argument command's dispatcher (`\@xargdef`:
-        // `\def\foo{\@protected@testopt \foo \\foo {default}}`) names
-        // itself only as data, never as a call.
-        if !observed && only_optarg_wrapper_self_reference(analysis, def.name, mac) {
+        // A test anywhere the cycle's texts lead can end it: in another macro of the cycle
+        // (hyperref's `\HyPsd@GetTwoBytes` hands on to `\HyPsd@DoConvert`, which tests), or in
+        // one a text calls or hands its own name to (`\@protected@testopt \foo \\foo {default}`
+        // of an optional argument, expl3's `\str_if_eq:nnTF`, `\quark_if_recursion_tail_stop:N`).
+        // What the run went round and could not see end is held to its own text.
+        let guarded = match observed {
+            true => mac.replacement_text.iter().any(|t| prim(t).is_some_and(is_test)),
+            false => cycle.iter().any(|&name| reaches_test(analysis, name, &mut testing)),
+        };
+        if guarded {
             continue;
         }
-        let guarded = mac.replacement_text.iter().any(|token| match token.tok {
-            Tok::Cs(sym) => matches!(
-                analysis.env.meaning(sym).prim(),
-                Some(Primitive::If(_) | Primitive::Else | Primitive::Fi | Primitive::Unless)
-            ),
-            _ => false,
-        });
-        if guarded {
+        // Read off the texts, the cycle is real only where each name calls the next
+        // ([`called`]), from this definition back to its name.
+        let text = &mac.replacement_text;
+        let mut reached: Vec<Sym> = called(analysis, text, cycle);
+        let mut at = 0;
+        while let Some(&next) = reached.get(at).filter(|&&next| next != def.name) {
+            let text = analysis.env.meaning(next).as_macro().map(|m| m.replacement_text.clone());
+            for further in text.iter().flat_map(|t| called(analysis, t, cycle)) {
+                if !reached.contains(&further) {
+                    reached.push(further);
+                }
+            }
+            at += 1;
+        }
+        // A quark stands for itself and is compared, never expanded (the TeXbook's `\def\q{\q}`,
+        // expl3's `\quark_new:N`): a name whose text is itself alone and that other texts hold.
+        let own = |t: &crate::engine::tex::Token| t.tok == Tok::Cs(def.name);
+        let space = |t: &crate::engine::tex::Token| matches!(t.tok, Tok::Chr(_, crate::engine::tex::Catcode::Space));
+        let quark = text.iter().all(|t| own(t) || space(t)) && held_elsewhere(analysis, def.name);
+        if !observed && (at == reached.len() || quark) {
             continue;
         }
         let name = report.cs(def.name);
@@ -487,47 +512,89 @@ fn unguarded_recursion(report: &mut Report) {
                 ),
             )
         };
-        report.add_as(severity, def.span, &name, message, Some("add the test that ends the recursion".into()));
+        // The loop runs where it was met, not where it is defined: that place decides.
+        match widened.get(&def.name).and_then(|site| report.index().unsure(*site)) {
+            Some(unsure) => report.add_doubted(def.span, &name, message, unsure),
+            None => {
+                report.add_as(severity, def.span, &name, message, Some("add the test that ends the recursion".into()))
+            }
+        }
     }
 }
 
-/// Whether every occurrence of `name` in `mac`'s body is the optional-argument
-/// dispatch pairing ltdefns and ltcmd both generate: the plain name right
-/// after the kernel's own optional-argument dispatcher, immediately followed
-/// by the name's internal counterpart (`\csname\string\name\endcsname`,
-/// which carries a literal `\` as the first character of its own name).
-/// A `false` here means some other occurrence is a real call.
-fn only_optarg_wrapper_self_reference(
+/// The names of `cycle` that `text` calls, read off the text: where a name stands to be
+/// expanded. Not inside braces, where it is part of what another command is handed
+/// (`\unexpanded{\name}`), nor after a primitive that takes the name itself
+/// (`\global\let\name\relax`, how a warning is given once, `\string\name` in a message).
+fn called(
+    analysis: &crate::analysis::machine::Analysis,
+    text: &[crate::engine::tex::Token],
+    cycle: &[Sym],
+) -> Vec<Sym> {
+    use crate::engine::tex::{Catcode, Tok};
+    let prim = |token: &crate::engine::tex::Token| token.cs().and_then(|cs| analysis.env.meaning(cs).prim());
+    let (mut depth, mut out) = (0usize, Vec::new());
+    for (i, token) in text.iter().enumerate() {
+        match token.tok {
+            Tok::Chr(_, Catcode::Begin) => depth += 1,
+            Tok::Chr(_, Catcode::End) => depth = depth.saturating_sub(1),
+            Tok::Cs(name)
+                if depth == 0
+                    && cycle.contains(&name)
+                    && !i.checked_sub(1).and_then(|before| prim(&text[before])).is_some_and(takes_name) =>
+            {
+                out.push(name);
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// A primitive that takes the name after it as a name, not as a call: a definition's target
+/// (tex.web § 1215), and what `\string`, `\meaning` and `\noexpand` are given (§§ 358, 468).
+fn takes_name(p: crate::engine::builtins::Primitive) -> bool {
+    use crate::engine::builtins::{Primitive, TextOf};
+    let printed = matches!(p, Primitive::Text(TextOf::String | TextOf::Meaning));
+    printed || matches!(p, Primitive::Def { .. } | Primitive::Let { .. } | Primitive::NoExpand)
+}
+
+/// Whether the text or the parameter text of a macro of another name holds `name`.
+fn held_elsewhere(analysis: &crate::analysis::machine::Analysis, name: Sym) -> bool {
+    use crate::engine::tex::{ParamItem, Tok};
+    let holds = |m: &crate::engine::tex::MacroDef| {
+        m.replacement_text.iter().any(|t| t.cs() == Some(name))
+            || m.parameter_text.items.iter().any(|item| matches!(item, ParamItem::Lit(Tok::Cs(cs)) if *cs == name))
+    };
+    analysis.facts.defs.iter().any(|d| d.name != name && d.mac.as_deref().is_some_and(holds))
+}
+
+/// A primitive of a conditional (tex.web § 487).
+fn is_test(p: crate::engine::builtins::Primitive) -> bool {
+    use crate::engine::builtins::Primitive;
+    matches!(p, Primitive::If(_) | Primitive::Else | Primitive::Fi | Primitive::Unless)
+}
+
+/// Whether the expansion of `name` can reach a conditional, through the macros its text names,
+/// by the meanings the run ends with. `known` keeps each answer.
+fn reaches_test(
     analysis: &crate::analysis::machine::Analysis,
     name: Sym,
-    mac: &crate::engine::tex::MacroDef,
+    known: &mut crate::fixed::HashMap<Sym, bool>,
 ) -> bool {
-    use crate::engine::tex::Tok;
-    // `\@protected@testopt` (ltdefns, current kernel) and its predecessor
-    // `\@testopt`, which a format without the merged definition still uses.
-    fn is_dispatcher(n: &str) -> bool {
-        matches!(n, "@protected@testopt" | "@testopt")
+    if let Some(&answer) = known.get(&name) {
+        return answer;
     }
-    let own = analysis.interner.name(name);
-    let is_internal_counterpart = |n: &str| n.len() == own.len() + 1 && n.as_bytes()[0] == b'\\' && &n[1..] == own;
-    let text = &mac.replacement_text;
-    let mut any = false;
-    for (i, token) in text.iter().enumerate() {
-        let Tok::Cs(sym) = token.tok else { continue };
-        if sym != name {
-            continue;
-        }
-        let dispatched =
-            i > 0 && matches!(text[i - 1].tok, Tok::Cs(prev) if is_dispatcher(analysis.interner.name(prev)));
-        let paired = text.get(i + 1).is_some_and(
-            |next| matches!(next.tok, Tok::Cs(sym) if is_internal_counterpart(analysis.interner.name(sym))),
-        );
-        if !(dispatched && paired) {
-            return false;
-        }
-        any = true;
+    let (mut seen, mut work) = (crate::fixed::HashSet::default(), vec![name]);
+    let mut answer = false;
+    while let Some(next) = work.pop().filter(|_| !answer) {
+        let meaning = analysis.env.meaning(next);
+        answer = meaning.prim().is_some_and(is_test);
+        let text = meaning.as_macro().map(|m| m.replacement_text.clone());
+        work.extend(text.iter().flat_map(|t| t.iter()).filter_map(|t| t.cs()).filter(|&cs| seen.insert(cs)));
     }
-    any
+    known.insert(name, answer);
+    answer
 }
 
 fn undefined_control_sequences(report: &mut Report) {
@@ -536,12 +603,6 @@ fn undefined_control_sequences(report: &mut Report) {
     if report.analysis.plugins.kernel == crate::plugins::Kernel::Context {
         return;
     }
-    // Where a cut made the analysis assume category codes back
-    // (`region-catcodes`), a name holding a character that is no letter
-    // under any category code a document keeps (`{`, `\\`, a space, ...)
-    // was read under codes the analysis only assumed: what TeX reads there
-    // is not known.
-    let assumed = report.analysis.facts.diagnostics.iter().any(|d| d.code == "region-catcodes");
     // A class or package file that never loaded may define any name: a
     // name the run never defines is then only maybe undefined.
     let unread = (report.analysis.facts.diagnostics.iter())
@@ -556,35 +617,29 @@ fn undefined_control_sequences(report: &mut Report) {
     let local: crate::fixed::HashSet<Sym> =
         report.analysis.facts.defs.iter().filter(|d| !d.global).map(|d| d.name).collect();
     for expansion in &report.analysis.facts.expansions {
-        if !matches!(expansion.meaning, MeaningKind::Undefined | MeaningKind::UndefinedApproximated)
-            || !report.wanted(expansion.span)
-        {
+        if !expansion.meaning.undefined() || !report.wanted(expansion.span) {
             continue;
         }
         let name = report.cs(expansion.name);
         let raw = report.analysis.interner.name(expansion.name);
-        let odd = raw.chars().count() > 1 && raw.chars().any(|c| "\\{}$&#% \t\r".contains(c));
-        let elsewhere = match expansion.cds.is_empty() && local.contains(&expansion.name) {
+        // In every run only where no undecided conditional and no parted path encloses it.
+        let certain = expansion.meaning == MeaningKind::Undefined && expansion.cds.is_empty();
+        let elsewhere = match certain && local.contains(&expansion.name) {
             true => (elsewheres.entry(expansion.name))
                 .or_insert_with(|| defined_elsewhere(report.analysis, expansion.name))
                 .clone(),
             false => None,
         };
-        let (severity, message) = if assumed && odd {
-            (
-                Severity::Warning,
-                format!("`{name}` is undefined where the analysis assumed category codes back after a cut"),
-            )
-        } else if expansion.meaning == MeaningKind::UndefinedApproximated {
+        let (severity, message) = if expansion.meaning == MeaningKind::UndefinedApproximated {
             (Severity::Info, format!("`{name}` is undefined on a path the analysis approximated"))
+        } else if !certain {
+            (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
         } else if let Some(inside) = &elsewhere {
             (Severity::Error, format!("`{name}` is undefined here: the run defines it only {inside}"))
-        } else if let (true, Some(at)) = (expansion.cds.is_empty(), &unread) {
+        } else if let Some(at) = &unread {
             (Severity::Warning, format!("`{name}` is undefined unless the file missing at {at} defines it"))
-        } else if expansion.cds.is_empty() {
-            (Severity::Error, format!("`{name}` is never defined in this run"))
         } else {
-            (Severity::Warning, format!("`{name}` is undefined on a path satex could not decide"))
+            (Severity::Error, format!("`{name}` is never defined in this run"))
         };
         let fix = match severity == Severity::Error && elsewhere.is_none() {
             true => fixes.entry(expansion.name).or_insert_with(|| load_fix(report, raw)).clone(),
@@ -630,7 +685,7 @@ fn load_fix(report: &Report, name: &str) -> Option<Fix> {
 /// (`\draw` in a `tikzpicture`), or in a group at a line of it.
 fn defined_elsewhere(analysis: &crate::analysis::machine::Analysis, name: crate::engine::tex::Sym) -> Option<String> {
     // where a use of it found it defined, else where it was defined
-    let defined = |m: &MeaningKind| !matches!(m, MeaningKind::Undefined | MeaningKind::UndefinedApproximated);
+    let defined = |m: &MeaningKind| !m.undefined();
     let sites: Vec<crate::engine::tex::Span> = (analysis.facts.expansions.iter())
         .filter(|e| e.name == name && defined(&e.meaning))
         .map(|e| e.span)
@@ -701,21 +756,33 @@ const END_FIX: Applicability = Applicability::Safe;
 /// The run's `missing-end`, with the ending its kernel takes appended.
 fn missing_end(report: &mut Report) {
     let analysis = report.analysis();
-    let found: Vec<(Span, String)> = (analysis.facts.diagnostics.iter())
+    // A row the run gave on a path it approximated (not a warning) is no
+    // certain end: noted, its fix left to the author.
+    let found: Vec<(Span, String, bool)> = (analysis.facts.diagnostics.iter())
         .filter(|d| d.code == "missing-end")
-        .map(|d| (d.span, d.message.clone()))
+        .map(|d| (d.span, d.message.clone(), d.severity == crate::analysis::facts::Severity::Warning))
         .collect();
     let ending = match analysis.plugins.kernel == crate::plugins::Kernel::Latex {
         true => "\\end{document}",
         false => "\\bye",
     };
-    for (span, message) in found {
+    for (span, message, exact) in found {
         let edits = report.edits().text(span.file).map(|(path, text)| {
             let end = text.end();
             let lead = if text.body().ends_with('\n') || text.body().is_empty() { "" } else { "\n" };
             vec![crate::linter::fix::Edit { path, start: end, end, replacement: format!("{lead}{ending}\n") }]
         });
-        report.add_fix(span, ending, message, Fix::new(format!("append `{ending}`"), END_FIX, edits));
+        let fix = |applicability| Fix::new(format!("append `{ending}`"), applicability, edits);
+        match exact {
+            true => report.add_fix(span, ending, message, fix(END_FIX)),
+            false => report.add_fix_as(
+                crate::linter::Severity::Info,
+                span,
+                ending,
+                format!("{message} (the analysis approximated on the way: may not be TeX's)"),
+                fix(Applicability::Unsafe),
+            ),
+        }
     }
 }
 
@@ -767,9 +834,9 @@ fn raised_errors(report: &mut Report) {
         match (crate::linter::shared::doubt(analysis, i), library) {
             (Some(cause), _) => report.add_doubted(span, "", message, &cause),
             (None, Some(load)) => {
-                let edits = report
-                    .edits()
-                    .insert_before(crate::linter::shared::document_start(analysis).unwrap_or(span), &load);
+                let begin = crate::linter::shared::document_start(analysis);
+                let edits = library_fix(&report.edits(), begin, &load)
+                    .or_else(|| report.edits().insert_before(begin.unwrap_or(span), &load));
                 let fix = Fix::new(format!("add `{load}`, which declares it"), Applicability::Safe, edits);
                 report.add_fix(span, "", format!("{message} `{load}` declares it"), fix);
             }
@@ -1019,15 +1086,24 @@ fn new_redefines(report: &mut Report) {
         .collect();
     calls.sort_by_key(|c| c.0);
     let mut seen = std::collections::BTreeSet::new();
+    let made: Vec<&crate::analysis::facts::Definition> =
+        analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain).collect();
+    // The definitions of each name made again: one pass over all, not one per made one.
+    let mut of_name: crate::fixed::HashMap<crate::engine::tex::Sym, Vec<&crate::analysis::facts::Definition>> =
+        made.iter().map(|d| (d.name, Vec::new())).collect();
+    for d in &analysis.facts.defs {
+        if let Some(all) = of_name.get_mut(&d.name) {
+            all.push(d);
+        }
+    }
+    let same_name = |def: &crate::analysis::facts::Definition| of_name[&def.name].iter().copied();
     // A declaration run again (captured into a cache, then run live, both
     // recorded at the same vertex when the replay stands for the live run)
     // meets only its own earlier definition: no other meaning is lost.
     let rerun = |def: &crate::analysis::facts::Definition| {
-        (analysis.facts.defs.iter())
-            .any(|d| d.name == def.name && d.node <= def.node && d.span == def.span && !std::ptr::eq(d, def))
+        same_name(def).any(|d| d.node <= def.node && d.span == def.span && !std::ptr::eq(d, def))
     };
-    let made = analysis.facts.defs.iter().filter(|d| d.redefines && d.spelled && d.certain);
-    for def in made.filter(|d| !rerun(d)) {
+    for def in made.iter().copied().filter(|d| !rerun(d)) {
         let Some(&(_, span, call)) = calls.get(calls.partition_point(|c| c.0 <= def.node).wrapping_sub(1)) else {
             continue;
         };
@@ -1036,8 +1112,7 @@ fn new_redefines(report: &mut Report) {
         // while a class loads every definition runs inside some macro.
         let inside = def.via.map(|v| analysis.interner.name(v)).is_some_and(|v| v == command || v == "e@alloc");
         // A register declared again as one of its kind loses nothing but a register.
-        let before =
-            (analysis.facts.defs.iter()).filter(|d| d.name == def.name && d.node < def.node).max_by_key(|d| d.node);
+        let before = same_name(def).filter(|d| d.node < def.node).max_by_key(|d| d.node);
         let same_kind = before.is_some_and(|d| d.by == def.by && d.mac.is_none() && def.mac.is_none());
         if !command.starts_with("new") || !inside || same_kind || !seen.insert((span, def.name)) {
             continue;
@@ -1062,7 +1137,7 @@ fn already_defined(report: &mut Report) {
         report.add_fix(span, &name, message, fix);
     }
     let analysis = report.analysis();
-    let refused: Vec<(Span, String, Option<String>)> = analysis
+    let refused: Vec<(Span, String, Option<Unsure>)> = analysis
         .facts
         .diagnostics
         .iter()
@@ -1120,13 +1195,14 @@ fn refusal(report: &Report, span: Span, name: &str, message: String) -> (String,
         );
     }
     let edits = renamed(report, span, "new", "renew");
-    let how = match owner {
-        Some(package) => format!(
-            "pick another name, or use `\\renewcommand{{{name}}}` to override {package}'s, which changes it where {package} uses it too"
-        ),
-        None => format!("use `\\renewcommand{{{name}}}` if the redefinition is intended, or pick another name"),
+    // The fix is the one action; the other way out (another name) and its cost go in the message.
+    let message = match &owner {
+        Some(package) => {
+            format!("{message}. Pick another name, or renew it, which changes it where {package} uses it too")
+        }
+        None => format!("{message}. Pick another name, or renew it if the redefinition is intended"),
     };
-    (message, Fix::new(how, Applicability::Unsafe, edits))
+    (message, Fix::new(format!("use `\\renewcommand{{{name}}}`"), Applicability::Unsafe, edits))
 }
 
 /// The arity and body text a `\newcommand{name}[n][default]{body}` at `span` gives.
@@ -1178,7 +1254,7 @@ fn not_defined(report: &mut Report) {
 
 /// The messages that match `parse`, once per place.
 /// With each, the place the run could not follow before it, if any.
-fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec<(Span, String, Option<String>)> {
+fn kernel_errors(report: &Report, parse: impl Fn(&str) -> Option<String>) -> Vec<(Span, String, Option<Unsure>)> {
     let analysis = report.analysis();
     let mut seen = crate::fixed::HashSet::default();
     analysis
@@ -1208,6 +1284,12 @@ fn undefined_reference(report: &mut Report) {
         .collect();
     let keys: Vec<String> = known.keys().map(|k| k.to_string()).collect();
     for (span, via, key) in missing {
+        // `\\vref[see]{x}`: a command with no optional argument reads the `[` as its label
+        if key == "[" {
+            let message = "the label read here is `[`: the command takes no optional argument".to_string();
+            report.add(span, &key, message, Some("drop the `[…]` before the label".to_string()));
+            continue;
+        }
         let message = format!("no `\\label{{{key}}}` anywhere in the document{}", via.unwrap_or_default());
         let fix = respell_fix(report, span, &key, &keys);
         match fix.filter(|_| report.unread("defined").is_none()) {
@@ -1337,11 +1419,7 @@ fn missing_graphic(report: &mut Report) {
         // `\@missingfileerror`'s prompt is a file `\input` could not find,
         // which `unresolved-file` reports.
         .filter(|o| !o.key.contains("Default extension"))
-        .filter_map(|o| {
-            let rest = &o.key[o.key.find("File `")? + "File `".len()..];
-            let name = &rest[..rest.find("' not found")?];
-            Some((o.span, name.to_string()))
-        })
+        .filter_map(|o| Some((o.span, super::shared::missing_file(&o.key)?.to_string())))
         .filter(|found| seen.insert(found.clone()))
         .collect();
     for (span, name) in missing {
@@ -1516,7 +1594,7 @@ fn environment_mismatch(report: &mut Report) {
         // Over-approximated: reported, but as a consequence to check after
         // its cause, never as a certain fault.
         let cause = cascade(&open, span)
-            .map(|at| format!("the error at {}", report.place(at)))
+            .map(|at| Unsure::After(Rest::Gap, format!("the error at {}", report.place(at))))
             .or_else(|| crate::linter::shared::doubt(report.analysis(), i));
         if let Some(cause) = cause {
             report.add_doubted(span, &found, message, &cause);
@@ -1662,4 +1740,18 @@ fn package_call_error(report: &mut Report) {
         let error = error.lines().next().unwrap_or_default().to_string();
         report.add(span, &name, format!("`{name}` called on unknown arguments raises: {error}"), None);
     }
+}
+
+/// The fix that loads `load` (`\\usetikzlibrary{calc}`) in the preamble of the file `begin` stands in: joined to its
+/// list, else a line before `\\begin{document}` ([`crate::linter::shared::preamble_load`]); none when it lists it.
+fn library_fix(
+    edits: &super::fix::Edits,
+    begin: Option<crate::engine::tex::Span>,
+    load: &str,
+) -> Option<Vec<super::fix::Edit>> {
+    let (path, text) = edits.text(begin?.file)?;
+    let (cmd, lib) = crate::linter::shared::load_parts(load)?;
+    let (at, replacement) = crate::linter::shared::preamble_load(text.body(), cmd, &[lib], "").ok()??;
+    let start = text.pos(at);
+    Some(vec![super::fix::Edit { path, start, end: start, replacement }])
 }

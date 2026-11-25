@@ -139,7 +139,9 @@ fn unreferenced_numbered_display(report: &mut Report) {
     let closes = closes(analysis);
     let starred =
         |name: &str| analysis.interner.lookup(&format!("{name}*")).is_some_and(|sym| analysis.env.is_defined(sym));
-    let mut findings: Vec<(Span, String, String, Vec<Edit>)> = Vec::new();
+    // the display, its name, the message, the starring edit and the labels it drops
+    type Found = (Span, String, String, Vec<Edit>, Vec<Span>);
+    let mut findings: Vec<Found> = Vec::new();
     // One body scan per candidate, and the candidates are the displays the
     // document wrote: the whole rule stays linear in the source.
     let mut seen: HashSet<Span> = HashSet::default();
@@ -186,19 +188,17 @@ fn unreferenced_numbered_display(report: &mut Report) {
             let span = Span { file: occurrence.span.file, line: at.line, col: at.col };
             edit.extend(edits.delete_command(span, key).unwrap_or_default());
         }
-        findings.push((occurrence.span, name.to_string(), message, edit));
+        let labels = body.labels.iter().map(|(at, _)| Span { file: occurrence.span.file, line: at.line, col: at.col });
+        findings.push((occurrence.span, name.to_string(), message, edit, labels.collect::<Vec<_>>()));
     }
-    for (span, name, message, edit) in findings {
+    for (span, name, message, edit, labels) in findings {
         if report.unread("referenced").is_some() {
             report.add_absent("referenced", span, &name, message, None);
             continue;
         }
-        report.add_fix(
-            span,
-            &name,
-            message,
-            Fix::new(format!("write the starred {name}"), Applicability::Unsafe, Some(edit)),
-        );
+        // Its labels stand with it: `unused-label` does not say them again (`COVERS`).
+        let fix = Fix::new(format!("write the starred {name}"), Applicability::Unsafe, Some(edit));
+        report.add_fix_related(span, &name, message, fix, &labels);
     }
 }
 
@@ -305,6 +305,13 @@ fn ref_sites(report: &Report) -> Vec<Site> {
             let line: Vec<char> = text.line(span.line).chars().collect();
             let at = span.col as usize - 1;
             let (label, end) = ref_at(&line, at)?;
+            // The word before it decides: one set in math, code or
+            // typewriter type (`\texttt{see \ref{a}}`) is no prose.
+            let before = line[..at].iter().rposition(|c| !c.is_whitespace() && *c != '~');
+            let set = before.and_then(|k| view.at_span(Span { col: k as u32 + 1, ..span }));
+            if set.is_some_and(|i| !view.is_text(i)) {
+                return None;
+            }
             Some(Site { span, path, line, at, end, label })
         })
         .collect()
@@ -370,6 +377,11 @@ pub(crate) fn label_counters(analysis: &Analysis) -> HashMap<&str, String> {
                 .map(|k| &name[k..])
                 .find(|n| counter(n))
                 .map(str::to_string)
+        });
+        // No anchor names it (an older kernel's `\label`): the counter the run had stepped.
+        let found = found.filter(|c| !c.is_empty()).or_else(|| {
+            let at_label = analysis.facts.label_counters.iter().find(|(k, _)| k == label);
+            at_label.map(|(_, c)| c.clone()).filter(|c| counter(c))
         });
         if let Some(c) = found.filter(|c| !c.is_empty()) {
             out.entry(label).or_insert(c);
@@ -561,6 +573,10 @@ fn bare_reference(report: &mut Report) {
         let previous = last.replace((site.span, site.end));
         let Some(kind) = counters.get(site.label.as_str()) else { continue };
         if !has_name(analysis, cleveref, kind) {
+            continue;
+        }
+        // In a table the column's header names what its cells number.
+        if report.text().in_alignment(site.span) {
             continue;
         }
         let before: String = site.line[..site.at].iter().collect();

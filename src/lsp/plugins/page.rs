@@ -91,7 +91,7 @@ impl TypePlugin for Page {
         lines.extend(parts.geometry_calls(doc.body()).iter().map(|c| doc.pos(c.0).line));
         lines.sort_unstable();
         lines.dedup();
-        lines.into_iter().map(|l| super::lens(doc, path, l, LENS, "page")).collect()
+        lines.into_iter().map(|l| super::lens(doc, path, (l, 1), LENS, "page")).collect()
     }
 }
 
@@ -99,16 +99,16 @@ impl TypePlugin for Page {
 pub(super) type Call = (usize, Vec<Group>, usize);
 
 /// Where the main file's preamble and body are.
-struct Parts {
+pub(super) struct Parts {
     /// The byte of `\begin{document}` and of `\end{document}`.
-    begin: usize,
-    end: usize,
-    class: Option<Call>,
+    pub begin: usize,
+    pub end: usize,
+    pub class: Option<Call>,
 }
 
 impl Parts {
     /// The file at `path` when it holds the run's `document` environment.
-    fn of(analysis: &Analysis, doc: &Text, path: &str) -> Option<Parts> {
+    pub(super) fn of(analysis: &Analysis, doc: &Text, path: &str) -> Option<Parts> {
         let (b, e) = super::pairs(analysis, path, "document").into_iter().next()?;
         let text = doc.body();
         let begin = doc.offset(Pos::new(b.span.line, 1))?;
@@ -168,7 +168,7 @@ fn calls_of(text: &str, name: &str, from: usize, to: usize) -> Vec<Call> {
 }
 
 /// The `\usepackage` and `\RequirePackage` calls before `end` that load `package`.
-fn loads(text: &str, end: usize, package: &str) -> Vec<Call> {
+pub(super) fn loads(text: &str, end: usize, package: &str) -> Vec<Call> {
     let names = |c: &Call| c.1.iter().rfind(|g| g.open == '{').map(|g| text[g.inner.clone()].to_string());
     ["usepackage", "RequirePackage"]
         .iter()

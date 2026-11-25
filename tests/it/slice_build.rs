@@ -225,7 +225,10 @@ fn run_all(cases: &[Case]) {
     if satex::project::paths::which("kpsewhich").is_err() {
         return;
     }
-    let failures: Vec<String> = cases.iter().filter_map(check).collect();
+    // Kernels before 2020-02 (TeX Live 2019) preload no expl3.
+    let expl = crate::support::kernel_has("\\ExplSyntaxOn");
+    let failures: Vec<String> =
+        cases.iter().filter(|c| expl || !c.source.contains("\\ExplSyntaxOn")).filter_map(check).collect();
     assert!(
         failures.is_empty(),
         "{} of {} slices misbehave:\n\n{}",

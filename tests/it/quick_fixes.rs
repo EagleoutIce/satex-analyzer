@@ -78,6 +78,22 @@ fn a_command_made_by_a_package_s_own_definer_loads_its_package() {
     loads_a_package("SI", "\\SI{3}{\\metre}", &["siunitx"]);
 }
 
+/// A package whose names live in a code file it inputs (`tikz.sty` is `\input{tikz.code.tex}`)
+/// provides them, and an environment made with `\NewDocumentEnvironment` (forest's) is its
+/// package's. Bug pinned: the index read only `.sty` texts and the run's definers, so
+/// `tikzpicture` was forest's (which `\let`s it) and `forest` was nobody's: Insert's TikZ
+/// picture loaded forest, its forest tree loaded nothing.
+#[test]
+fn names_from_input_code_files_and_ltcmd_environments_load_their_package() {
+    if !installed() {
+        return;
+    }
+    loads_a_package("tikz", "\\tikz\\draw (0,0) -- (1,0);", &["tikz"]);
+    let source = "\\documentclass{article}\n\\begin{document}\n\\begin{forest}[a [b]]\\end{forest}\n\\end{document}\n";
+    let fixed = fix("qf-load-forest-env", source, "undefined-environment", true);
+    assert!(fixed.text.contains("\\usepackage{forest}\n"), "{}", fixed.text);
+}
+
 /// An arrow tip only a TikZ library declares raises pgf's error at the
 /// `\draw`: the fix adds the library's `\usetikzlibrary` to the preamble.
 #[test]

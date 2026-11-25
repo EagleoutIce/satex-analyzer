@@ -64,33 +64,35 @@ impl Kp {
 }
 
 /// The recorded lists, hash-consed: a list is the id of its last node.
+/// Copies share the lists recorded before them (a checkpoint holds one).
 #[derive(Clone, Default)]
 pub(crate) struct Arena {
-    nodes: Vec<(Kp, u32, u32)>,
+    nodes: crate::fixed::Chunked<(Kp, u32, u32)>,
     /// Per node: the characters the run had set when it was last pushed, so where a line breaks
     /// in the text. A note, not part of the node: lists stay shared.
-    chars: Vec<u32>,
-    index: HashMap<(Kp, u32), u32>,
-    pub(crate) texts: Vec<std::rc::Rc<[crate::engine::tex::Token]>>,
+    chars: crate::fixed::Chunked<u32>,
+    index: crate::fixed::SharedMap<(Kp, u32), u32>,
+    /// Per list (the empty one first): the list a push onto it gave last. A run pushes
+    /// what it pushed before (a second pass, a repeated text), so the next push mostly
+    /// finds its node here, checked against the node, without the walk through `index`.
+    next: crate::fixed::Chunked<u32>,
+    pub(crate) texts: crate::fixed::Chunked<std::rc::Rc<[crate::engine::tex::Token]>>,
 }
 
 impl Arena {
     /// `self` with every list `other` holds, each under `other`'s name: a run that goes on
     /// from a state of the run that made `other` names every list that run made as it did,
     /// and its own new ones past them. Lists are only ever asked for by name, so more of
-    /// them change nothing, short of the bound on their number: `None` where `other` holds
-    /// over half of it, or is not `self` grown.
-    pub(crate) fn grown(&self, other: &Arena) -> Option<Arena> {
-        let n = self.nodes.len();
-        let same = other.nodes.get(..n) == Some(&self.nodes[..])
-            && other.texts.get(..self.texts.len()) == Some(&self.texts[..]);
-        (same && other.nodes.len() <= MAX_NODES / 2).then(|| other.clone())
+    /// them change nothing, short of the bound on their number (`most`, `limits.list_items`):
+    /// `None` where `other` holds over half of it, or is not `self` grown.
+    pub(crate) fn grown(&self, other: &Arena, most: usize) -> Option<Arena> {
+        let same = other.nodes.starts_with(&self.nodes) && other.texts.starts_with(&self.texts);
+        (same && other.nodes.len() <= most / 2).then(|| other.clone())
     }
 
     /// Whether `self` holds every list of `other` under the same name.
     pub(crate) fn holds(&self, other: &Arena) -> bool {
-        self.nodes.get(..other.nodes.len()) == Some(&other.nodes[..])
-            && self.texts.get(..other.texts.len()) == Some(&other.texts[..])
+        self.nodes.starts_with(&other.nodes) && self.texts.starts_with(&other.texts)
     }
 }
 
@@ -121,8 +123,6 @@ pub(crate) fn letters(c: u32, lig: u32) -> Option<Vec<u32>> {
     }
 }
 
-pub(crate) const MAX_ITEMS: u32 = 4000;
-const MAX_NODES: usize = 1 << 21;
 const INF_BAD: i64 = 10000;
 const EJECT: i64 = -10000;
 const AWFUL: i64 = 0o7777777777;
@@ -135,7 +135,7 @@ impl Machine<'_> {
     /// The last item of the recorded list `items` and the list before it.
     pub(crate) fn kp_last(&self, items: Option<u32>) -> Option<(Kp, u32)> {
         let id = items.filter(|&i| i > 0)?;
-        let (item, prev, _) = self.kp.nodes[id as usize - 1];
+        let &(item, prev, _) = self.kp.nodes.get(id as usize - 1)?;
         Some((item, prev))
     }
 
@@ -144,19 +144,45 @@ impl Machine<'_> {
         let Some(prev) = *items else { return };
         let chars = self.out.facts.text.at.len() as u32;
         let a = &mut self.kp;
-        let len = if prev == 0 { 0 } else { a.nodes[prev as usize - 1].2 };
-        if len >= MAX_ITEMS || a.nodes.len() >= MAX_NODES {
+        // A list whose nodes a restored path no longer holds is not recorded any more.
+        let Some(len) = (prev == 0).then_some(0).or_else(|| a.nodes.get(prev as usize - 1).map(|n| n.2)) else {
+            *items = None;
+            return;
+        };
+        let full = a.nodes.len() >= self.cfg.limits.list_items;
+        if full || len as usize >= self.cfg.limits.paragraph_items {
+            // This list (or every later one) is not recorded: said, with the setting to raise.
+            let key = if full { "list_items" } else { "paragraph_items" };
+            self.limit_reached(key, self.position_span());
             *items = None;
             return;
         }
         let next = a.nodes.len() as u32 + 1;
-        let (nodes, at) = (&mut a.nodes, &mut a.chars);
-        let id = *a.index.entry((item, prev)).or_insert_with(|| {
-            nodes.push((item, prev, len + 1));
-            at.push(0);
-            next
-        });
-        at[id as usize - 1] = chars;
+        if a.next.len() < next as usize {
+            a.next.resize(next as usize, 0);
+        }
+        let hint = a.next[prev as usize];
+        let id = match hint.checked_sub(1).map(|h| a.nodes[h as usize]) {
+            Some((k, p, _)) if k == item && p == prev => hint,
+            _ => {
+                let id = match a.index.get(&(item, prev)) {
+                    Some(&id) => id,
+                    None => {
+                        a.index.insert_mut((item, prev), next);
+                        a.nodes.push((item, prev, len + 1));
+                        a.chars.push(0);
+                        a.next.push(0);
+                        next
+                    }
+                };
+                a.next[prev as usize] = id;
+                id
+            }
+        };
+        // Only a new count unshares the chunk.
+        if a.chars[id as usize - 1] != chars {
+            a.chars[id as usize - 1] = chars;
+        }
         *items = Some(id);
     }
 
@@ -290,7 +316,7 @@ pub(crate) trait Tables {
     /// A font's metrics and size.
     fn metrics(&mut self, font: u32) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)>;
     /// The current language's patterns and exceptions.
-    fn patterns(&mut self) -> Option<(Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)>;
+    fn patterns(&mut self) -> Option<crate::engine::hyph::HyphTables>;
     /// `\lefthyphenmin` and `\righthyphenmin` (§ 1091).
     fn mins(&mut self) -> (usize, usize);
 }
@@ -305,7 +331,7 @@ impl Tables for Machine<'_> {
     fn metrics(&mut self, font: u32) -> Option<(Rc<crate::engine::tfm::Metrics>, Scaled)> {
         Some((self.font_metrics(font)?, self.font_size(font)?))
     }
-    fn patterns(&mut self) -> Option<(Rc<crate::engine::hyph::Patterns>, crate::engine::hyph::Patterns)> {
+    fn patterns(&mut self) -> Option<crate::engine::hyph::HyphTables> {
         self.hyph_tables()
     }
     fn mins(&mut self) -> (usize, usize) {
@@ -743,6 +769,16 @@ pub(crate) fn vlist(value: Value) -> Option<VList> {
         Value::List(items, texts) => Some((items, texts)),
         _ => None,
     }
+}
+
+/// `a` then `b` as one list, the marks of `b` pointing past the texts of `a`.
+pub(crate) fn vlist_cat((items, texts): VList, b: Option<VList>) -> VList {
+    let Some((more, more_texts)) = b else { return (items, texts) };
+    let moved = more.iter().map(|k| match *k {
+        Kp::Mark(c, t) => Kp::Mark(c, t + texts.len() as u32),
+        k => k,
+    });
+    (items.iter().copied().chain(moved).collect(), texts.iter().chain(more_texts.iter()).cloned().collect())
 }
 
 pub(crate) fn list_value(list: Option<VList>) -> Value {

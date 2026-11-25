@@ -6,7 +6,7 @@
 
 use satex::fixed::HashMap;
 
-use satex::engine::builtins::{Primitive, initial_meanings};
+use satex::engine::builtins::{Primitive, catalog};
 use satex::engine::tex::{Interner, Meaning, Sym};
 use satex::project::config::Engine;
 
@@ -14,7 +14,7 @@ const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine
 
 fn table(engine: Engine) -> (Interner, HashMap<Sym, Meaning>) {
     let mut it = Interner::default();
-    let table = initial_meanings(&mut it, engine);
+    let table = catalog(&mut it, engine);
     (it, table)
 }
 
@@ -731,6 +731,8 @@ fn parameters_start_where_the_measured_engines_start_them() {
             let Some(Meaning::Primitive(p)) = meaning(&it, &table, &fact.name) else { continue };
             if !matches!(p, Primitive::IntegerParameter | Primitive::DimenParameter)
                 || satex::engine::builtins::owned(&fact.name).is_some()
+                // An older installed engine has no such parameter: a run knows none.
+                || !satex::engine::builtins::primitive_names(engine).contains_key(&fact.name)
                 // The clock and the interaction the probe ran in.
                 || matches!(fact.name.as_str(), "year" | "month" | "day" | "time" | "interactionmode")
                 // The output plugin sets them, as the run's driver does.
@@ -763,4 +765,33 @@ fn parameters_start_where_the_measured_engines_start_them() {
         assert!(probed.len() > 50, "{engine:?}: only {} parameters probed", probed.len());
         assert!(wrong.is_empty(), "{engine:?} starts these parameters elsewhere:\n{}", wrong.join("\n"));
     }
+}
+
+/// Intuition: TeX opens the job's log before it reads the first line (tex.web § 534), so the
+/// log exists for `\IfFileExists`, `\pdffilesize` and `\pdffilemoddate`, its text unknown.
+/// Bug: satex had no such file. TeX Live 2022's pdfmanagement takes its XMP date from
+/// `\file_get_timestamp:nN {\jobname.log}`, got `\q_no_value`, and purified that quark,
+/// which expands to itself: 500M steps at `\end{document}` of a `\DocumentMetadata` document.
+#[test]
+fn the_jobs_log_exists_while_the_job_runs() {
+    if !crate::support::installed() {
+        return;
+    }
+    let analysis = crate::support::analyze_latex(
+        "\\documentclass{article}\n\\IfFileExists{\\jobname.log}{\\def\\haslog{}}{}\n\
+         \\edef\\size{\\pdffilesize{\\jobname.log}}\\ifx\\size\\empty\\else\\def\\sized{}\\fi\n\
+         \\begin{document}\\end{document}\n",
+    );
+    assert!(crate::support::defined(&analysis, "haslog"), "\\IfFileExists finds no log");
+    assert!(crate::support::defined(&analysis, "sized"), "the log has no size");
+}
+
+/// Intuition: `\openin` of a file the run surely wrote, its text unknown (the job's log), opens it:
+/// `\ifeof` right after it is false (tex.web § 1275), whatever the file holds.
+/// Bug: satex left such a stream unknown, so TeX Live 2022's `\IfFileExists`, an `\openin`
+/// and `\ifeof`, could not tell that `\jobname.log` exists.
+#[test]
+fn openin_of_the_jobs_log_is_not_at_its_end() {
+    let analysis = crate::support::analyze_plain("\\openin1=\\jobname.log \\ifeof1 \\else\\def\\haslog{}\\fi\n");
+    assert!(crate::support::defined(&analysis, "haslog"), "{}", crate::support::presence(&analysis, "haslog"));
 }

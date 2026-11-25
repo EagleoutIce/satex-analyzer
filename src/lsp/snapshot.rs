@@ -601,7 +601,7 @@ fn tight(text: &str, s: usize, e: usize, new: &str) -> Edit {
 }
 
 /// `node` as written, edited to read as `printed`, a text of the same call or environment:
-/// arguments matched from the last, those `printed` lacks emptied, its new ones unwritten.
+/// arguments matched from the last, those `printed` lacks dropped, its new ones unwritten.
 pub fn retarget(node: &Node, printed: &str) -> Option<Node> {
     let fresh = read(&Text::new(printed.to_string()), 0, &[], false)?;
     let mut out = Node { name: fresh.name, star: fresh.star, body: fresh.body, ..node.clone() };
@@ -611,7 +611,8 @@ pub fn retarget(node: &Node, printed: &str) -> Option<Node> {
         let old = was.next_if(|o| o.open == a.open);
         args.push(Arg { inner: old.and_then(|o| o.inner), ..a.clone() });
     }
-    args.extend(was.map(|o| Arg { text: String::new(), keys: o.keys.as_ref().map(|_| Vec::new()), ..o.clone() }));
+    // an argument the printed form lacks goes with its delimiters (`tabularx`'s width as a `tblr`)
+    args.extend(was.map(|o| Arg { drop: true, ..o.clone() }));
     args.reverse();
     out.args = args;
     Some(out)
@@ -626,7 +627,23 @@ fn edits_of(doc: &Text, n: &Node) -> Result<Vec<Edit>, String> {
         let at = byte(n.at.ok_or("a new node without a place")?)?;
         // a new call whose key lists are all empty is a place offered, not yet written
         let offered = n.args.iter().any(|a| a.keys.is_some()) && n.args.iter().all(|a| a.keys.is_none() || a.empty());
-        return Ok(if n.drop || offered { Vec::new() } else { vec![(at, at, canonical(n))] });
+        if n.drop || offered {
+            return Ok(Vec::new());
+        }
+        // a new environment on an indented blank line (in a minipage) stands at that indent, its lines alike
+        let rest = &text[at..];
+        let blanks = rest.len() - rest.trim_start_matches([' ', '\t']).len();
+        let blank_line = (at == 0 || text.as_bytes()[at - 1] == b'\n')
+            && matches!(rest.as_bytes().get(blanks), None | Some(b'\n' | b'\r'));
+        if blanks > 0 && blank_line && !n.line {
+            let indent = &rest[..blanks];
+            let lines: Vec<String> = canonical(n)
+                .split('\n')
+                .map(|l| if l.is_empty() { String::new() } else { format!("{indent}{l}") })
+                .collect();
+            return Ok(vec![(at, at + blanks, lines.join("\n"))]);
+        }
+        return Ok(vec![(at, at, canonical(n))]);
     };
     let (from, to) = (byte(r.start)?, byte(r.end)?);
     if text.get(from..to) != Some(n.text.as_str()) {
@@ -694,8 +711,37 @@ pub(super) fn reads(text: &str, from: usize, to: usize, edits: &[Edit]) -> Strin
 /// A name a written node adds that the run does not define loads its package: a new node's
 /// `package` hint for its own name, else the installation's provider. A written node's hint
 /// is loaded too (what the run cannot name, as a column letter).
-pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<Edit>, Vec<String>), String> {
-    let (mut edits, mut notes) = (Vec::new(), Vec::new());
+/// What [`printed`] writes: the edits, the notes, and the loads the root's preamble takes.
+pub type Printed = (Vec<Edit>, Vec<String>, Vec<RootLoad>);
+
+pub fn printed(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+) -> Result<Printed, String> {
+    printed_or_later(analysis, doc, file, nodes, false).map(|(p, _)| p)
+}
+
+/// The names a write asks the installation for, left to a second request ([`loads_later`]): their
+/// providers come from probe runs, which take seconds, and the written text must not wait for them.
+/// `chosen`: the packages the write's nodes named; `asked`: each name, whether it is its node's own,
+/// and the call it makes.
+#[derive(Default, Serialize, Deserialize)]
+pub struct Later {
+    chosen: Vec<String>,
+    asked: Vec<(String, bool, String)>,
+}
+
+/// [`printed`]; `defer` leaves the names asked of the installation to [`loads_later`].
+fn printed_or_later(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+    defer: bool,
+) -> Result<(Printed, Later), String> {
+    let (mut edits, mut notes, mut roots) = (Vec::new(), Vec::new(), Vec::new());
     // packages wanted in order, and names asked of the installation, by the node that wants them
     let (mut wanted, mut asked): (Vec<Package>, Vec<(String, bool, String)>) = Default::default();
     // a name the written text defines itself (`\newcommand{\x}` beside its use, an extract) loads no package: the
@@ -711,7 +757,16 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
             .iter()
             .any(|d| d == m)
     };
+    // libraries new nodes load (`\\usetikzlibrary{matrix}`), by command: they join the preamble's list (preamble_load)
+    let mut libs: Vec<(String, Vec<String>)> = Vec::new();
     for n in nodes {
+        if let Some(list) = library_node(n) {
+            match libs.iter_mut().find(|(c, _)| *c == n.name) {
+                Some((_, l)) => l.extend(list),
+                None => libs.push((n.name.clone(), list)),
+            }
+            continue;
+        }
         let own = edits_of(doc, n)?;
         // a `.bib` entry loads no package
         if n.kind == Kind::Entry {
@@ -738,20 +793,96 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
         }
         edits.extend(own);
     }
+    let mut later = Later { chosen: wanted.iter().map(|p| p.name.clone()).collect(), asked };
+    if !defer {
+        wanted.extend(resolve(analysis, &std::mem::take(&mut later), &mut notes));
+    }
+    let mut loads = load_edits(analysis, doc, wanted, &[], &mut notes, &mut roots);
+    let run = crate::queries::preview::libraries(analysis);
+    for (cmd, list) in &libs {
+        // loaded by the run under either command: `\\usetikzlibrary` reads pgf's libraries too
+        let new: Vec<&str> = (list.iter().map(String::as_str))
+            .filter(|l| !["usetikzlibrary", "usepgflibrary"].iter().any(|c| run.contains(&format!("\\{c}{{{l}}}"))))
+            .collect();
+        if new.is_empty() {
+            continue;
+        }
+        match crate::linter::shared::preamble_load(doc.body(), cmd, &new, "") {
+            Ok(Some((at, text))) => {
+                notes.push(format!("loads {} with \\{cmd}", new.join(", ")));
+                loads.push((at, at, text));
+            }
+            Ok(None) => {}
+            Err(why) => match root_load(analysis, cmd, &new, "") {
+                Ok(Some(load)) => {
+                    notes.push(format!("loads {} with \\{cmd} in {}", new.join(", "), load.file));
+                    roots.push(load);
+                }
+                Ok(None) => {}
+                Err(()) => notes.push(why),
+            },
+        }
+    }
+    // a load goes first where it shares a place
+    loads.append(&mut edits);
+    let (edits, more) = super::writing::clean(analysis, doc, file, merged(loads)?);
+    notes.extend(more);
+    Ok(((edits, notes, roots), later))
+}
+
+/// The packages `later`'s names need beyond the chosen ones, by probe runs.
+fn resolve(analysis: &Analysis, later: &Later, notes: &mut Vec<String>) -> Vec<Package> {
     // each name's usual provider, loaded beside the one probed: a table's call needs all of them
     let usual: Vec<String> =
-        asked.iter().filter_map(|(name, ..)| crate::linter::shared::provider(analysis, name)).collect();
-    for (name, own, call) in asked {
+        later.asked.iter().filter_map(|(name, ..)| crate::linter::shared::provider(analysis, name)).collect();
+    let (mut chosen, mut wanted) = (later.chosen.clone(), Vec::new());
+    for (name, own, call) in &later.asked {
+        // a name a package this write already loads defines while the call runs (`\\node` in the `tikzpicture`
+        // tikz is loaded for): no package of its own (the index named pgflibraryplotmarks for `\\node`)
+        if crate::linter::shared::defined_by(analysis, &chosen, name, call) {
+            continue;
+        }
         // the package whose definition takes the call as written (graphicx for `[width=…]`)
-        match crate::linter::shared::provider_for(analysis, &name, &call, &usual) {
-            Some(p) => wanted.push(Package { name: p, options: String::new() }),
-            None if own => notes.push(format!("\\{name} is not defined in the run: load its package")),
+        match crate::linter::shared::provider_for(analysis, name, call, &usual) {
+            Some(p) => {
+                chosen.push(p.clone());
+                wanted.push(Package { name: p, options: String::new() });
+            }
+            None if *own => notes.push(format!("\\{name} is not defined in the run: load its package")),
             None => {}
         }
     }
+    wanted
+}
+
+/// The second request of a deferred write ([`Later`]): the loads its asked names need, over the text
+/// the first one wrote.
+pub fn loads_later(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    later: &Later,
+) -> Result<Printed, String> {
+    let (mut notes, mut roots) = (Vec::new(), Vec::new());
+    let wanted = resolve(analysis, later, &mut notes);
+    let loads = load_edits(analysis, doc, wanted, &later.chosen, &mut notes, &mut roots);
+    let (edits, more) = super::writing::clean(analysis, doc, file, merged(loads)?);
+    notes.extend(more);
+    Ok((edits, notes, roots))
+}
+
+/// The preamble loads of `wanted` (or the root's, `roots`), less those another of them or of `beside` loads.
+fn load_edits(
+    analysis: &Analysis,
+    doc: &Text,
+    wanted: Vec<Package>,
+    beside: &[String],
+    notes: &mut Vec<String>,
+    roots: &mut Vec<RootLoad>,
+) -> Vec<Edit> {
     let mut loads: Vec<Edit> = Vec::new();
     let mut done: Vec<String> = Vec::new();
-    let all: Vec<String> = wanted.iter().map(|p| p.name.clone()).collect();
+    let all: Vec<String> = wanted.iter().map(|p| p.name.clone()).chain(beside.iter().cloned()).collect();
     for p in wanted {
         // one another wanted package loads goes with it (tabularx loads array)
         let by = |q: &String| crate::linter::shared::package_loads(analysis, q, &p.name);
@@ -766,12 +897,86 @@ pub fn printed(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<(Vec<E
                 loads.push((at, at, e.new_text));
             }
             Ok(None) => {}
-            Err(why) => notes.push(why),
+            // a file the root reads (`\\input{chapter}`) has no preamble: the load goes to the root's, where the run
+            // met `\\begin{document}` (else the written code would stop the build at an undefined name)
+            Err(why) => match root_load(analysis, "usepackage", &[p.name.as_str()], &p.options) {
+                Ok(Some(load)) => {
+                    notes.push(format!("adds \\usepackage{{{}}} to {}", p.name, load.file));
+                    roots.push(load);
+                }
+                Ok(None) => {}
+                Err(()) => notes.push(why),
+            },
         }
     }
-    // a load goes first where it shares a place
-    loads.append(&mut edits);
-    Ok((merged(loads)?, notes))
+    loads
+}
+
+/// A load the root document's preamble gets: `text` inserted at `line`, `character` (LSP units) of its file, joining a
+/// library list there (`,calc`) or a line of its own before the line where the run met `\\begin{document}`.
+#[derive(Debug, serde::Serialize)]
+pub struct RootLoad {
+    /// The root's file, as the run names it.
+    pub file: String,
+    /// Its path, for a workspace edit's URI.
+    #[serde(skip)]
+    pub path: String,
+    /// The 0-based line the load goes in.
+    pub line: u32,
+    pub character: u32,
+    pub text: String,
+}
+
+thread_local! {
+    /// The open buffers a write may also change (the root's, for its preamble), by the run's path: newer than the disk.
+    static OPEN: std::cell::RefCell<Vec<(String, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// `f` with `open` (run path, text) as the buffers [`RootLoad`]s read.
+pub fn with_open<T>(open: Vec<(String, String)>, f: impl FnOnce() -> T) -> T {
+    let old = OPEN.replace(open);
+    let out = f();
+    OPEN.set(old);
+    out
+}
+
+/// The load of `items` by `\\cmd` the root's preamble gets, unless the run loaded the package or the root's text lists
+/// them ([`crate::linter::shared::preamble_load`] over its open buffer, else its file); none where the run met no
+/// `\\begin{document}` (`Err`). A root whose text is not at hand gets the call on a line before `\\begin{document}`.
+fn root_load(analysis: &Analysis, cmd: &str, items: &[&str], options: &str) -> Result<Option<RootLoad>, ()> {
+    if cmd == "usepackage" && items.iter().all(|p| crate::linter::shared::loaded(analysis, p)) {
+        return Ok(None);
+    }
+    let begin = crate::linter::shared::document_start(analysis).ok_or(())?;
+    let (file, path) = (analysis.short_name(begin.file).to_string(), analysis.file_name(begin.file).to_string());
+    let text = OPEN
+        .with_borrow(|o| o.iter().find(|(p, _)| *p == path).map(|(_, t)| t.clone()))
+        .or_else(|| std::fs::read_to_string(&path).ok());
+    if let Some(root) = text
+        && let Ok(load) = crate::linter::shared::preamble_load(&root, cmd, items, options)
+    {
+        let Some((at, text)) = load else { return Ok(None) };
+        let t = Text::new(root);
+        let p = super::handlers::to_lsp(&t, t.pos(at));
+        return Ok(Some(RootLoad { file, path, line: p.line, character: p.character, text }));
+    }
+    let options = if options.is_empty() { String::new() } else { format!("[{options}]") };
+    let text = format!("\\{cmd}{options}{{{}}}\n", items.join(","));
+    Ok(Some(RootLoad { file, path, line: begin.line.saturating_sub(1), character: 0, text }))
+}
+
+/// The libraries a new `\\usetikzlibrary` or `\\usepgflibrary` node loads: the printer joins them to the preamble's list.
+fn library_node(n: &Node) -> Option<Vec<String>> {
+    if n.range.is_some()
+        || n.drop
+        || n.kind != Kind::Call
+        || !matches!(n.name.as_str(), "usetikzlibrary" | "usepgflibrary")
+    {
+        return None;
+    }
+    let text = canonical(n);
+    let (_, list) = crate::linter::shared::load_parts(&text)?;
+    Some(list.split(',').map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
 }
 
 /// Byte edits as LSP edits.
@@ -780,24 +985,66 @@ pub fn lsp_edits(doc: &Text, edits: Vec<Edit>) -> Vec<lsp_types::TextEdit> {
 }
 
 /// The LSP edits that write `nodes`, none when refused.
-pub fn edits(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Vec<lsp_types::TextEdit> {
-    printed(analysis, doc, nodes).map(|(e, _)| lsp_edits(doc, e)).unwrap_or_default()
+pub fn edits(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+) -> Vec<lsp_types::TextEdit> {
+    printed(analysis, doc, file, nodes).map(|(e, ..)| lsp_edits(doc, e)).unwrap_or_default()
 }
 
-/// The edits that write `nodes` as LSP edits: `{edits, notes}`.
-pub fn print(analysis: &Analysis, doc: &Text, nodes: &[Node]) -> Result<Json, String> {
-    let (edits, notes) = printed(analysis, doc, nodes)?;
-    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes }))
+/// The edits that write `nodes` as LSP edits: `{edits, notes, roots}` (`roots`: package loads for the root's preamble, [`RootLoad`]).
+pub fn print(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    nodes: &[Node],
+    defer: bool,
+) -> Result<Json, String> {
+    let ((edits, notes, roots), later) = printed_or_later(analysis, doc, file, nodes, defer)?;
+    // each node as it now reads: a view shows it (the class dialog's header line)
+    let texts: Vec<String> = nodes
+        .iter()
+        .map(|n| match n.range.and_then(|r| doc.offset(to_pos(doc, r.start))) {
+            Some(at) => reads(doc.body(), at, at + n.text.len(), &edits),
+            None => canonical(n),
+        })
+        .collect();
+    let later = (!later.asked.is_empty()).then_some(later);
+    Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots, "texts": texts, "later": later }))
+}
+
+/// `doc`'s text with `nodes` written by the printer alone, no run consulted: a new project's
+/// main file (`src/lsp/templates.rs`).
+pub fn rewritten(doc: &Text, nodes: &[Node]) -> Result<String, String> {
+    let mut edits = Vec::new();
+    for n in nodes {
+        edits.extend(edits_of(doc, n)?);
+    }
+    Ok(reads(doc.body(), 0, doc.body().len(), &merged(edits)?))
 }
 
 /// A `satex/dialogApply` of kind `snapshot`: the edits that write its `nodes`.
-pub fn apply(analysis: &Analysis, doc: &Text, params: &Json) -> Result<Json, String> {
+pub fn apply(
+    analysis: &Analysis,
+    doc: &Text,
+    file: Option<crate::engine::tex::FileId>,
+    params: &Json,
+) -> Result<Json, String> {
     // a bibliography manager's request (src/lsp/plugins/bibliography.rs `op`)
     if params["nodes"].is_object() {
         return super::plugins::bib_op(analysis, &params["nodes"]);
     }
+    // the second request of a deferred write: the loads its names need ([`Later`])
+    if params["loads"].is_object() {
+        let later: Later = serde_json::from_value(params["loads"].clone()).map_err(|e| e.to_string())?;
+        let (edits, notes, roots) = loads_later(analysis, doc, file, &later)?;
+        return Ok(json!({ "edits": lsp_edits(doc, edits), "notes": notes, "roots": roots }));
+    }
     let nodes: Vec<Node> = serde_json::from_value(params["nodes"].clone()).map_err(|e| e.to_string())?;
-    print(analysis, doc, &nodes)
+    // `later`: the text at once, the loads probes choose in a second request
+    print(analysis, doc, file, &nodes, params["later"] == true)
 }
 
 #[cfg(test)]
@@ -930,6 +1177,19 @@ mod tests {
                 assert_eq!(back.body, n.body, "{out}");
             }
         }
+    }
+
+    /// A new environment offered on an indented blank line (inside a minipage) stands at that
+    /// indent, its own lines indented alike, no blanks left after its end. Pins the Draw widget's
+    /// new picture written at column 0 inside an indented minipage, `\end{tikzpicture}    ` after it.
+    #[test]
+    fn a_new_env_on_an_indented_blank_line_takes_its_indent() {
+        let d = Text::new("\\begin{minipage}{3cm}\n    \n\\end{minipage}\n".to_string());
+        let n = Node { body: "\n  \\node {x};\n".into(), ..new_env("tikzpicture", Position::new(1, 0), "tikz") };
+        assert_eq!(
+            write(d.body(), &edits_of(&d, &n).unwrap()),
+            "\\begin{minipage}{3cm}\n    \\begin{tikzpicture}\n      \\node {x};\n    \\end{tikzpicture}\n\\end{minipage}\n"
+        );
     }
 
     #[test]

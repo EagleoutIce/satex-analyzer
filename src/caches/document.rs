@@ -190,6 +190,22 @@ fn serve(
     Ok((analysis, head.pending))
 }
 
+/// What `analysis` stands on outside the overlay: the reads [`crate::project::overlay::record`]
+/// logged, found and absent files alike, and every file it opened, those a package cache served
+/// included. It stands while each [`Read::holds`].
+pub(crate) fn reads_of(analysis: &Analysis, mut reads: Vec<Read>) -> Vec<Read> {
+    for file in &analysis.files {
+        let path = Path::new(&file.path);
+        if path.is_file() && !crate::project::overlay::holds(path) {
+            let print = crate::project::overlay::fingerprint(path);
+            reads.push(Read { path: path.to_path_buf(), probe: false, own: false, print });
+        }
+    }
+    reads.sort_by(|a, b| (&a.path, a.probe, a.print).cmp(&(&b.path, b.probe, b.print)));
+    reads.dedup();
+    reads
+}
+
 impl Drop for Recording {
     fn drop(&mut self) {
         crate::project::overlay::recorded();
@@ -202,24 +218,16 @@ impl Recording {
     /// same. A run a budget stopped is stored too, unless it built caches:
     /// then the next run gets further in the same time.
     pub(crate) fn store(self, analysis: &mut Analysis) {
-        let mut reads = crate::project::overlay::recorded();
+        let reads = reads_of(analysis, crate::project::overlay::recorded());
         let pending = analysis.build_pending.take().map(|p| *p);
         // A run `limits.memory` stopped is not encoded: that holds it twice, past the limit.
         if analysis.stopped() && pending.is_none() && analysis.caches_built() > 0
             || analysis.limits.iter().any(|l| l.key == "memory")
+            // What a run reads past a stack cut depends on its thread, not on its key.
+            || analysis.facts.diagnostics.iter().any(|d| d.code == "nesting-widened")
         {
             return;
         }
-        // Every file it opened, those a package cache served included.
-        for file in &analysis.files {
-            let path = Path::new(&file.path);
-            if path.is_file() && !crate::project::overlay::holds(path) {
-                let print = crate::project::overlay::fingerprint(path);
-                reads.push(Read { path: path.to_path_buf(), probe: false, own: false, print });
-            }
-        }
-        reads.sort_by(|a, b| (&a.path, a.probe, a.print).cmp(&(&b.path, b.probe, b.print)));
-        reads.dedup();
         let head = Head {
             version: VERSION,
             key: self.key,
@@ -228,15 +236,15 @@ impl Recording {
             pending: pending.clone(),
             files: std::mem::take(&mut analysis.build_files),
         };
-        let body = crate::fixed::shared::with(|| postcard::to_allocvec(&*analysis));
         let label = Label { version: VERSION, document: self.document.clone() };
-        let (Ok(mut bytes), Ok(head), Ok(body)) = (postcard::to_allocvec(&label), postcard::to_allocvec(&head), body)
-        else {
+        let (Ok(mut bytes), Ok(head)) = (postcard::to_allocvec(&label), postcard::to_allocvec(&head)) else { return };
+        bytes.extend_from_slice(&head);
+        // The body is encoded in place: one encoded copy beside the analysis, not two.
+        let start = bytes.len();
+        let Ok(bytes) = crate::fixed::shared::with(|| postcard::to_extend(&*analysis, bytes)) else { return };
+        let Ok(mut copy) = crate::fixed::shared::with(|| postcard::from_bytes::<Analysis>(&bytes[start..])) else {
             return;
         };
-        bytes.extend_from_slice(&head);
-        let Ok(mut copy) = crate::fixed::shared::with(|| postcard::from_bytes::<Analysis>(&body)) else { return };
-        bytes.extend_from_slice(&body);
         let temporary = format::temporary_for(&self.file);
         if self.file.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok())
             && std::fs::write(&temporary, &bytes).is_ok()

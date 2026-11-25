@@ -17,8 +17,20 @@ test('rank: exact, prefix by tier, part, characters in order', () => {
   assert.deepEqual(labels(rank(items, 'emh')), ['myemph', 'emphasis', 'emph', 'eqmph'], 'characters in order: the own commands first');
   // case does not matter; the server's own order (sortText) breaks ties before length
   assert.deepEqual(labels(rank([{ label: 'labelb', sortText: '2' }, { label: 'LabelA', sortText: '1' }], 'LAB')), ['LabelA', 'labelb']);
+  // the case typed breaks a tie of equally close names: `\\Blind` offers `Blinddocument` before `blinddocument` (user 2026-11-22)
+  assert.deepEqual(labels(rank([{ label: 'blinddocument', sortText: '1' }, { label: 'Blinddocument', sortText: '2' }], 'Blind')), ['Blinddocument', 'blinddocument']);
+  assert.deepEqual(labels(rank([{ label: 'blinddocument', sortText: '2' }, { label: 'Blinddocument', sortText: '1' }], 'blind')), ['blinddocument', 'Blinddocument']);
   // a label's part, then what it is found by (a citation's title)
   assert.deepEqual(labels(rank([{ label: 'knuth84', filterText: 'The TeXbook' }, { label: 'texbook-notes' }], 'texbook')), ['texbook-notes', 'knuth84']);
+});
+
+// Intuition: one letter typed is the start of a name, not the one-letter accent of that name: `\t` lists `\textbf`
+// (the server's prior: the seed of common commands) before the tie accent `\t`. Pins the page's list after `\t`
+// opening with the accent (user 2026-11-22: useless names first, `\textbf` only later).
+test('rank: one letter typed is a prefix, never an exact name', () => {
+  const items = [{ label: 't', data: { prior: '1999999~' } }, { label: 'textbf', data: { prior: '19999990000' } }, { label: 'tt', data: { prior: '1999999~' } }];
+  assert.deepEqual(labels(rank(items, 't')), ['textbf', 't', 'tt']);
+  assert.deepEqual(labels(rank(items, 'tt')), ['tt', 'textbf'], 'two letters: the exact name first');
 });
 
 // Intuition: during a run a `\` completes from the server's last list there plus every name in force it lacks, each
@@ -50,13 +62,15 @@ test('reselect: the same item after a refresh, else the first', () => {
 });
 
 // Intuition: a name from the lean scope list carries its argument letters (`args`), so the kept list writes its snippet:
-// `\textbf` with `m` takes `{}` with the caret in it, an optional argument a removable `[options]` field, a star nothing.
+// `\textbf` with `m` takes `{}` with the caret in it; what may be left out (an optional argument, a star) is left to the
+// writer, so `\section` takes `{}` with the caret in it and no `[options]` text stays behind.
 // Pins `\emph` taken from the kept list during a run without its braces (the lean records had no argument shape).
 test('snippet: from argument letters, the caret in the first field', () => {
   const { snippet } = self.satexViews.complete;
   assert.equal(snippet('textbf', 'm'), 'textbf{$1}$0');
   assert.equal(snippet('frac', 'mm'), 'frac{$1}{$2}$0');
-  assert.equal(snippet('section', 'som'), 'section${1:[options]}{$2}$0');
+  assert.equal(snippet('section', 'som'), 'section{$1}$0');
+  assert.equal(snippet('item', 'o'), null, 'only optional arguments: the name alone');
   assert.equal(snippet('relax', ''), null);
   assert.equal(snippet('relax', undefined), null);
   const k = kept(undefined, [{ label: 'emph', args: 'm' }, { label: 'today' }]);
@@ -168,4 +182,87 @@ test('whole: a complete name with nothing more to write', () => {
   assert.equal(whole({ label: 'begin', insertText: 'begin{$1}', insertTextFormat: 2 }, 'begin'), false, 'arguments to write');
   assert.equal(whole({ label: 'toprule', insertText: 'toprule', additionalTextEdits: [{}] }, 'toprule'), false, 'a load to write');
   assert.equal(whole(null, 'x'), false);
+});
+
+// Intuition: the name typed at the caret is the `\` and the letters at that place (tex.web §356), the run's letters
+// (query `letters`, replayed in run order). In a document's body `_` is a subscript and `@` other: after `\sum_` no name
+// is typed and no list opens; under `\ExplSyntaxOn` (`_`, `:` letters) `\c__fp` goes on as one name, and only names
+// typeable there are offered. Pins `\(\sum_` opening `\c__socket_tagsupport/mc_args_int` in the editor and the pages.
+test('nameBefore, typeable, lettersAt: the name ends where the letters there end', () => {
+  const { nameBefore, typeable, lettersAt } = self.satexViews.complete;
+  const body = '', expl = '_:';
+  assert.equal(nameBefore('\\(\\sum', body), 'sum');
+  assert.equal(nameBefore('\\(\\sum_', body), null, '`_` ends the name: none typed');
+  assert.equal(nameBefore('\\(\\sum_', expl), 'sum_', 'under expl3 `_` is a letter: the name goes on');
+  assert.equal(nameBefore('x \\c__fp', expl), 'c__fp');
+  assert.equal(nameBefore('x \\c__fp', body), null);
+  assert.equal(nameBefore('\\make@', body), null, '`@` is other in a body');
+  assert.equal(nameBefore('\\make@', '@'), 'make@');
+  assert.equal(nameBefore('a \\', body), '', 'a lone `\\` starts a name');
+  assert.equal(nameBefore('a \\\\sum', body), null, '`\\\\` is a control symbol, `sum` text');
+  assert.equal(nameBefore('\\ä', body), 'ä', 'a non-ASCII letter goes on');
+  assert.ok(typeable('sum', body) && typeable(',', body) && typeable('@', body), 'a control symbol is always typeable');
+  assert.ok(!typeable('c__socket_tagsupport/mc_args_int', expl), '`/` is a letter nowhere here');
+  assert.ok(!typeable('l_tmpa_tl', body) && typeable('l_tmpa_tl', expl));
+  assert.ok(!typeable('@empty', body) && typeable('@empty', '@'));
+  // a file opened with `@` a letter (line 0), `\ExplSyntaxOn` on line 4, `\ExplSyntaxOff` on line 6 col 3
+  const changes = [{ line: 0, col: 0, char: '@', letter: true }, { line: 4, col: 1, char: '_', letter: true }, { line: 4, col: 1, char: ':', letter: true },
+    { line: 6, col: 3, char: '_', letter: false }, { line: 6, col: 3, char: ':', letter: false }];
+  assert.equal(lettersAt(changes, 1, 1), '@');
+  assert.equal(lettersAt(changes, 4, 1), '@', 'the change takes effect after its place');
+  assert.equal(lettersAt(changes, 5, 1), '@_:');
+  assert.equal(lettersAt(changes, 6, 3), '@_:');
+  assert.equal(lettersAt(changes, 6, 4), '@');
+  assert.equal(lettersAt(null, 3, 1), '', 'no run read the file: TeX\'s letters only');
+});
+
+// Intuition: a control symbol is `\` and one non-letter *there*: `\@` in a body is one (the space factor), in a package
+// `@` is a letter and a name goes on. Pins `@` counted a letter everywhere.
+test('controlSymbol: by the letters at the caret', () => {
+  const { controlSymbol } = self.satexViews.complete;
+  assert.equal(controlSymbol('x\\@'), '@');
+  assert.equal(controlSymbol('x\\@', '@'), null);
+  assert.equal(controlSymbol('x\\_', '_:'), null);
+  assert.equal(controlSymbol('x\\_'), '_');
+});
+
+// Intuition: what the document loads ranks before what a package it does not load would define, however close the
+// name: `\textb` takes `\textbf`, not drm's `\textb` (whose item adds `\usepackage{drm}`). Pins the user's 2026-11-21
+// list with `\textb (adds \usepackage{drm})` first.
+// Intuition: the server's rank of a command that holds whatever is typed (tier, the document's uses, the seed of common
+// commands) travels with the item (`data.prior`), so a list answered from kept items (a run going, sortText dropped as
+// another word's) ranks as the server does. Pins `\textb` listing textbackslash, textbaht, textbar … before textbf.
+test('rank: the server\'s prior orders equally close names, kept lists too', () => {
+  const p = (label, prior) => ({ label, data: { prior } });
+  const items = [p('textbackslash', '1999999' + '0040'), p('textbar', '1999999' + '0040'), p('textbf', '1999999' + '0000'), { label: 'textbaht' }];
+  assert.deepEqual(labels(rank(items, 'textb')), ['textbf', 'textbar', 'textbackslash', 'textbaht']);
+  const used = [p('textbf', '1999999' + '0000'), p('textbar', '1999997' + '0040')];
+  assert.deepEqual(labels(rank(used, 'textb')), ['textbar', 'textbf'], 'the document\'s uses before the seed');
+});
+test('rank: a name of a package not loaded after the loaded ones', () => {
+  const items = [{ label: 'textb', additionalTextEdits: [{ newText: '\\usepackage{drm}\n' }] }, { label: 'textbf' }, { label: 'textbullet' }];
+  assert.deepEqual(labels(rank(items, 'textb')), ['textbf', 'textbullet', 'textb']);
+  assert.deepEqual(labels(rank([{ label: 'textb', sortText: '~0001textb' }, { label: 'textbf', sortText: '1textbf' }], 'textb')), ['textbf', 'textb'], 'by the server\'s `~` too');
+});
+
+// Intuition: a list answered from the kept items during a run shows what the server said of each name last: its
+// shape beside the name, its description and its snippet, never a bare name. Pins the PDF page's list for `\secti`
+// during a run: `\section` without its arguments or description while the server's own answer had both (2026-11-21).
+test('kept: a name keeps the shape, description and snippet the server gave it last', () => {
+  const { remember, recall, shapeOf, docOf } = self.satexViews.complete;
+  const memo = new Map();
+  const section = { label: 'section', detail: '\\section*[⟨options⟩]{⟨arg⟩}  (article)', insertText: 'section{${1:arg}}$0', insertTextFormat: 2,
+    labelDetails: { detail: '*[⟨options⟩]{⟨arg⟩}', description: 'article' }, data: { doc: 'Starts a section.' }, sortText: '1', textEdit: { newText: 'x' } };
+  remember(memo, [section, { label: 'relax' }]);
+  assert.deepEqual([...memo.keys()], ['section'], 'a name with nothing to say is not kept');
+  // the names in force (the lean scope list) know only the bare name and its letters
+  const k = kept(undefined, [{ label: 'section', detail: '\\section', args: 'som' }, { label: 'relax', detail: '\\relax' }], memo);
+  assert.equal(shapeOf(k[0]), '*[⟨options⟩]{⟨arg⟩}');
+  assert.equal(docOf(k[0]), 'Starts a section.');
+  assert.deepEqual([k[0].insertText, k[0].detail], ['section{${1:arg}}$0', section.detail]);
+  assert.equal(k[0].textEdit, undefined, 'a range of another place is never kept');
+  assert.deepEqual([shapeOf(k[1]), docOf(k[1]), k[1].detail], ['', '', '\\relax']);
+  // a newer answer's own fields win over the kept ones
+  const own = recall(memo, { label: 'section', detail: '\\section{⟨title⟩}  (mine)', insertText: 'section{$1}$0', labelDetails: { detail: '{⟨title⟩}' } });
+  assert.deepEqual([shapeOf(own), own.insertText, own.detail], ['{⟨title⟩}', 'section{$1}$0', '\\section{⟨title⟩}  (mine)']);
 });

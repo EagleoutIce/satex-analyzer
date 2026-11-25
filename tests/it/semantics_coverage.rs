@@ -5,7 +5,8 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use satex::engine::builtins::primitive_names;
+use satex::engine::builtins::catalog;
+use satex::engine::tex::Interner;
 use satex::project::config::Engine;
 
 const ENGINES: [Engine; 4] = [Engine::Tex, Engine::PdfTeX, Engine::XeTeX, Engine::LuaTeX];
@@ -37,7 +38,9 @@ fn rows() -> Vec<Row> {
 }
 
 fn known() -> BTreeSet<String> {
-    ENGINES.iter().flat_map(|e| primitive_names(*e).keys().cloned()).collect()
+    let mut it = Interner::default();
+    let syms: Vec<_> = ENGINES.iter().flat_map(|e| catalog(&mut it, *e).into_keys()).collect();
+    syms.into_iter().map(|s| it.name(s).to_string()).collect()
 }
 
 #[test]
@@ -50,13 +53,13 @@ fn every_primitive_has_a_semantics_row() {
     assert!(stale.is_empty(), "rows for names no engine has: {stale:?}");
 }
 
-/// The source text agrees: every name `initial_meanings` registers by a
+/// The source text agrees: every name `catalog` registers by a
 /// literal has a row (a check that does not depend on the engine tables).
 #[test]
 fn every_registered_literal_has_a_semantics_row() {
     let source = repo("src/engine/builtins.rs");
-    let start = source.find("pub fn initial_meanings").expect("initial_meanings");
-    let end = start + source[start..].find("\npub fn ").expect("end of initial_meanings");
+    let start = source.find("pub fn catalog").expect("catalog");
+    let end = start + source[start..].find("\npub fn ").expect("end of catalog");
     let table: BTreeSet<String> = rows().into_iter().map(|r| r.name).collect();
     let missing: Vec<&str> = source[start..end]
         .split("put(it, \"")

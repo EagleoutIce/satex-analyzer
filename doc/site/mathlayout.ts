@@ -6,7 +6,10 @@ export {};
  * 'rm' upright, 'bf' bold, 'sy' symbols, 'ex' large operators, 'ms' a math font's alphabets), `sy` its extra vertical stretch (delimiters);
  * a rule `[x, y, w, h]`; the box's width, height and depth about the baseline. */
 type Glyph = [string, number, number, number, string, number?];
-type MBox = { g: Glyph[]; r: [number, number, number, number][]; w: number; h: number; d: number };
+/** `br`: a formula in text's glue between the atoms of its outer list, from `at` to `next`, `mu` its TeX space (3 thin,
+ * 4 medium: plus 2mu minus 4mu, 5 thick: plus 5mu; 0 in a script); with `pen` the line may break there at that penalty,
+ * after a binary operator or relation (tex.web §767), the space then dropped. */
+type MBox = { g: Glyph[]; r: [number, number, number, number][]; w: number; h: number; d: number; br?: { at: number; next: number; mu: number; pen?: number }[] };
 /** Measures `t` in `face` at 1 em: its width, or `[width, height, depth]` of its ink. */
 type Metric = (t: string, face: string) => number | [number, number, number];
 /** The font parameters TeX's math reads, in em: cmsy10's σ5..σ22, cmex10's ξ8..ξ13 (`\fontdimen`), and what the
@@ -18,6 +21,8 @@ const PARAMS = {
   sup1: 0.412892, sup2: 0.362892, sup3: 0.288889, sub1: 0.15, sub2: 0.247217, supDrop: 0.386108, subDrop: 0.05,
   delim1: 2.39, delim2: 1.01, axis: 0.25, rule: 0.04, bigOp1: 0.111112, bigOp2: 0.166667, bigOp3: 0.2, bigOp4: 0.6, bigOp5: 0.1,
   italic: 0.05, scriptSpace: 0.05, script: 1.12, scriptScript: 1.3, opText: 1.05556, opDisplay: 1.44445, sign: 0.77778,
+  // plain TeX's and LaTeX's \\relpenalty and \\binoppenalty: what a break after a relation or binary operator costs
+  relPenalty: 500, binPenalty: 700,
 };
 type Params = typeof PARAMS;
 /** Styles: 0 display, 1 text, 2 script, 3 scriptscript; their sizes. */
@@ -285,7 +290,7 @@ function layout(src: string, metric: Metric, display = false, params: Partial<Pa
   };
   const hpack = (bs: MBox[]): MBox => { const out = empty(); for (const b of bs) { put(out, b, out.w, 0); out.w += b.w; } return out; };
   /** Noads as a horizontal list in style `st0` (TeX's mlist to hlist). */
-  const mlist = (noads: Noad[], st0: Style): MBox => {
+  const mlist = (noads: Noad[], st0: Style, top = false): MBox => {
     let st = st0;
     const atoms: { k: string; b: MBox; s: Style }[] = [];
     for (const nd of noads) {
@@ -296,14 +301,25 @@ function layout(src: string, metric: Metric, display = false, params: Partial<Pa
     // a binary operator with no operand on one side is ordinary (a unary minus; tex.web §728)
     const real = atoms.filter((a) => a.k !== 'sp');
     real.forEach((a, j) => { if (a.k === 'bin' && (!j || /^(bin|op|rel|open|punct)$/.test(real[j - 1]!.k) || !real[j + 1] || /^(rel|close|punct)$/.test(real[j + 1]!.k))) a.k = 'ord'; });
-    const out = empty();
-    let prev: string | null = null;
+    const out = empty(), br: NonNullable<MBox['br']> = [];
+    let prev: string | null = null, cut: number | null = null;
     for (const a of atoms) {
-      if (a.k !== 'sp' && prev) out.w += spaceMu(prev, a.k, a.s.s > 1) / 18 * SIZE[a.s.s]!;
+      if (a.k !== 'sp') {
+        // a break after a binary operator or relation of the outer list, none before a relation (tex.web §767)
+        const pen = cut != null && a.k !== 'rel' ? cut : null;
+        cut = null;
+        if (prev) {
+          const mu = spaceMu(prev, a.k, a.s.s > 1), w = mu / 18 * SIZE[a.s.s]!;
+          if (top && (w > 0 || pen != null)) br.push({ at: out.w, next: out.w + w, mu: a.s.s > 1 ? 0 : mu, ...(pen != null && { pen }) });
+          out.w += w;
+        }
+      }
       put(out, a.b, out.w, 0);
       out.w += a.b.w;
       if (a.k !== 'sp') prev = a.k;
+      if (top && (a.k === 'bin' || a.k === 'rel')) cut = a.k === 'bin' ? P.binPenalty : P.relPenalty;
     }
+    if (br.length) out.br = br;
     return out;
   };
   /** A nucleus in style `st`: its box and, for a single character, its italic correction. */
@@ -466,7 +482,21 @@ function layout(src: string, metric: Metric, display = false, params: Partial<Pa
     return out;
   };
   const fieldList = (f: Field): Noad[] => f.t === 'list' ? f.l : [{ k: 'ord', n: f }];
-  return mlist(parse(src, display), { s: display ? 0 : 1, c: false });
+  return mlist(parse(src, display), { s: display ? 0 : 1, c: false }, !display);
+}
+/** Formula `b` cut at its glue (`br`): each part its glyphs and rules moved to start at 0, its width, and after every
+ * part but the last the glue to the next (`space` em, `mu`) and, where the line may break there, its penalty. */
+function parts(b: MBox): { box: MBox; pen?: number; space?: number; mu?: number }[] {
+  const cuts = b.br ?? [], out: { box: MBox; pen?: number; space?: number; mu?: number }[] = [];
+  let from = 0;
+  for (let i = 0; i <= cuts.length; i++) {
+    const c = cuts[i], to = c ? c.at : b.w, inside = (x: number) => x >= from - 1e-6 && (c ? x < to - 1e-6 : true);
+    const g = b.g.filter((q) => inside(q[1])).map((q) => [q[0], q[1] - from, ...q.slice(2)] as Glyph);
+    const r = b.r.filter((q) => inside(q[0])).map((q) => [q[0] - from, q[1], q[2], q[3]] as [number, number, number, number]);
+    out.push({ box: { g, r, w: to - from, h: b.h, d: b.d }, ...(c && { space: c.next - c.at, mu: c.mu, ...(c.pen != null && { pen: c.pen }) }) });
+    if (c) from = c.next;
+  }
+  return out;
 }
 
 /** The Typeset view's math as CSS custom properties from the same parameters: scripts at script size, raised by
@@ -502,13 +532,77 @@ const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replac
  * as a/b. Null for a command the preview does not know as math. */
 const preview = (name: string, metric: Metric = roughMetric): string | null => {
   const src = sampleOf(name);
-  if (!src) return null;
-  const b = layout(src, metric, false), pad = 0.08, w = b.w + 2 * pad, h = b.h + b.d + 2 * pad, f = (x: number) => +x.toFixed(3);
+  return src ? svgOf(src, name, metric) : null;
+};
+/** Math `src` drawn as an SVG string in `currentColor`, labelled `label`. */
+function svgOf(src: string, label: string, metric: Metric = roughMetric, display = false): string {
+  const b = layout(src, metric, display), pad = 0.08, w = b.w + 2 * pad, h = b.h + b.d + 2 * pad, f = (x: number) => +x.toFixed(3);
   const face = (k: string) => k === 'it' ? ' font-style="italic"' : k === 'bf' ? ' font-weight="bold"' : '';
   const glyphs = b.g.map(([t, x, y, sc, k, sy]) => `<text x="${f(x + pad)}" y="${f((b.h + pad - y) / (sy ?? 1))}" font-size="${f(sc)}"${face(k)}${sy && sy !== 1 ? ` transform="scale(1 ${f(sy)})"` : ''}>${xml(t)}</text>`);
   const rules = b.r.map(([x, y, rw, rh]) => `<rect x="${f(x + pad)}" y="${f(b.h + pad - y - rh)}" width="${f(rw)}" height="${f(rh)}"/>`);
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(w)} ${f(h)}" width="${f(w)}em" height="${f(h)}em" fill="currentColor" font-family="'Latin Modern Math','STIX Two Math','Cambria Math',serif" role="img" aria-label="${xml(name)}">${glyphs.join('')}${rules.join('')}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${f(w)} ${f(h)}" width="${f(w)}em" height="${f(h)}em" fill="currentColor" font-family="'Latin Modern Math','STIX Two Math','Cambria Math',serif" role="img" aria-label="${xml(label)}">${glyphs.join('')}${rules.join('')}</svg>`;
+}
+
+// A formula built from templates (the Draw dialog's formula bar): its LaTeX `src` and a selection `at`..`to`. A slot
+// is an empty group `{}` or an empty matrix cell; a template puts the selection into its first slot (`#`).
+type Formula = { src: string; at: number; to: number };
+const TEMPLATES: Record<string, string> = {
+  frac: '\\frac{#}{}', sup: '^{#}', sub: '_{#}', sqrt: '\\sqrt{#}', sum: '\\sum_{#}^{}', int: '\\int_{#}^{}', paren: '\\left(#\\right)',
+  matrix: '\\begin{pmatrix}#&\\\\&\\end{pmatrix}',
 };
-self.satexMath = { layout, parse, css, PARAMS, spaceMu, isMath, preview };
+/** The slots of `src` as caret offsets: inside `{}`, in an empty cell of a matrix. */
+const slots = (src: string) => [...src.matchAll(/\{\}|(?<=&|\\\\|\\begin\{pmatrix\})[ ]*(?=&|\\\\|\\end\{pmatrix\})/g)].map((m) => m.index! + (m[0] === '{}' ? 1 : 0));
+/** Tab: the next slot after the caret; without one, out of the group the caret is in (past its `}`), else the end. */
+const next = (f: Formula): Formula => {
+  let at = slots(f.src).find((i) => i > f.at);
+  for (let i = f.at, d = 0; at == null && i < f.src.length; i++) {
+    if (f.src[i] === '\\') i++;
+    else if (f.src[i] === '{') d++;
+    else if (f.src[i] === '}' && d-- === 0) at = i + 1;
+  }
+  at ??= f.src.length;
+  return { src: f.src, at, to: at };
+};
+/** `text` with a blank between a command's name and a letter that would run into it (`\\alpha x`). */
+const join = (a: string, b: string) => a + (/\\[A-Za-z]+$/.test(a) && /^[A-Za-z]/.test(b) ? ' ' : '') + b;
+/** `text` put in place of the selection, the caret after it. */
+const put = (f: Formula, text: string): Formula => {
+  const head = join(f.src.slice(0, f.at), text), src = join(head, f.src.slice(f.to));
+  return { src, at: head.length, to: head.length };
+};
+/** Template `kind` around the selection; the caret in its first slot when nothing was selected, else in the next one.
+ * A script goes after the selection, which stays its base. */
+const wrap = (f: Formula, kind: string): Formula => {
+  const t = TEMPLATES[kind]!, sel = f.src.slice(f.at, f.to), script = kind === 'sup' || kind === 'sub';
+  const [pre, post] = t.split('#') as [string, string], body = script ? `${sel}${pre}` : `${pre}${sel}`;
+  const g = put(f, body + post), at = g.at - post.length, more = slots(g.src).find((i) => i > at);
+  // a selection put in: on to the template's next slot, or past the template without one
+  const to = !sel || script ? at : more ?? g.at;
+  return { src: g.src, at: to, to };
+};
+/** Clean LaTeX: Unicode symbols as commands, empty scripts dropped, a one-token script without braces (`x^2`,
+ * `_\\alpha`), single blanks, trimmed. */
+/** The command the preview's table names first for character `c` (`α` → `alpha`), for non-ASCII characters. */
+let NAMES: Map<string, string> | null = null;
+const nameOf = (c: string) => {
+  if (!NAMES) { sym('alpha'); NAMES = new Map(); for (const [n, [ch]] of SYMS!) if (/[^\x00-\x7f]/.test(ch) && !NAMES.has(ch)) NAMES.set(ch, n); }
+  return NAMES.get(c);
+};
+const clean = (src: string): string => {
+  // a symbol typed as Unicode (`α`, `≤`) as its command: pdfTeX's math has no Unicode input
+  src = src.replace(/([^\x00-\x7f])(?=([A-Za-z])?)/gu, (c, _, after) => { const n = nameOf(c); return n ? `\\${n}${after ? ' ' : ''}` : c; });
+  // an empty script goes, nested ones too (`^{_{}}`); a command's name before it keeps its blank to a letter after
+  let s = src, was;
+  do { was = s; s = s.replace(/[\^_]\{\s*\0*\s*\}/g, '\0'); } while (s !== was);
+  s = s.replace(/(\\[A-Za-z]+)\0+(?=[A-Za-z])/g, '$1 ').replace(/\0/g, '');
+  s = s.replace(/([\^_])\{\s*(\\[A-Za-z]+|[^{}\\\s])\s*\}([A-Za-z]?)/g, (_, op, tok, after) => op + tok + (after && /[A-Za-z]$/.test(tok) ? ' ' : '') + after);
+  // a matrix: one blank around its cells' `&` and `\\`, and inside its begin and end
+  s = s.replace(/[ \t]+/g, ' ').replace(/ ?((?<!\\)&|\\\\) ?/g, ' $1 ').replace(/(\\begin\{\w*matrix\}) ?/g, '$1 ').replace(/ ?(\\end\{\w*matrix\})/g, ' $1');
+  return s.replace(/ {2,}/g, ' ').trim();
+};
+/** The formula drawn: empty slots as boxes. */
+const formulaSvg = (src: string, metric: Metric = roughMetric) =>
+  svgOf(src.replace(/\{\}/g, '{\\Box}').replace(/(&|\\\\|\\begin\{pmatrix\})[ ]*(?=&|\\\\|\\end\{pmatrix\})/g, '$1\\Box') || '\\Box', clean(src), metric);
+self.satexMath = { layout, parts, parse, css, PARAMS, spaceMu, isMath, preview, sym, formula: { TEMPLATES, slots, next, put, wrap, clean, svg: formulaSvg } };
 // the Typeset view's math reads them (style.css falls back to the same values where this script is not loaded)
 if (self.document) for (const [k, v] of Object.entries(css())) document.documentElement.style.setProperty(k, v);

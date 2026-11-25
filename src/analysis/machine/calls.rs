@@ -24,7 +24,6 @@ pub(crate) type CallKey = (NodeId, Span, u64);
 pub(crate) struct CallRec {
     key: CallKey,
     base: usize,
-    recent: usize,
     reads: usize,
     /// [`crate::engine::env::Env::assignments`] at the start.
     assigned: u64,
@@ -74,6 +73,24 @@ struct Stand {
     pending: (Option<crate::engine::tex::Tok>, [bool; 5], i64),
     /// Whether what it defines is certain ([`Machine::exact`], no choice open).
     certain: (bool, bool),
+    /// [`Machine::cell_base`]: `pending`'s brace count is read against it, and only in a cell.
+    cell: Option<i64>,
+}
+
+impl Stand {
+    /// Whether a run that began in `self` and left it as it was runs alike in `now`: what
+    /// such a run can read of it is the same. The conditionals open around it and its
+    /// group's `\aftergroup` tokens are not: reading the former is a side effect
+    /// (`\currentiflevel`), the latter only the group's end reads, which a run that
+    /// `closes` it is.
+    fn fits(&self, now: &Stand, closes: bool) -> bool {
+        // Wrapping: the base is `i64::MIN` while a `u` part is read (§ 791), and equal bases give equal counts.
+        let braces = |s: &Stand| s.cell.map(|base| s.pending.2.wrapping_sub(base));
+        (self.mode == now.mode && self.page == now.page && self.natural == now.natural && self.tail == now.tail)
+            && (self.catcodes == now.catcodes && self.certain == now.certain)
+            && (self.pending.0 == now.pending.0 && self.pending.1 == now.pending.1 && braces(self) == braces(now))
+            && (!closes || self.after == now.after)
+    }
 }
 
 /// What a run may have done besides assignments: reports, files, outputs,
@@ -91,6 +108,8 @@ struct Counts {
 pub(crate) struct MemoStart {
     mark: crate::engine::env::MemoMark,
     assignments: u64,
+    /// TeX's steps at the start ([`super::Analysis::tex_steps`]): a run counts what the
+    /// replays inside it stood for, so a replay of it stands for all a run takes.
     steps: u64,
     counts: Counts,
     stand: Stand,
@@ -101,6 +120,8 @@ pub(crate) struct MemoStart {
     said: usize,
     /// [`Machine::memo_uses`]'s length at the start.
     uses: usize,
+    /// [`Machine::mints`] at the start.
+    mints: u64,
 }
 
 /// What decides where a run's occurrences stand ([`Machine::raised_at`]).
@@ -136,6 +157,24 @@ pub(crate) struct Memo {
     rest: Option<(Token, Rc<[Token]>)>,
     steps: u64,
     approximated: bool,
+    /// Whether the run named an unknown value ([`Machine::mints`]): a replay counts as one
+    /// naming too, for the runs around it.
+    minted: bool,
+}
+
+impl Memo {
+    /// About what it holds of its own: its rows and tokens, not the texts it shares with the run.
+    pub(crate) fn bytes(&self) -> usize {
+        use std::mem::size_of_val;
+        let tokens = |t: &[Token]| size_of_val(t) + 2 * size_of::<usize>();
+        size_of::<Memo>()
+            + self.args.iter().map(|a| tokens(a)).sum::<usize>()
+            + size_of_val(&self.reads[..])
+            + self.logged.as_ref().map_or(0, |l| size_of_val(&l[..]))
+            + size_of_val(&self.uses[..])
+            + size_of_val(&self.writes[..])
+            + self.rest.as_ref().map_or(0, |r| tokens(&r.1))
+    }
 }
 
 impl CallRec {
@@ -166,7 +205,6 @@ impl CallRec {
 /// Whether a definition's calls are still recorded for kept effects.
 #[derive(Clone)]
 pub(crate) struct MemoCode {
-    _code: Rc<crate::engine::tex::MacroDef>,
     misses: u16,
     kept: u32,
     /// Calls not recorded since its probes ran out, and how often they ran
@@ -189,10 +227,39 @@ fn carries(b: &Binding, spans: &[Span]) -> bool {
     text(&b.meaning) || b.may.iter().flat_map(|m| m.iter()).any(text) || value(&b.value, spans)
 }
 
+/// A definition by its text and where that text stands, not by its allocation: a run that
+/// read a package and one that replayed it hold equal definitions in different allocations
+/// (shared by `\let` in one, apart in the other), and must keep and replay alike.
+/// Each call asks, so the hash is kept per allocation; the entry holds the definition, so
+/// its address names no other while it stands.
+pub(crate) fn code_id(code: &Rc<crate::engine::tex::MacroDef>) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    thread_local! {
+        static IDS: std::cell::RefCell<crate::fixed::HashMap<usize, (Rc<crate::engine::tex::MacroDef>, u64)>> =
+            Default::default();
+    }
+    let at = Rc::as_ptr(code) as usize;
+    if let Some(id) = IDS.with_borrow(|ids| ids.get(&at).map(|e| e.1)) {
+        return id;
+    }
+    let mut h = crate::engine::tex::NameHash.build_hasher();
+    (code.arity(), code.parameter_text.items.len(), code.parameter_text.brace_end).hash(&mut h);
+    (code.long, code.outer, code.protected, code.arg_spec.is_some()).hash(&mut h);
+    code.replacement_text.iter().for_each(|t| (t.tok, t.span).hash(&mut h));
+    let id = h.finish();
+    IDS.with_borrow_mut(|ids| {
+        if ids.len() >= 1 << 14 {
+            ids.clear();
+        }
+        ids.insert(at, (code.clone(), id));
+    });
+    id
+}
+
 fn memo_key(code: &Rc<crate::engine::tex::MacroDef>, args: &[Vec<Token>]) -> u64 {
     use std::hash::{BuildHasher, Hash, Hasher};
     let mut h = crate::engine::tex::NameHash.build_hasher();
-    (Rc::as_ptr(code) as usize).hash(&mut h);
+    code_id(code).hash(&mut h);
     for a in args {
         a.len().hash(&mut h);
         a.iter().for_each(|t| t.tok.hash(&mut h));
@@ -302,9 +369,23 @@ fn learned_key(code: &Rc<crate::engine::tex::MacroDef>) -> CallKey {
 }
 
 impl Machine<'_> {
+    /// The mutable run record of `key`, created when new.
+    fn runs_entry(&mut self, key: CallKey) -> &mut CallRuns {
+        if self.call_runs.get(&key).is_none() {
+            self.call_runs.insert_mut(key, Default::default());
+        }
+        self.runs_of(key)
+    }
+
+    /// The mutable run record of `key`, which recording made.
+    fn runs_of(&mut self, key: CallKey) -> &mut CallRuns {
+        Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded"))
+    }
+
     /// Drops the records of calls that are not being recorded right now.
     pub(super) fn forget_settled_calls(&mut self) {
-        self.call_runs.retain(|_, runs| runs.active > 0);
+        self.call_runs =
+            self.call_runs.iter().filter(|(_, runs)| runs.active > 0).map(|(k, v)| (*k, v.clone())).collect();
     }
 
     /// The key of a call of `code` (defined at `def`) at `span` with
@@ -364,7 +445,7 @@ impl Machine<'_> {
         }
         // No entry where none can be recorded: a missing one reads as empty.
         let site = needed > 0 && {
-            let runs = Rc::make_mut(self.call_runs.entry(key).or_default());
+            let runs = self.runs_entry(key);
             let site = !runs.leaky && runs.runs.len() + runs.active < needed;
             runs.active += usize::from(site);
             site
@@ -381,14 +462,11 @@ impl Machine<'_> {
             // A log that ran over holds for no open record: they keep
             // nothing, and it starts again.
             if memo && self.env.memo_full() {
-                for rec in Rc::make_mut(&mut self.call_recs) {
-                    Rc::make_mut(rec).memo = None;
-                }
-                self.env.memo_floor(None);
+                self.drop_memos();
             }
             // A run past `limits.call_memo_longest` keeps nothing: what
             // it said and read grows with it, and its log costs every read.
-            let (now, longest) = (self.out.steps, self.limits.call_memo_longest);
+            let (now, longest) = (self.out.tex_steps(), self.limits.call_memo_longest);
             if memo && self.call_recs.iter().any(|r| r.memo.as_ref().is_some_and(|m| now - m.steps > longest)) {
                 for rec in Rc::make_mut(&mut self.call_recs) {
                     if rec.memo.as_ref().is_some_and(|m| now - m.steps > longest) {
@@ -396,12 +474,11 @@ impl Machine<'_> {
                     }
                 }
                 let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-                self.env.memo_floor(floor);
+                self.set_memo_floor(floor);
             }
             let rec = CallRec {
                 key,
                 base: self.input.len(),
-                recent: self.env.recent_len(),
                 reads: self.env.read_log_len(),
                 assigned: self.env.assignments,
                 groups: self.env.group_level(),
@@ -423,13 +500,14 @@ impl Machine<'_> {
                     Rc::new(MemoStart {
                         mark: self.env.memo_open(),
                         assignments: self.env.assignments,
-                        steps: self.out.steps,
+                        steps: self.out.tex_steps(),
                         counts: self.memo_counts(),
                         stand: self.stand(),
                         facts: self.fact_lens(),
                         verify: self.memo_verify.take(),
                         said: self.memo_said.len(),
-                        uses: self.memo_uses.len(),
+                        uses: self.memo_uses_base + self.memo_uses.len(),
+                        mints: self.mints,
                     })
                 }),
             };
@@ -441,8 +519,12 @@ impl Machine<'_> {
     /// recorded runs instead of running it. Returns `true` when it did.
     pub(crate) fn summarize_call(&mut self, key: CallKey, arguments: &[Vec<Token>]) -> bool {
         let needed = self.summary_after();
+        // Nested in a scan no call is summarized: no lookup.
+        if needed == 0 {
+            return false;
+        }
         let Some(runs) = self.call_runs.get(&key) else { return false };
-        if needed == 0 || runs.leaky || runs.runs.len() < needed {
+        if runs.leaky || runs.runs.len() < needed {
             return false;
         }
         // Runs that wrote different names chose them from data, so a third
@@ -459,13 +541,13 @@ impl Machine<'_> {
                         .windows(2)
                         .any(|w| accumulates(&w[0], &w[1]) || updates(&w[0], &w[1]) || self.folds_code(&w[0], &w[1])))
         {
-            let runs = Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded"));
+            let runs = self.runs_of(key);
             runs.leaky = true;
             runs.runs.clear();
             return false;
         }
         let len = runs.runs.len();
-        Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).shaped = Some(len);
+        self.runs_of(key).shaped = Some(len);
         let runs = self.call_runs.get(&key).expect("recorded");
         // Summarize only if an operand is unknown: an argument, or a name the runs read.
         let unknown = arguments.iter().any(|a| self.has_unknown(a))
@@ -519,7 +601,7 @@ impl Machine<'_> {
     /// wrote a typed number from its own arguments that this call's arguments
     /// do not hold, since that number does not belong to this call.
     fn apply_summary(&mut self, key: CallKey, span: Span, arguments: &[Vec<Token>]) -> bool {
-        let all = std::mem::take(&mut Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).runs);
+        let all = std::mem::take(&mut self.runs_of(key).runs);
         // The runs that read what the call reads now: their writes, not every run's.
         let runs: Vec<Run> = all.iter().filter(|r| !self.reads_otherwise(r)).cloned().collect();
         let mut syms: Vec<Sym> = runs.iter().flat_map(|r| r.writes.iter().map(|w| w.0)).collect();
@@ -604,7 +686,7 @@ impl Machine<'_> {
             }
         }
         if refused {
-            Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).runs = all;
+            self.runs_of(key).runs = all;
             return false;
         }
         self.mint();
@@ -612,9 +694,8 @@ impl Machine<'_> {
             let global = b.global;
             self.env.set(sym, b, global);
         }
-        let reported =
-            std::mem::replace(&mut Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).reported, true);
-        Rc::make_mut(self.call_runs.get_mut(&key).expect("recorded")).runs = all;
+        let reported = std::mem::replace(&mut self.runs_of(key).reported, true);
+        self.runs_of(key).runs = all;
         self.approximated = true;
         if self.cfg.verbose >= 4 {
             let names: Vec<&str> = syms.iter().map(|s| self.name(*s)).collect();
@@ -666,7 +747,7 @@ impl Machine<'_> {
             let ended = main
                 && intact
                 && !rec.leaky
-                && self.env.recent_len() >= rec.recent
+                && self.env.logged_since(rec.assigned)
                 && self.conds.len() == rec.conds
                 && self.mode == rec.mode
                 && self.file_writes == rec.side;
@@ -681,22 +762,18 @@ impl Machine<'_> {
                     && intact
                     && !peeks
                     && balanced
-                    && self.env.recent_len() >= rec.recent
+                    && self.env.logged_since(rec.assigned)
                     && self.learn_forks == rec.forks_at;
                 self.end_memo_run(&rec, start, clean);
                 let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-                if floor.is_none() {
-                    self.memo_said.clear();
-                    self.memo_uses.clear();
-                }
-                self.env.memo_floor(floor);
+                self.set_memo_floor(floor);
             }
             self.learn_run(&rec, ended && (listed || rec.soft) && (balanced || closes), closes, peeks, typeset);
             if !rec.site {
                 continue;
             }
             let clean = whole && balanced && !peeks && !rec.soft;
-            let entry = Rc::make_mut(self.call_runs.entry(rec.key).or_default());
+            let entry = self.runs_entry(rec.key);
             entry.active = entry.active.saturating_sub(1);
             if !clean {
                 entry.leaky = true;
@@ -707,7 +784,7 @@ impl Machine<'_> {
                 continue;
             }
             let Some(reads) = self.env.reads_since(rec.reads) else {
-                Rc::make_mut(self.call_runs.get_mut(&rec.key).expect("entry")).leaky = true;
+                self.runs_of(rec.key).leaky = true;
                 continue;
             };
             // Only runs over unknown operands are recorded. What a run on
@@ -716,11 +793,11 @@ impl Machine<'_> {
                 continue;
             }
             let writes: Vec<_> =
-                self.env.recent_since(rec.recent).into_iter().map(|sym| (sym, self.env.slot_at(sym.0))).collect();
+                self.env.recent_since(rec.assigned).into_iter().map(|sym| (sym, self.env.slot_at(sym.0))).collect();
             // A run that wrote nothing acted only through the tokens it left
             // or consumed, which a summary cannot replay.
             if writes.is_empty() {
-                let entry = Rc::make_mut(self.call_runs.get_mut(&rec.key).expect("entry"));
+                let entry = self.runs_of(rec.key);
                 entry.leaky = true;
                 entry.runs.clear();
                 continue;
@@ -742,7 +819,7 @@ impl Machine<'_> {
                 loose: false,
                 outputs: Vec::new(),
             };
-            Rc::make_mut(self.call_runs.get_mut(&rec.key).expect("entry")).runs.push(run);
+            self.runs_of(rec.key).runs.push(run);
         }
         if self.call_recs.is_empty() {
             self.env.log_reads(false);
@@ -758,9 +835,9 @@ impl Machine<'_> {
             return;
         }
         let k = usize::from(self.limits.call_learn_after);
-        let entry = Rc::make_mut(self.call_runs.entry(key).or_default());
-        entry.code.get_or_insert_with(|| rec.code.clone());
         let forked = self.learn_forks > rec.forks_at;
+        let entry = self.runs_entry(key);
+        entry.code.get_or_insert_with(|| rec.code.clone());
         if entry.leaky || entry.runs.len() >= k {
             return;
         }
@@ -773,7 +850,7 @@ impl Machine<'_> {
         // A partial run teaches nothing: decided before its writes are collected,
         // which costs as much as the run wrote.
         let writes: Vec<_> = match whole {
-            true => (self.env.recent_within(rec.recent, self.env.depth() as u32).into_iter())
+            true => (self.env.recent_within(rec.assigned, self.env.depth() as u32).into_iter())
                 .map(|sym| (sym, self.env.slot_at(sym.0)))
                 .collect(),
             false => Vec::new(),
@@ -781,7 +858,7 @@ impl Machine<'_> {
         // It wrote a name from its arguments, so the next call writes another name.
         let handed = writes.iter().any(|w| rec.args.iter().flatten().any(|t| t.cs() == Some(w.0)));
         if !whole || handed || writes.is_empty() {
-            let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("entry"));
+            let entry = self.runs_of(key);
             entry.leaky = true;
             entry.runs.clear();
             return;
@@ -791,7 +868,7 @@ impl Machine<'_> {
         let syms: Vec<Sym> = writes.iter().filter(|_| loose).map(|w| w.0).collect();
         let met = self.env.read_before(rec.reads, rec.assigned, &syms).unwrap_or_else(|| syms.clone());
         let outputs = syms.into_iter().filter(|s| met.binary_search(s).is_err()).collect();
-        let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("entry"));
+        let entry = self.runs_of(key);
         entry.runs.push(Run {
             writes,
             reads: Vec::new(),
@@ -811,7 +888,7 @@ impl Machine<'_> {
             let alike = runs.windows(2).all(|w| {
                 (loose || names(&w[0]) == names(&w[1])) && (w[0].closes, w[0].peeks) == (w[1].closes, w[1].peeks)
             }) && self.typed_effect(&runs);
-            let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("entry"));
+            let entry = self.runs_of(key);
             entry.leaky = !alike;
             if alike {
                 entry.runs = runs;
@@ -864,7 +941,7 @@ impl Machine<'_> {
             self.pop_frame();
         }
         self.mark_cut_scans();
-        let runs = std::mem::take(&mut Rc::make_mut(self.call_runs.get_mut(&key).expect("checked")).runs);
+        let runs = std::mem::take(&mut self.runs_of(key).runs);
         let keep = rec.depth.saturating_sub(usize::from(runs[0].closes));
         self.close_since((rec.conds, self.env.group_id_at(keep), u64::MAX), false);
         (self.mode, self.natural, self.material) = (rec.mode, rec.natural, rec.material);
@@ -876,7 +953,7 @@ impl Machine<'_> {
             self.soften_call_recs();
         }
         self.apply_learned(&runs, span);
-        let entry = Rc::make_mut(self.call_runs.get_mut(&key).expect("checked"));
+        let entry = self.runs_of(key);
         entry.runs = runs;
         let reported = std::mem::replace(&mut entry.reported, true);
         self.approximated = true;
@@ -902,9 +979,7 @@ impl Machine<'_> {
         let all = |test: &dyn Fn(&Binding) -> bool| {
             runs.iter().all(|r| of(r, sym).is_some_and(|b| b.may.is_none() && test(b)))
         };
-        if all(
-            &|b| matches!(&b.meaning, Meaning::Macro(d) if d.parameter_text.arity == 0 && self.spells_number(&d.replacement_text)),
-        ) {
+        if all(&|b| self.holds_number(b)) {
             Some(Written::Number)
         } else if all(&|b| matches!(b.value, crate::engine::value::Value::Num { .. })) {
             Some(Written::Register)
@@ -921,7 +996,9 @@ impl Machine<'_> {
             // that differ were chosen from data, as a third run may do.
             let vague = runs.iter().any(|r| of(r, sym).is_some_and(|b| !b.certain || self.imprecise(b)));
             let output = runs.iter().all(|r| of(r, sym).is_none() || r.outputs.contains(&sym));
-            ((vague || output) && runs.iter().any(|r| r.loose)).then_some(Written::Any)
+            // A name some runs left alone is state another run's data reached: the join with what it holds now.
+            let partial = runs.iter().any(|r| of(r, sym).is_none());
+            ((vague || output || partial) && runs.iter().any(|r| r.loose)).then_some(Written::Any)
         }
     }
 
@@ -936,8 +1013,19 @@ impl Machine<'_> {
     /// Runs can be learned only if every name they wrote has a type to widen
     /// to (or is the same in all runs), and at least one holds a number.
     fn typed_effect(&self, runs: &[Run]) -> bool {
-        let types: Option<Vec<_>> = Self::learned_names(runs).into_iter().map(|s| self.written_type(runs, s)).collect();
-        types.is_some_and(|t| t.iter().any(|t| matches!(t, Written::Number | Written::Register)))
+        let names = Self::learned_names(runs);
+        let types: Option<Vec<_>> = names.iter().map(|&s| self.written_type(runs, s)).collect();
+        // A number some run left in a name that the others left vague counts too.
+        let number = |&s: &Sym| {
+            runs.iter().flat_map(|r| &r.writes).any(|w| w.0 == s && w.1.as_ref().is_some_and(|b| self.holds_number(b)))
+        };
+        types.is_some_and(|t| {
+            t.iter().zip(&names).any(|(t, s)| match t {
+                Written::Number | Written::Register => true,
+                Written::Any => number(s),
+                _ => false,
+            })
+        })
     }
 
     /// Sets each name the runs wrote to its type: number text becomes an
@@ -1000,6 +1088,11 @@ impl Machine<'_> {
         self.mint();
     }
 
+    /// A parameterless macro whose text spells a number.
+    fn holds_number(&self, b: &Binding) -> bool {
+        matches!(&b.meaning, Meaning::Macro(d) if d.parameter_text.arity == 0 && self.spells_number(&d.replacement_text))
+    }
+
     /// Text that spells a number: digits, a sign, a point, typed digits.
     fn spells_number(&self, text: &[Token]) -> bool {
         !text.is_empty()
@@ -1020,13 +1113,49 @@ impl Machine<'_> {
     fn imprecise(&self, b: &Binding) -> bool {
         b.may.is_some() || matches!(&b.meaning, Meaning::Macro(d) if self.has_unknown(&d.replacement_text))
     }
+    /// Every open recording keeps nothing, and its logs go.
+    pub(crate) fn drop_memos(&mut self) {
+        for rec in Rc::make_mut(&mut self.call_recs) {
+            Rc::make_mut(rec).memo = None;
+        }
+        self.set_memo_floor(None);
+    }
+
+    /// Where the open recordings' logs begin ([`crate::engine::env::Env::memo_floor`]).
+    /// The uses before the oldest open recording began go, and with none open
+    /// what they said goes too: the logs hold only what open recordings may
+    /// keep, so they never outgrow them.
+    pub(crate) fn set_memo_floor(&mut self, floor: Option<crate::engine::env::MemoMark>) {
+        // A recording a resumed path holds whose uses were dropped keeps nothing.
+        let base = self.memo_uses_base;
+        if self.call_recs.iter().any(|r| r.memo.as_ref().is_some_and(|m| m.uses < base)) {
+            for rec in Rc::make_mut(&mut self.call_recs) {
+                if rec.memo.as_ref().is_some_and(|m| m.uses < base) {
+                    Rc::make_mut(rec).memo = None;
+                }
+            }
+        }
+        let floor = floor.and_then(|_| self.call_recs.iter().rev().find_map(|r| r.memo_mark()));
+        let end = self.memo_uses_base + self.memo_uses.len();
+        let oldest = self.call_recs.iter().filter_map(|r| r.memo.as_ref().map(|m| m.uses)).min().unwrap_or(end);
+        let drop = oldest.saturating_sub(self.memo_uses_base).min(self.memo_uses.len());
+        if drop > 0 {
+            self.memo_uses.drain(..drop);
+            self.memo_uses_base += drop;
+        }
+        if floor.is_none() {
+            self.memo_said.clear();
+            self.memo_uses_base += self.memo_uses.len();
+            self.memo_uses.clear();
+        }
+        self.env.memo_floor(floor);
+    }
+
     /// Drops every open call recording at the start or end of a cacheable
     /// load. A replayed load runs none of these calls, so a read load must
     /// keep nothing from them either, or cold and warm runs differ.
     pub(crate) fn drop_call_recs(&mut self) {
-        self.env.memo_floor(None);
-        self.memo_said.clear();
-        self.memo_uses.clear();
+        self.set_memo_floor(None);
         for rec in std::mem::take(Rc::make_mut(&mut self.call_recs)) {
             if rec.site
                 && let Some(entry) = self.call_runs.get_mut(&rec.key)
@@ -1138,7 +1267,7 @@ impl Machine<'_> {
         let mut rest: Option<Vec<Token>> = (plain
             && self.step_depth == 1
             && below == rec.below
-            && self.env.recent_len() >= rec.recent
+            && self.env.logged_since(rec.assigned)
             && self.learn_forks == rec.forks_at
             && start.verify.is_none())
         .then(Vec::new);
@@ -1150,7 +1279,7 @@ impl Machine<'_> {
                 _ => rest = None,
             }
         }
-        let steps = self.out.steps - start.steps;
+        let steps = self.out.tex_steps() - start.steps;
         let kept = rest.is_some_and(|rest| {
             steps >= u64::from(self.limits.call_memo_steps)
                 && self.keep_memo(&rec, &start, steps, Some((token, rest.into())))
@@ -1163,11 +1292,7 @@ impl Machine<'_> {
             }
         }
         let floor = self.call_recs.iter().rev().find_map(|r| r.memo_mark());
-        if floor.is_none() {
-            self.memo_said.clear();
-            self.memo_uses.clear();
-        }
-        self.env.memo_floor(floor);
+        self.set_memo_floor(floor);
     }
 
     /// Whether a call of `code` is recorded for a kept effect: from the
@@ -1187,7 +1312,7 @@ impl Machine<'_> {
             return false;
         }
         let probes = self.limits.call_memo_probes;
-        let Some(c) = self.memo_codes.get_mut(&(Rc::as_ptr(code) as usize)) else { return true };
+        let Some(c) = self.memo_codes.get_mut(&code_id(code)) else { return true };
         if probes == 0 || c.kept > 0 || c.misses < probes {
             return true;
         }
@@ -1224,6 +1349,7 @@ impl Machine<'_> {
             conds: (self.conds.len(), self.conds.last().map(|c| c.at)),
             catcodes: self.catcodes.clone(),
             certain: (self.exact(), self.cds.is_empty()),
+            cell: self.cell_base,
             pending: (
                 self.after_assignment.map(|t| t.tok),
                 [p.global, p.long, p.outer, p.protected, p.immediate],
@@ -1261,10 +1387,10 @@ impl Machine<'_> {
     /// does not say it again at another call's place.
     fn facts_mine(&mut self, from: [usize; 5]) -> bool {
         let f = &self.out.facts;
-        let mut files: Vec<_> = (f.defs[from[0]..].iter().map(|d| d.span.file))
-            .chain(f.expansions[from[1]..].iter().map(|e| e.span.file))
+        let mut files: Vec<_> = (f.defs.iter_from(from[0]).map(|d| d.span.file))
+            .chain(f.expansions.iter_from(from[1]).map(|e| e.span.file))
             .chain(f.vars[from[2]..].iter().map(|v| v.span.file))
-            .chain(f.literals[from[3]..].iter().map(|l| l.at.file))
+            .chain(f.literals.iter_from(from[3]).map(|l| l.at.file))
             .chain(f.letters[from[4]..].iter().map(|l| l.0.file))
             .collect();
         files.sort_unstable();
@@ -1276,7 +1402,7 @@ impl Machine<'_> {
     /// effect is kept when it ran `limits.call_memo_steps`, did nothing but
     /// assignments, and left everything else as it found it.
     fn end_memo_run(&mut self, rec: &CallRec, start: &MemoStart, clean: bool) {
-        let steps = self.out.steps - start.steps;
+        let steps = self.out.tex_steps() - start.steps;
         if let Some(want) = &start.verify {
             let got = if clean { self.memo_effect(rec, start, steps, false, None) } else { Err("unclean") };
             self.verify_memo(rec, want, got);
@@ -1288,8 +1414,7 @@ impl Machine<'_> {
 
     /// Counts a recorded run of `code` as kept or missed ([`Self::memo_records`]).
     fn memo_verdict(&mut self, code: &Rc<crate::engine::tex::MacroDef>, kept: bool) {
-        let entry = self.memo_codes.entry(Rc::as_ptr(code) as usize).or_insert_with(|| MemoCode {
-            _code: code.clone(),
+        let entry = self.memo_codes.entry(code_id(code)).or_insert_with(|| MemoCode {
             misses: 0,
             kept: 0,
             refused: 0,
@@ -1302,19 +1427,20 @@ impl Machine<'_> {
     }
 
     fn keep_memo(&mut self, rec: &CallRec, start: &MemoStart, steps: u64, rest: Option<(Token, Rc<[Token]>)>) -> bool {
-        if self.memo_count >= self.limits.call_memo_entries as usize {
-            return false;
-        }
         let Ok(memo) = self.memo_effect(rec, start, steps, true, rest) else { return false };
+        // Full: all go at once, as the calls met once do. What the run calls now is kept anew.
+        let bytes = memo.bytes();
+        if self.memo_bytes + bytes > self.limits.call_memo_bytes.as_u64() as usize {
+            (self.memos, self.memo_bytes) = Default::default();
+        }
         let variants = usize::from(self.limits.call_memo_variants);
         let kept = self.memos.entry(memo_key(&rec.code, &rec.args)).or_default();
         // The oldest state gives way: loops meet the newest again.
         if kept.len() >= variants {
-            kept.remove(0);
-            self.memo_count -= 1;
+            self.memo_bytes -= kept.remove(0).bytes();
         }
         kept.push(Rc::new(memo));
-        self.memo_count += 1;
+        self.memo_bytes += bytes;
         self.out.call_memo[0] += 1;
         true
     }
@@ -1423,21 +1549,38 @@ impl Machine<'_> {
         let Some((reads, pre, [globals, locals])) = self.env.memo_since(start.mark) else { return Err("full") };
         let logged = self.env.reads_since(rec.reads);
         let mut writes = Vec::new();
-        for sym in self.env.recent_since(rec.recent) {
+        for sym in self.env.recent_since(rec.assigned) {
             // Unbound again, or written both globally and locally: no one
             // assignment says that at another group level.
             let Some(now) = self.env.peek(sym.0).cloned() else { return Err("unbound") };
-            let global = globals.binary_search(&sym.0).is_ok();
-            if global == locals.binary_search(&sym.0).is_ok() {
+            let (global, local) = (globals.binary_search(&sym.0).is_ok(), locals.binary_search(&sym.0).is_ok());
+            // Written both ways, the global write last: it holds at every level (tex.web
+            // § 283), whatever the local one saved. A local one after it needs both.
+            let last_global = self.env.level_of(sym.0) == 0;
+            if global == local && !(global && last_global) {
                 return Err("global and local");
             }
             writes.push((sym, now, global));
         }
         let held = |sym: u32| pre.get(&sym).map_or_else(|| self.env.peek(sym), Option::as_ref);
-        if strict && reads.iter().any(|&(sym, value)| held(sym).is_some_and(|b| self.vague(Sym(sym), value, b))) {
+        // A value the run could not know stands for any of several: the run holds for each
+        // of them (it met no choice: `Counts`), so its writes do. But an unknown it named
+        // itself is that run's own value: a replay would call another call's value the same.
+        if strict
+            && self.mints != start.mints
+            && reads.iter().any(|&(sym, value)| held(sym).is_some_and(|b| self.vague(Sym(sym), value, b)))
+        {
             return Err("vague read");
         }
-        let reads: Vec<_> = reads.into_iter().map(|(sym, value)| (sym, value, held(sym).cloned())).collect();
+        // What a replay compares ([`crate::engine::env::same_part`]): not where it was defined.
+        let part = |b: &Binding| Binding {
+            defs: Vec::new(),
+            meaning: b.meaning.clone(),
+            value: b.value.clone(),
+            may: b.may.clone(),
+            ..*b
+        };
+        let reads: Vec<_> = reads.into_iter().map(|(sym, value)| (sym, value, held(sym).map(part))).collect();
         // The user's tokens of its arguments that what it wrote carries:
         // such a call is the same only at the same place.
         let mut spans: Vec<Span> = Vec::new();
@@ -1452,7 +1595,7 @@ impl Machine<'_> {
         let said = self.memo_said.get(start.said..).filter(|s| !s.is_empty()).map(|s| (self.raise(), s.into()));
         Ok(Memo {
             said,
-            uses: self.memo_uses.get(start.uses..).unwrap_or_default().into(),
+            uses: self.memo_uses.get(start.uses.saturating_sub(self.memo_uses_base)..).unwrap_or_default().into(),
             logged,
             own,
             args: rec.args.clone(),
@@ -1462,6 +1605,7 @@ impl Machine<'_> {
             rest,
             steps,
             approximated: self.approximated,
+            minted: self.mints != start.mints,
         })
     }
 
@@ -1490,7 +1634,7 @@ impl Machine<'_> {
             let same = |a: &Token, b: &Token| a.tok == b.tok && (!m.own || a.span == b.span);
             m.args.len() == args.len()
                 && m.args.iter().zip(args).all(|(x, y)| x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same(a, b)))
-                && m.stand == stand
+                && m.stand.fits(&stand, m.rest.is_some())
                 && m.reads
                     .iter()
                     .all(|(sym, value, b)| crate::engine::env::same_part(env.peek(*sym), b.as_ref(), *value))
@@ -1531,6 +1675,7 @@ impl Machine<'_> {
             self.push_tokens(rest.clone());
         }
         self.approximated |= memo.approximated;
+        self.mints += u64::from(memo.minted);
         self.sync_end_line();
         self.out.call_memo[1] += 1;
         self.out.call_memo[2] += memo.steps;

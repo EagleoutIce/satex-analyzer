@@ -118,8 +118,9 @@ fn an_environment_never_closed_is_reported() {
     assert!(found[0].contains(r"\begin{itemize}") && found[0].contains(r"ended by \end{document}"), "{found:?}");
 }
 
-/// An error inside the environment may have ended it: the mismatch after
-/// it is a note that names the error, never a certain warning.
+/// An error inside the environment comes first: the mismatch after it names that error. TeX
+/// recovers from `\count0=x` (zero) and still raises the mismatch, as pdflatex does, so the
+/// finding is an error. Before, the note kept the info level while the build failed with it.
 #[test]
 fn a_mismatch_after_an_error_names_the_error() {
     let Some(analysis) = latex(
@@ -130,7 +131,7 @@ fn a_mismatch_after_an_error_names_the_error() {
     let rows: Vec<_> =
         satex::linter::lint(&analysis).into_iter().filter(|r| r["code"] == "environment-mismatch").collect();
     assert_eq!(rows.len(), 1, "{rows:?}");
-    assert_eq!(rows[0]["severity"], "info", "{rows:?}");
+    assert_eq!(rows[0]["severity"], "error", "{rows:?}");
     assert!(rows[0]["message"].as_str().is_some_and(|m| m.contains("may follow from the error at")), "{rows:?}");
 }
 
@@ -593,6 +594,13 @@ fn a_script_on_a_closing_bracket_is_reported() {
     let found = findings(&doc.analysis, "math-script-braces");
     assert!(found.iter().any(|m| m.contains("`^` attaches only to the `)`")), "{found:?}");
     assert!(found.iter().any(|m| m.contains("`_` attaches only to the `]`")), "{found:?}");
+    // the usual notation `(a+b)^2` sets as meant: a note, never a warning
+    let levels: Vec<String> = satex::linter::lint(&doc.analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "math-script-braces")
+        .filter_map(|r| r["severity"].as_str().map(str::to_string))
+        .collect();
+    assert!(!levels.is_empty() && levels.iter().all(|s| s == "info"), "{levels:?}");
 }
 
 math_none! {
@@ -686,6 +694,9 @@ math_none! {
     /// chktex reports `\mathrm{sin}`, which is already upright.
     an_operator_set_by_its_command_is_not_reported("upright", r"Write $\sin(x)$ and $\mathrm{sin}(x)$ here.", "math-operator-name");
     letters_with_no_command_behind_them_are_not_reported("letters", r"Write $abc$ here.", "math-operator-name");
+    /// `\section`'s body holds the word `section` too, but sets no `\mathop`: the bug
+    /// was the advice to write `\section` in a formula.
+    a_command_that_is_no_operator_is_not_suggested("no-operator", r"Write $section$ here.", "math-operator-name");
 }
 
 // chktex warning 11: `You should use '%s' to achieve an ellipsis.`
@@ -716,6 +727,10 @@ fn an_x_between_numbers_is_reported() {
 
 math_none! {
     an_x_beside_letters_is_not_reported("letter-x", r"Screen 640 by 480 and ax4 and 4xa here.", "dimension-times");
+    /// An identifier with digits on both sides of an x (`w120x5`, a widget name
+    /// a generated document repeated 720 times) is one word, no dimension. Bug
+    /// pinned: S003 dimension-times fired inside the name.
+    an_x_inside_an_identifier_is_not_reported("ident-x", r"Widget w120x5 and $v3x4$ here.", "dimension-times");
 }
 
 // chktex warning 40: `You should put punctuation outside inner/inside
@@ -896,9 +911,10 @@ fn a_plain_document_is_told_to_load_cleveref_for_a_named_reference() {
     let found = cleveref_records("cleveref-plain", body);
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0]["fix"].as_str().unwrap().contains("load cleveref"), "{found:?}");
-    // No `\usepackage` to follow: the load goes before `\begin{document}`.
-    assert_eq!(replacements(&found[0]), ["\\usepackage{cleveref}\n", r"\Cref{sec:a}"], "{found:?}");
-    assert_eq!(found[0]["edits"][0]["start"]["line"], 2, "{found:?}");
+    // No `\usepackage` to follow: the load goes at the end of the `\documentclass` line,
+    // before anything the document defines.
+    assert_eq!(replacements(&found[0]), ["\n\\usepackage{cleveref}", r"\Cref{sec:a}"], "{found:?}");
+    assert_eq!(found[0]["edits"][0]["start"]["line"], 1, "{found:?}");
 }
 
 #[test]
@@ -1024,6 +1040,20 @@ fn a_parenthesis_in_math_is_not_reported() {
     let source = "\\documentclass{article}\n\\begin{document}\nThe value $f (x )$ is one.\n\\end{document}\n";
     let Some(doc) = on_disk("math-paren", source, true) else { return };
     assert!(findings(&doc.analysis, "parenthesis-spacing").is_empty());
+}
+
+/// Text only a path the run could not decide sets is no prose to report:
+/// it may be code the analysis lost track of. Pins the false
+/// `parenthesis-spacing` on TikZ path text (`(a.north west) -- ([xshift=…]b)`)
+/// in a `\newcommand` body that pgf's parser gave up on. The same text on
+/// the decided path is still reported.
+#[test]
+fn text_set_only_on_an_undecided_path_is_not_prose() {
+    let source = "\\documentclass{article}\n\\newcommand\\Edge{\\ifdim\\pdfuniformdeviate 5pt>1pt \
+                  (a.north west)--([xshift=1pt]b )\\fi}\n\\begin{document}\nPlain (bad )text.\n\\Edge\n\\end{document}\n";
+    let Some(doc) = on_disk("undecided-path-prose", source, true) else { return };
+    let found = findings(&doc.analysis, "parenthesis-spacing");
+    assert_eq!(found.len(), 1, "only the sentence: {found:?}");
 }
 
 /// An undefined command tells nobody what its arguments and the rest of its
@@ -1175,6 +1205,9 @@ fn leaving_a_slanted_shape_without_a_correction_is_reported() {
 }
 
 file_none! {
+    /// A slanted letter at the end of a box (a forest or TikZ node, `\\mbox`) leans over nothing: the next
+    /// character stands in another box. Pins the false finding on forest's `[Car, …]` nodes.
+    a_slanted_letter_ending_a_box_is_not_reported("boxed.tex", "\\documentclass{article}\n\\begin{document}\nThe \\mbox{\\em f}\\mbox{x} roman\n\\end{document}\n", "missing-italic-correction");
     a_slanted_shape_that_ends_with_a_correction_is_not_reported("corrected.tex", "\\documentclass{article}\n\\begin{document}\nThe \\emph{f\\/} before roman text\n\\end{document}\n", "missing-italic-correction");
     /// A correction in front of a period or a comma is chktex 28's business.
     a_slanted_shape_before_small_punctuation_is_not_reported("punctuated.tex", "\\documentclass{article}\n\\begin{document}\nThe \\emph{word}, and \\emph{another}.\n\\end{document}\n", "missing-italic-correction");
@@ -1219,6 +1252,19 @@ fn an_unreferenced_equation_is_reported() {
     let found = findings(&doc.analysis, "unreferenced-numbered-display");
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("eq:unused"), "{found:?}");
+}
+
+/// One fact, one finding: the display's finding names its unused label and its fix
+/// drops it, so `unused-label` does not report the label again with a fix of its own
+/// that conflicts (delete the label, leaving the number).
+#[test]
+fn an_unreferenced_equation_label_is_reported_once() {
+    let Some(doc) = display("eq-once", "\\begin{equation}\n  a = b\n  \\label{eq:once}\n\\end{equation}\n") else {
+        return;
+    };
+    assert_eq!(findings(&doc.analysis, "unreferenced-numbered-display").len(), 1);
+    let labels = findings(&doc.analysis, "unused-label");
+    assert!(labels.is_empty(), "{labels:?}");
 }
 
 /// A numbered display with no label at all can never be referenced.
@@ -1658,6 +1704,22 @@ fn a_label_from_a_macro_body_is_reported_at_the_call() {
     assert!(found[0].starts_with("4:1 ") && found[0].contains("via `\\greet`"), "{found:?}");
 }
 
+/// Intuition: one macro that labels and refers (`\\label{sec:#1} \\ref{sec:#1}`), or a `\\foreach` body,
+/// uses its labels: "never referenced" there is false. Pins three drops of such a use: the key not
+/// spelled in the call's source (`\\body{1}`), the read at the label's own call, and the label's own
+/// site counted as the use. A label the macro never refers to is still reported.
+#[test]
+fn a_label_a_macro_refers_to_is_used() {
+    let body = "\\documentclass{article}\n\\begin{document}\n\\def\\body#1{\\section{S#1}\\label{sec:#1} See \\ref{sec:#1}.}\\body{1}\\body{2}\n\\end{document}\n";
+    let Some(analysis) = latex(body) else { return };
+    let found = placed(&analysis, "unused-label");
+    assert!(found.is_empty(), "{found:?}");
+    let some = "\\documentclass{article}\n\\begin{document}\n\\def\\body#1{\\section{S#1}\\label{sec:#1} Text.}\\body{1}\\body{2}\nSee \\ref{sec:1}.\n\\end{document}\n";
+    let Some(analysis) = latex(some) else { return };
+    let found = placed(&analysis, "unused-label");
+    assert!(found.len() == 1 && found[0].contains("sec:2"), "{found:?}");
+}
+
 #[test]
 fn a_label_written_in_the_text_is_reported_where_it_stands() {
     let Some(analysis) = latex("\\documentclass{article}\n\\begin{document}\nx \\label{own}\n\\end{document}\n") else {
@@ -1930,6 +1992,37 @@ fn a_bare_reference_gets_a_name_the_document_uses() {
     assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), [r"\secref{sec:a}"], "{found:?}");
 }
 
+/// A `\ref` in a table's cell needs no name: the column's header says what it numbers, and a
+/// cell is no sentence (user, 2026-11-22). The same `\ref` in prose still gets one.
+#[test]
+fn a_bare_reference_in_a_table_cell_is_no_finding() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\usepackage{hyperref}\n\\begin{document}\n\\section{A}\\label{sec:a}\n\
+                  \\begin{tabular}{ll}\nSection & Topic\\\\\n\\ref{sec:a} & intro\\\\\n\\end{tabular}\n\
+                  see \\ref{sec:a}.\n\\end{document}\n";
+    let found = records("bare-cell", source, "bare-reference");
+    let lines: Vec<u64> = found.iter().filter_map(|r| r["line"].as_u64()).collect();
+    assert_eq!(lines, [9], "{found:?}");
+}
+
+/// A definition in a group that nothing reads is lost when the group closes; one read before
+/// it closes did its work: hyperref's `\begingroup\edef\x{…\endgroup…}\x`, which ends the group
+/// from inside `\x` (found linting hyperref.sty itself).
+#[test]
+fn a_group_local_definition_read_before_its_group_closes_is_no_finding() {
+    if !crate::support::installed() {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n{\\def\\lost{a}}\n\
+                  \\begingroup\\edef\\x{\\noexpand\\endgroup\\noexpand\\def\\noexpand\\kept{b}}\\x\n\
+                  \\kept\n\\end{document}\n";
+    let found = records("group-local", source, "group-local-definition");
+    let names: Vec<&str> = found.iter().filter_map(|r| r["name"].as_str()).collect();
+    assert_eq!(names, ["\\lost"], "{found:?}");
+}
+
 /// A section called a subsection or a chapter, a table called a figure; a
 /// subsection called a section is fine.
 #[test]
@@ -1953,8 +2046,9 @@ fn a_sentence_that_starts_in_lowercase_is_reported() {
         return;
     }
     // `$x$` after `?` is a formula, no sentence start
+    // a mark with no word before it ends nothing: the quoted `! object` (user, 2026-11-22)
     let body = "We stop here. then we go. Words like iPhone. iPhone works. Ask approx. the same. \
-                It runs! next one. Wait... and so etc. and so. Funny? $x_{42}$ grows.";
+                It runs! next one. Wait... and so etc. and so. Funny? $x_{42}$ grows. It said ``! object not found''.";
     let found = records("capital", &math_document(body), "sentence-capital");
     assert_eq!(found.iter().flat_map(replacements).collect::<Vec<_>>(), ["T", "N"], "{found:?}");
     // The two rules split the periods: `approx.` and `etc.` ask for a word space, `here.` does not.
@@ -2073,4 +2167,26 @@ fn a_contents_line_read_back_from_the_aux_is_no_entry() {
         .map(|o| o.key.as_str())
         .collect();
     assert!(entries.is_empty(), "{entries:?}");
+}
+
+/// Intuition: a package or class of the project is code, where `\csname` and `\hskip` are its tools; the
+/// plain-TeX advice is for the document's text. Pins 35 findings on a thesis's own `xlistings.sty`.
+#[test]
+fn a_primitive_in_a_project_package_is_not_reported() {
+    if !crate::support::installed() {
+        return;
+    }
+    let dir = crate::support::scratch_dir(crate::support::tmp_root().join("primitive-in-package"));
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n\\def\\mine{\\hskip 1pt}\n").unwrap();
+    let main =
+        "\\documentclass{article}\n\\usepackage{mine}\n\\begin{document}\nA\\mine B \\hskip 2pt C\n\\end{document}\n";
+    std::fs::write(dir.join("main.tex"), main).unwrap();
+    let analysis =
+        satex::analysis::machine::Machine::analyze(main, Some(&dir.join("main.tex")), &crate::support::config());
+    let files: Vec<String> = satex::linter::lint(&analysis)
+        .into_iter()
+        .filter(|r| r["code"] == "primitive-tex-command" && r["origin"] == "document")
+        .filter_map(|r| r["file"].as_str().map(str::to_string))
+        .collect();
+    assert!(!files.is_empty() && files.iter().all(|f| f.ends_with("main.tex")), "{files:?}");
 }

@@ -11,6 +11,11 @@ use crate::engine::value::{
     Glue, GlueHull, MAX_DIMEN, MAX_INT, Num, Scaled, Stretch, UNIT, Value, WORD_MAX, WORD_MIN, mult_and_add,
 };
 
+/// What a dimension's digits may be before its unit: the integer part's
+/// interval and the fraction's ends in units of 2^-16. Where the flag is
+/// set the ends are paired, least with least: one number between them.
+type Ranged = (Num, (i64, i64), bool);
+
 /// The prefix of the names of unknown digits typed with their interval
 /// ([`Machine::digits_in`]).
 pub(crate) const TYPED_DIGITS: &str = "\u{2}unknown digits:";
@@ -259,7 +264,7 @@ impl Machine<'_> {
         let Some(sym) = self.active_cs(token).or(token.cs()) else { return false };
         let meaning = self.env.meaning(sym);
         matches!(meaning.prim(), Some(Primitive::Relax))
-            || (self.read_noexpanded(token) && self.expandable_meaning(&meaning))
+            || (self.read_noexpanded(token) && self.relax_when_noexpanded(&meaning))
     }
 
     /// "Scan an optional space" (tex.web § 443).
@@ -328,7 +333,9 @@ impl Machine<'_> {
     /// names, `depth` deep.
     fn signs_within(&self, sym: Sym, depth: u8) -> bool {
         let Some(may) = self.env.slot(sym).and_then(|b| b.may.clone()) else { return false };
+        // Past the walk budget the name parts as any other ([`Machine::walk`]).
         depth > 0
+            && self.walk(may.len())
             && may.iter().all(|m| {
                 m.as_macro().is_some_and(|m| {
                     m.parameter_text.items.is_empty()
@@ -437,8 +444,28 @@ impl Machine<'_> {
             })
     }
 
+    /// The slot that holds the value of `sym`, a count register's name or an integer
+    /// parameter. Looked up without a read.
+    pub(crate) fn count_slot(&mut self, sym: Sym) -> Option<Sym> {
+        match self.env.peek(sym.0)?.meaning {
+            Meaning::Register(RegKind::Count, index) if index != crate::engine::tex::UNNUMBERED => {
+                Some(self.register_sym(RegKind::Count, i64::from(index)))
+            }
+            Meaning::Primitive(Primitive::IntegerParameter) => Some(self.env.aliases.get(&sym).copied().unwrap_or(sym)),
+            _ => None,
+        }
+    }
+
     pub fn scan_int(&mut self) -> Option<i64> {
+        self.amb = None;
         let (negative, token) = self.scan_signs()?;
+        // One count register or integer parameter named outright is the whole number:
+        // only then the number is the expression its read left ([`Machine::amb`]).
+        let slot = token.cs().filter(|_| self.env.symbolic()).and_then(|sym| self.count_slot(sym));
+        let direct = slot.is_some();
+        // Prepared before the scan looks at the slot: all it reads of it from here is its own.
+        self.amb_base = slot.and_then(|slot| self.env.scanning(slot).map(|scanning| (slot, scanning)));
+        self.amb = None;
         self.probe_scans(token, "number");
         // Only a register read as the whole number leaves its members to
         // the test that scans it (see `Machine::register_value`).
@@ -466,9 +493,15 @@ impl Machine<'_> {
         if negative || self.abs.is_none() {
             self.abs_from = None;
         }
+        self.amb_base = None;
+        self.amb = self.amb.take().filter(|a| direct && magnitude == Some(a.value));
         let magnitude = magnitude?;
         // tex.web § 440 `negate` on a 32-bit integer: -(-2^31) is -2^31.
-        Some(if negative { crate::engine::value::wrap(-magnitude) } else { magnitude })
+        let value = if negative { crate::engine::value::wrap(-magnitude) } else { magnitude };
+        if negative && let Some(a) = self.amb.as_mut() {
+            (a.expr, a.value) = (std::rc::Rc::new(crate::engine::env::Expr::Neg(a.expr.clone())), value);
+        }
+        Some(value)
     }
 
     /// The unsigned part of a ⟨number⟩, starting at `token`, and whether it
@@ -814,10 +847,11 @@ impl Machine<'_> {
                     next = self.next_x_token();
                     continue;
                 }
-                // a slice of a number's places is as wide as the places it holds, leading zeros too
+                // a slice of a number's places is as wide as the places it holds, leading zeros too;
+                // one open to the number's end has no known width
                 let width = |d: i64| match token.cs().and_then(|c| self.typed_slice(c)) {
-                    Some((_, _, i, j)) => j - i,
-                    None => d.to_string().len() as u32,
+                    Some((_, _, i, j)) => (j != OPEN).then(|| j - i),
+                    None => Some(d.to_string().len() as u32),
                 };
                 let whole = token.cs().filter(|&c| typed.is_some_and(|n| n.lo >= 0) && self.typed_slice(c).is_none());
                 spell = match (spell, whole) {
@@ -827,8 +861,8 @@ impl Machine<'_> {
                 hull = match (hull, typed) {
                     (Some((lo, hi)), Some(n)) if n.lo >= 0 => {
                         let append =
-                            |v: i64, d: i64| v.saturating_mul(10i64.saturating_pow(width(d))).saturating_add(d);
-                        Some((cap(append(lo, n.lo)), cap(append(hi, n.hi))))
+                            |v: i64, d: i64| Some(v.saturating_mul(10i64.saturating_pow(width(d)?)).saturating_add(d));
+                        append(lo, n.lo).zip(append(hi, n.hi)).map(|(lo, hi)| (cap(lo), cap(hi)))
                     }
                     _ => None,
                 };
@@ -983,8 +1017,8 @@ impl Machine<'_> {
         let mut fraction = 0;
         // The integer part's interval where its digits are typed, and
         // whether the digits after the point are unknown.
-        let range: Option<crate::engine::value::Num>;
-        let mut fractions = (0, 0);
+        let mut range: Option<crate::engine::value::Num>;
+        let (mut fractions, mut paired) = ((0, 0), false);
         let integer = match shortcut {
             // A count of unknown value left its interval, signed.
             Some(integer) => {
@@ -1037,20 +1071,37 @@ impl Machine<'_> {
                         return (value.map(|v| self.attach_sign(v, negative)), 0);
                     }
                     None if matches!(token.tok, Tok::Chr('.' | ',', Catcode::Other)) => {
-                        fractions = self.scan_fraction();
+                        fractions = self.scan_fraction().0;
                         fraction = fractions.0;
                         range = Some(crate::engine::value::Num::exact(0));
                         (fractions.0 == fractions.1).then_some(0)
                     }
                     None => {
+                        self.abs_from = None;
                         let (mut integer, backed_up) = self.scan_int_from(token);
                         range = match integer {
                             Some(n) => Some(crate::engine::value::Num::exact(n)),
                             None => self.abs.take(),
                         };
+                        let whole = self.abs_from.map(|from| from.0);
                         if backed_up && let Some(point) = self.next_token() {
                             if matches!(point.tok, Tok::Chr('.' | ',', Catcode::Other)) {
-                                fractions = self.scan_fraction();
+                                let printed;
+                                (fractions, printed) = self.scan_fraction();
+                                // The digits `\the` printed for one dimension, read back whole:
+                                // that dimension (tex.web § 103), as far as a test left its integer part.
+                                if let Some((of, mag)) = printed.and_then(|f| self.printed_fraction(f))
+                                    && Some(of) == whole
+                                    && let Some(r) = range
+                                    && let Some(mag) = mag.meet(&Num::range(
+                                        r.lo.saturating_mul(UNIT),
+                                        r.hi.saturating_mul(UNIT).saturating_add(UNIT - 1),
+                                    ))
+                                {
+                                    range = Some(Num::range(mag.lo / UNIT, mag.hi / UNIT));
+                                    fractions = (mag.lo % UNIT, mag.hi % UNIT);
+                                    paired = true;
+                                }
                                 fraction = fractions.0;
                                 integer = integer.filter(|_| fractions.0 == fractions.1);
                             } else {
@@ -1067,7 +1118,7 @@ impl Machine<'_> {
             other => (other, negative),
         };
         self.abs = None;
-        let range = range.filter(|_| integer.is_none()).map(|r| (r, fractions));
+        let range = range.filter(|_| integer.is_none()).map(|r| (r, fractions, paired));
         let (value, order) = self.scan_units(mu, inf, integer, fraction, range);
         if negative {
             self.abs = self.abs.take().map(|num| num.neg());
@@ -1081,13 +1132,17 @@ impl Machine<'_> {
     /// fixed width spell their interval's ends there. Other unknown text
     /// ends the least at the digits before it; the most takes 9s for it,
     /// as many as it may hold, and for all digits after it.
-    fn scan_fraction(&mut self) -> (i64, i64) {
+    fn scan_fraction(&mut self) -> ((i64, i64), Option<Sym>) {
         let (mut lo, mut hi) = (Vec::new(), Vec::new());
+        // The one unknown token the fraction is, if it is one.
+        let (mut sole, mut read) = (None, 0);
         // Whether the least has ended; whether unknown text came before,
         // so that the digits after it may stand at other places.
         let (mut lo_end, mut shifted, mut nines) = (false, false, false);
         while let Some(token) = self.next_x_token() {
+            read += 1;
             if self.is_unknown(token) {
+                sole = token.cs();
                 let typed = token.cs().and_then(|sym| Some((self.typed_digits_of(sym)?, self.digit_width(sym)?)));
                 match typed.filter(|(num, _)| num.lo >= 0 && !lo_end && !shifted) {
                     Some((num, width)) => {
@@ -1120,6 +1175,7 @@ impl Machine<'_> {
                     }
                 }
                 None => {
+                    read -= 1;
                     if !self.is_spacer(token) {
                         self.unread(token);
                     }
@@ -1133,7 +1189,7 @@ impl Machine<'_> {
         }
         lo.truncate(MAX_FRACTION_DIGITS);
         hi.truncate(MAX_FRACTION_DIGITS);
-        (round_decimals(&lo), round_decimals(&hi))
+        ((round_decimals(&lo), round_decimals(&hi)), sole.filter(|_| read == 1))
     }
 
     /// How many places typed digits `sym` spell when that is one number:
@@ -1186,7 +1242,7 @@ impl Machine<'_> {
     }
 
     /// A token whose meaning is unknown: it may stand for any text.
-    fn is_unknown(&mut self, token: Token) -> bool {
+    pub(crate) fn is_unknown(&mut self, token: Token) -> bool {
         let sym = token.cs().or_else(|| self.active_cs(token));
         let unknown = sym.is_some_and(|sym| {
             self.is_unknown_digits(sym)
@@ -1215,6 +1271,65 @@ impl Machine<'_> {
         let ty = Num::range(lo.parse().ok()?, hi.parse().ok()?);
         let Some((_, num)) = self.env.slot(sym).and_then(|b| b.value.num()) else { return Some(ty) };
         Some(num.meet(&ty).unwrap_or(ty))
+    }
+
+    /// Whether every value of typed digits `t`, a whole number of one known
+    /// length, is spelled beginning with the digits `prefix`: TeX's match of
+    /// a delimiter there is then decided (tex.web § 392), no path parts.
+    pub(crate) fn digits_all_begin(&self, t: Token, prefix: &[Tok]) -> bool {
+        let digits: Option<String> = (prefix.iter())
+            .map(|d| match d {
+                Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() => Some(*c),
+                _ => None,
+            })
+            .collect();
+        let (Some(digits), Some(sym)) = (digits.filter(|d| !d.is_empty()), t.cs()) else { return false };
+        let Some(num) = self.typed_digits_of(sym).filter(|_| self.typed_slice(sym).is_none()) else { return false };
+        let (k, d) = (digit_count(num.lo), digits.len() as u32);
+        if num.lo < 0 || digit_count(num.hi) != k || k < d {
+            return false;
+        }
+        let (Ok(p), r) = (digits.parse::<i64>(), 10i64.pow(k - d)) else { return false };
+        p * r <= num.lo && num.hi < (p + 1) * r
+    }
+
+    /// Typed digits `t` of one known length that a delimiter's digits
+    /// `prefix` begin (tex.web § 392 matches them one by one): the places
+    /// after them, a slice of the same number, and `t` narrowed to the values
+    /// spelled with that prefix. `Some(None)`: no value begins so. `None`
+    /// where `t` is no such number.
+    pub(crate) fn digits_after(&mut self, t: Token, prefix: &[Tok]) -> Option<Option<Vec<Token>>> {
+        let digits: String = prefix
+            .iter()
+            .map(|d| match d {
+                Tok::Chr(c, Catcode::Other) if c.is_ascii_digit() => Some(*c),
+                _ => None,
+            })
+            .collect::<Option<_>>()?;
+        let sym = t.cs()?;
+        let num = self.typed_digits_of(sym)?;
+        let d = digits.len() as u32;
+        let (whole, k, i, j) = match self.typed_slice(sym) {
+            Some((whole, k, i, j)) if k != OPEN && j != OPEN && j - i >= d => (whole, k, i, j),
+            Some(_) => return None,
+            None if num.lo >= 0 && digit_count(num.lo) == digit_count(num.hi) && digit_count(num.lo) >= d => {
+                (sym, digit_count(num.lo), 0, digit_count(num.lo))
+            }
+            None => return None,
+        };
+        // A whole number begins with the prefix only on [P·10^r, (P+1)·10^r).
+        if whole == sym {
+            let (p, r) = (digits.parse::<i64>().ok()?, 10i64.pow(k - d));
+            let Some(narrow) = num.meet(&Num::range(p * r, (p + 1) * r - 1)) else { return Some(None) };
+            if !self.refine_value(sym, Value::from_num(crate::engine::value::Quantity::Int, narrow)) {
+                return Some(None);
+            }
+        }
+        if i + d == j {
+            return Some(Some(Vec::new()));
+        }
+        let whole_num = self.typed_digits_of(whole).unwrap_or(num);
+        Some(Some(vec![self.slice_token(whole, whole_num, (k, i + d, j), t.span)]))
     }
 
     /// A slice of typed digits: the number it is cut from, the length of
@@ -1314,10 +1429,18 @@ impl Machine<'_> {
         // One name per number made: a test that narrows it narrows this
         // number on its path, never another one with the same interval.
         // Counted in TeX's steps, so a replayed call names alike.
+        self.mints += 1;
         let steps = self.out.tex_steps();
         let n = if self.digits_made.0 == steps { self.digits_made.1 + 1 } else { 0 };
         self.digits_made = (steps, n);
-        self.digits_of(num, &format!("{steps}.{n}"), span)
+        // Named by the line begun and the steps since, which an edit on another line keeps. Steps
+        // that fell behind the line's (a run begun anew counts from 0) begin a new count, so no
+        // two numbers share a name.
+        if steps < self.line_seq.2 {
+            self.line_seq = (self.line_seq.0, self.line_seq.1 + 1, steps);
+        }
+        let (_, line, begun) = self.line_seq;
+        self.digits_of(num, &format!("{line}.{}.{n}", steps - begun), span)
     }
 
     /// One token of unknown digits in `num`, the number called `id`: every read of
@@ -1366,7 +1489,7 @@ impl Machine<'_> {
         inf: bool,
         integer: Option<i64>,
         fraction: i64,
-        range: Option<(crate::engine::value::Num, (i64, i64))>,
+        range: Option<Ranged>,
     ) -> (Option<Scaled>, u8) {
         // The optional space after the unit may expand a scan of its own.
         let outer = self.ranged.take();
@@ -1385,18 +1508,15 @@ impl Machine<'_> {
 
     /// The value at the corners of `range`, through `conv` of a magnitude
     /// and fraction, with the sign attached (tex.web § 448).
-    fn set_ranged(
-        &mut self,
-        range: Option<(crate::engine::value::Num, (i64, i64))>,
-        conv: impl Fn(i64, i64) -> Option<Scaled>,
-    ) {
-        self.ranged = range.and_then(|(r, (flo, fhi))| {
+    fn set_ranged(&mut self, range: Option<Ranged>, conv: impl Fn(i64, i64) -> Option<Scaled>) {
+        self.ranged = range.and_then(|(r, (flo, fhi), paired)| {
             let at = |n: i64, f: i64| {
                 let v = conv(n.checked_abs()?, f)?;
                 let v = if v.abs() >= DIMEN_LIMIT { MAX_DIMEN } else { v };
                 Some(if n < 0 { -v } else { v })
             };
-            let ends = [at(r.lo, flo)?, at(r.lo, fhi)?, at(r.hi, flo)?, at(r.hi, fhi)?];
+            let (a, b) = if paired { (flo, fhi) } else { (fhi, flo) };
+            let ends = [at(r.lo, flo)?, at(r.lo, a)?, at(r.hi, b)?, at(r.hi, fhi)?];
             Some(crate::engine::value::Num::range(*ends.iter().min()?, *ends.iter().max()?))
         });
     }
@@ -1407,7 +1527,7 @@ impl Machine<'_> {
         inf: bool,
         integer: Option<i64>,
         fraction: i64,
-        range: Option<(crate::engine::value::Num, (i64, i64))>,
+        range: Option<Ranged>,
     ) -> (Option<Scaled>, u8) {
         if inf && self.scan_keyword("fil") {
             let mut order = 1;
@@ -1819,7 +1939,7 @@ fn step(
     ideal: impl Fn(&[i64]) -> Option<i64>,
     err: &mut (bool, bool),
 ) -> (Num, Option<Vec<i64>>) {
-    if let Some(sets) = points.iter().copied().collect::<Option<Vec<&[i64]>>>()
+    if let Some(sets) = points.iter().copied().collect::<Option<smallvec::SmallVec<[&[i64]; 4]>>>()
         && let Some((mut out, any_err)) = Num::lift_points(&sets, members, &exact)
     {
         err.0 |= any_err;
@@ -1839,8 +1959,8 @@ impl Machine<'_> {
     /// are also evaluated on intervals ([`Num::lift`]), so `\numexpr` of an
     /// unknown register is the interval of its results, joined with 0 when
     /// some may overflow. A glue expression with an unknown operand is
-    /// unknown.
-    pub(crate) fn scan_expr(&mut self, kind: RegKind) -> Value {
+    /// unknown. `site` is the expression command's token: whose code it is.
+    pub(crate) fn scan_expr(&mut self, kind: RegKind, site: Span) -> Value {
         struct Frame {
             l: RegKind,
             s: ExprOp,
@@ -2125,7 +2245,11 @@ impl Machine<'_> {
             Form::Lin(x, c) if kind == RegKind::Count => Some((x, crate::engine::value::Quantity::Int, c)),
             _ => None,
         };
-        if arith && !unknown {
+        // `err.1`: every concrete run of an interval operand overflows; `err.0`: some may.
+        if err.0 && !err.1 && unknown {
+            self.possible_tex_error("Arithmetic overflow", site);
+        }
+        if (arith && !unknown) || err.1 {
             let span = self.position_span();
             self.diagnose(
                 crate::analysis::facts::Severity::Warning,

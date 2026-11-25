@@ -86,6 +86,16 @@
           ],
           "x-example": "off: `\\catcode\\count@=11` after a summarized loop may make `{` a letter, one path each way"
         },
+        "assume_variable_kind_shape": {
+          "default": true,
+          "description": "assume a widened expl3 variable holds a value of its kind (an fp stays an fp), as the module's functions write",
+          "type": "boolean",
+          "x-affects": [
+            "precision",
+            "soundness"
+          ],
+          "x-example": "off: an `fp` widened by a cut is any text, and `\\fp_use:N` of it runs away"
+        },
         "join_paths_at": {
           "default": [
             {
@@ -150,6 +160,16 @@
             "precision"
           ],
           "x-example": "`backend: bibtex`\n`\\usepackage{biblatex}` then runs bibtex in the build, not biber",
+          "x-plugin": "bib"
+        },
+        "early": {
+          "default": true,
+          "description": "a build run makes the .bbl itself when it first looks for it, from what it cited so far: a bibliography after its citations settles a run sooner. Off, the bibliography tool runs between two runs only",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "off: `\\cite{k}` before `\\bibliography{refs}` finds its label in run 3, not run 2",
           "x-plugin": "bib"
         }
       },
@@ -299,6 +319,10 @@
           "default": false,
           "type": "boolean"
         },
+        "reruns": {
+          "default": false,
+          "type": "boolean"
+        },
         "tail": {
           "default": 256,
           "description": "characters before a package's end where a run may resume from a saved state",
@@ -347,11 +371,20 @@
         },
         "explain": {
           "default": true,
-          "description": "explain the build's messages by a full analysis. false explains by rule and waits for none",
+          "description": "explain the build's messages by a full analysis. false explains by rule only",
           "type": "boolean",
           "x-affects": [
             "speed"
           ]
+        },
+        "memoize": {
+          "default": true,
+          "description": "the satex build extracts memoize's externs itself between passes (memoize's TeX method, no shell escape, no Perl or Python module) and tells memoize not to. false: memoize extracts as the document says",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "an unchanged picture is included from its extern, its code not run again"
         },
         "passes": {
           "default": 4,
@@ -371,6 +404,15 @@
           ],
           "x-example": "`system: arara`: the `% arara:` directives of the main file build it\n`system: satex`: a body edit is one pdfTeX pass from the dumped preamble, an unchanged build none"
         },
+        "timeout": {
+          "default": 600,
+          "description": "seconds a build asked for by a page (satex gui, the playground's server) may run before the server stops it with every process it started. 0: no limit",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ]
+        },
         "viewer": {
           "default": "none",
           "description": "a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it",
@@ -379,9 +421,17 @@
             "output"
           ]
         },
-        "warm": {
+        "wait": {
           "default": false,
-          "description": "keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)",
+          "description": "wait for the analysis that explains the build's messages. false: the build returns with the PDF, explained by rules and by what the last analysis said of the same messages, and a detached satex analyzes for the next call",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ]
+        },
+        "warm": {
+          "default": true,
+          "description": "keep pdfTeX started on the next build's format (Linux), waiting on a named pipe under .satex-build that it reads in the main file's stead: the next build within the same clock minute feeds it and saves the engine's start. The engine ends with its minute. false starts none",
           "type": "boolean",
           "x-affects": [
             "speed"
@@ -489,6 +539,59 @@
                 "output"
               ],
               "x-example": "`calls: 10`"
+            },
+            "common": {
+              "default": [
+                "textbf",
+                "emph",
+                "textit",
+                "section",
+                "subsection",
+                "label",
+                "ref",
+                "cite",
+                "begin",
+                "end",
+                "item",
+                "includegraphics",
+                "caption",
+                "centering",
+                "usepackage",
+                "footnote",
+                "url",
+                "href",
+                "frac",
+                "sqrt",
+                "sum",
+                "int",
+                "alpha",
+                "beta",
+                "mathbf",
+                "mathrm",
+                "texttt",
+                "textsc",
+                "newcommand",
+                "hline",
+                "vspace",
+                "hspace",
+                "noindent",
+                "paragraph",
+                "chapter",
+                "subsubsection",
+                "eqref",
+                "cref",
+                "left",
+                "right"
+              ],
+              "description": "commands authors type most, most first: among names as close to what is typed and used as often in the document, these lead (\\textb takes \\textbf before \\textbackslash)",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`common+: [SI]`"
             },
             "environment_arguments": {
               "description": "environments whose \\begin reads its arguments through an inner macro, with how many",
@@ -726,6 +829,15 @@
                 "output"
               ],
               "x-example": "`unloaded_seed+: {\\pgfplotsset: pgfplots}`"
+            },
+            "wrap_math": {
+              "default": true,
+              "description": "a math-only command completed in text is set in math (math.inline), the caret inside",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`wrap_math: false`: the command is written as typed"
             }
           },
           "type": "object"
@@ -852,8 +964,17 @@
           "type": "object"
         },
         "definers": {
-          "default": [],
-          "description": "your commands that define the name written after them, like \\newcommand does",
+          "default": [
+            "NewDocumentEnvironment",
+            "NewDocumentEnvironment end",
+            "RenewDocumentEnvironment",
+            "RenewDocumentEnvironment end",
+            "ProvideDocumentEnvironment",
+            "ProvideDocumentEnvironment end",
+            "DeclareDocumentEnvironment",
+            "DeclareDocumentEnvironment end"
+          ],
+          "description": "commands that define the name written after them, like \\newcommand does, besides those the runs show (`X end`: also `end` + the name). Add your own",
           "items": {
             "type": "string"
           },
@@ -976,6 +1097,15 @@
                 "output"
               ],
               "x-example": "`after: 8`"
+            },
+            "inline": {
+              "default": "auto",
+              "description": "the inline math delimiters satex writes (a quick fix, a completion): \\(, $, or auto, which takes $ without a LaTeX kernel or in a file that sets formulas with $ and never \\(, else \\(",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`inline: $`"
             },
             "lexemes": {
               "default": 400000,
@@ -2253,6 +2383,31 @@
             }
           },
           "type": "object"
+        },
+        "writing": {
+          "description": "how the LaTeX a widget writes reads the document's own",
+          "properties": {
+            "macros": {
+              "default": false,
+              "description": "inserted text that is the whole body of your command without arguments is written as that command (\\model for TinyNet) where the run typeset prose beside it: never in verbatim, math, a comment, a URL or an argument the run did not typeset. Assumes a call typesetting its argument's characters typesets the command the same",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`macros: true`: a sentence typed `we use TinyNet here` is written `we use \\model{} here`"
+            },
+            "repeat_min": {
+              "default": 16,
+              "description": "characters a written call needs for a note when it then stands twice, offering to extract it",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`repeat_min: 8`: a second \\textbf{Note} is noted too"
+            }
+          },
+          "type": "object"
         }
       },
       "type": "object"
@@ -2756,6 +2911,18 @@
           "x-example": "`1`: `\\ref` and `\\tableofcontents` read nothing from an earlier run",
           "x-plugin": "build"
         },
+        "build_widen_after": {
+          "default": 2,
+          "description": "the build run after which a file whose lines a run changed again is read as the join of both texts. 1 widens what the second run changed: one run fewer, page numbers that moved are unknown digits",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "`1`: a page number that run 2 moved is read as any digit in run 3, and the build ends there if run 3 writes one it covers",
+          "x-plugin": "build"
+        },
         "cache_size": {
           "default": "2.0 GiB",
           "description": "most disk the caches may take, the least recently used go first. 0 for no bound",
@@ -2787,15 +2954,20 @@
           ],
           "x-example": "1 ends `\\pgfmathparse{\\the\\wd0}` at its first undecided digit"
         },
-        "call_memo_entries": {
-          "default": 100000,
-          "description": "kept effects in all, past it none are added. Also how many calls met once are remembered",
-          "minimum": 0,
-          "type": "integer",
+        "call_memo_bytes": {
+          "default": "256.0 MiB",
+          "description": "what the kept effects may hold in all. Past it they are dropped and kept anew",
+          "type": "string",
           "x-affects": [
             "speed"
           ],
           "x-example": "bounds the memory a long tikz document spends on them"
+        },
+        "call_memo_entries": {
+          "default": 100000,
+          "description": "how many calls met once are remembered",
+          "minimum": 0,
+          "type": "integer"
         },
         "call_memo_longest": {
           "default": 200000,
@@ -3070,6 +3242,16 @@
           ],
           "x-example": "a macro that keeps pushing input stops here"
         },
+        "hyph_words": {
+          "default": 50000,
+          "description": "most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory"
+          ],
+          "x-example": "`hyph_words: 0` finds every word's points anew"
+        },
         "interval_set": {
           "default": 4,
           "description": "how many ranges a number keeps before they are merged into one",
@@ -3119,14 +3301,23 @@
           ],
           "x-example": "a line whose `\\foreach` runs forever is cut, and the next line is read"
         },
+        "list_items": {
+          "default": 8388608,
+          "description": "most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes). Equal lists share theirs. Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed",
+            "output"
+          ],
+          "x-example": "a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end"
+        },
         "lock_seconds": {
           "default": 60,
           "description": "how long a run waits for another one building the same cache before it builds it itself",
           "minimum": 0,
-          "type": "integer",
-          "x-affects": [
-            "speed"
-          ]
+          "type": "integer"
         },
         "loop_entries": {
           "default": 256,
@@ -3192,6 +3383,16 @@
           ],
           "x-example": "`memory: 2GiB` stops a runaway run before it slows the machine"
         },
+        "nesting": {
+          "default": 300,
+          "description": "how deeply steps nest inside scans, and quantities inside quantities (`\\numexpr(\\numexpr(…`), before the nesting is widened. The stack bounds it too",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`nesting: 1000` follows deeper nesting where the stack allows it"
+        },
         "output_forks": {
           "default": 0,
           "description": "how many choices in output routines may part paths in a run before analysis.assume_page_one_arm applies",
@@ -3202,6 +3403,28 @@
             "speed"
           ],
           "x-example": "0: every float's `\\ifdim` takes its first arm, 1000: a short paper stays exact"
+        },
+        "paragraph_items": {
+          "default": 4000,
+          "description": "most items of one recorded list (a paragraph's characters, glue and boxes, a box, the page's marks). Past it that list is not recorded and its lines and size stay unknown",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed",
+            "output"
+          ],
+          "x-example": "a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown"
+        },
+        "parshape_lines": {
+          "default": 64,
+          "description": "how many lines of a \\parshape satex keeps. Lines past them are read but unknown",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "memory"
+          ],
+          "x-example": "higher: `\\parshapelength 100` of a 200-line shape is known"
         },
         "paths": {
           "default": 16,
@@ -3214,6 +3437,26 @@
             "memory"
           ],
           "x-example": "`\\ifdraft ... \\fi` many times over: more paths keep each combination apart"
+        },
+        "probe_contexts": {
+          "default": 4,
+          "description": "environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\\caption` outside a float). Editor only",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output",
+            "speed"
+          ],
+          "x-example": "`probe_contexts: 0` leaves `\\caption` without a completion shape"
+        },
+        "probe_seconds": {
+          "default": 20,
+          "description": "most seconds one probe document may take (a package tried for a command the run lacks), a backstop past provider_steps. One it stops counts as untried and is tried again later. 0 = no limit",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ]
         },
         "probe_steps": {
           "default": 2000000,
@@ -3236,6 +3479,16 @@
             "precision"
           ],
           "x-example": "`\\includegraphics[width=5cm]` loads graphicx, whose definition takes the key, not graphics"
+        },
+        "provider_steps": {
+          "default": 100000000,
+          "description": "tokens one such run may read. Past them the package does not take the call. The same on every machine",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed",
+            "precision"
+          ]
         },
         "recursion_depth": {
           "default": 100,
@@ -3303,7 +3556,7 @@
           "x-example": "expl3's walker over an unknown file name widens instead of forking per token without end"
         },
         "seconds": {
-          "default": 300,
+          "default": 600,
           "description": "most seconds one run may take, a safety net. 0 for no limit",
           "minimum": 0,
           "type": "integer",
@@ -3343,6 +3596,16 @@
             "speed"
           ],
           "x-example": "a 1000-page thesis with TikZ may need more"
+        },
+        "table_reach": {
+          "default": 4000,
+          "description": "most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`table_reach: 0` offers the table dialog on array tables only"
         },
         "text_line_steps": {
           "default": 0,
@@ -3429,6 +3692,17 @@
           ],
           "x-example": "100 paths waiting at one line are joined at a cost the line's budget sees"
         },
+        "walk_texts": {
+          "default": 100000,
+          "description": "texts the walks inside one step may open (macro bodies, one-of members). Past them a walk reads the rest as unknown",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "a text naming the one before it twenty times, eight deep, is not walked 20^8 times"
+        },
         "widen_after": {
           "default": 3,
           "description": "how many rounds a loop is followed exactly before what still changes becomes a range",
@@ -3439,6 +3713,17 @@
             "speed"
           ],
           "x-example": "`\\loop\\advance\\c by1 ... \\repeat` with unknown bound: c becomes a range after 3 rounds"
+        },
+        "write_log": {
+          "default": 1048576,
+          "description": "writes logged since the last token read from a file before the log keeps one entry per name and group depth. A call or loop that began before reads as one that wrote any of them",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "precision"
+          ],
+          "x-example": "a `\\foreach` that assigns for minutes holds a few MiB of log, not GiBs"
         }
       },
       "type": "object"
@@ -4069,6 +4354,30 @@
           },
           "type": "object"
         },
+        "spelled-out-macro": {
+          "description": "a word a command of the document sets, typed out by hand",
+          "properties": {
+            "equivalence": {
+              "default": "glyphs",
+              "description": "when a typed word is the command's: exact, glyphs, case or letters",
+              "type": "string",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`case` also reports `tinynet` for `\\newcommand\\model{TinyNet}`"
+            },
+            "min-length": {
+              "default": 3,
+              "description": "words shorter than this are left alone",
+              "minimum": 0,
+              "type": "integer",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object"
+        },
         "style-prompt": {
           "description": "an editor asks whether a rule the project breaks often is its style",
           "properties": {
@@ -4157,6 +4466,21 @@
                 "output"
               ],
               "x-example": "`\\tikzset{mystyle/.style={red}}` never used: reported when on"
+            },
+            "private": {
+              "default": [
+                "@",
+                "__"
+              ],
+              "description": "patterns on the names that are private, which the rule reports also with report_public off",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "in a package `\\__my_helper:n` never used is reported, `\\my_function:n` is its interface"
             },
             "report_public": {
               "default": true,
@@ -4273,6 +4597,16 @@
     "load": {
       "description": "which files the run follows from the document",
       "properties": {
+        "alone": {
+          "default": "article",
+          "description": "the class a package analyzed alone is loaded under. The file is read as a document loads it. Empty reads it by itself",
+          "type": "string",
+          "x-affects": [
+            "soundness",
+            "precision"
+          ],
+          "x-example": "`satex -f my.sty lint` runs `\\documentclass{article}\\usepackage{my}` and an empty body\n`alone: ''`: `\\ProcessOptions` in `my.sty` runs outside any package, as nothing in LaTeX does"
+        },
         "build_extensions": {
           "default": [
             "aux",
@@ -4441,6 +4775,36 @@
           "x-affects": [
             "output"
           ]
+        },
+        "provisional": {
+          "default": true,
+          "description": "a build run that another run follows publishes its findings at once, those a later run may change marked provisional (dimmed, \"build run k\"). The build's last run replaces them",
+          "type": "boolean",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`false`: a big document shows its findings only once the build's files are at rest"
+        },
+        "provisional_after_ms": {
+          "default": 2000,
+          "description": "only a run that took at least this long publishes provisional findings: a short build's final ones come soon anyway",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "speed"
+          ],
+          "x-example": "`0`: every run of a build publishes its findings"
+        },
+        "rows_per_message": {
+          "default": 256,
+          "description": "the Typeset view's rows go out in messages of at most this many, each built, sent and dropped before the next: the server never holds a whole document's rows. 0 sends them in one message",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "memory",
+            "speed"
+          ],
+          "x-example": "`64`: smaller messages, a big document's rows come in more steps"
         }
       },
       "type": "object"
@@ -4479,6 +4843,18 @@
             "precision"
           ],
           "x-example": "`modules: 2`: a third nested require gives an unknown module",
+          "x-plugin": "lua_run"
+        },
+        "outcomes": {
+          "default": 8,
+          "description": "runs one piece of Lua code gets at most when it tests unknown values: one per outcome of its tests",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "precision",
+            "speed"
+          ],
+          "x-example": "`outcomes: 1`: `\\directlua{if os.clock() > 1 then tex.print(\"a\") end}` prints something unknown",
           "x-plugin": "lua_run"
         },
         "run": {
@@ -4765,7 +5141,7 @@
           "x-example": "`x_42` types `x_{42}`"
         },
         "smart_wrap": {
-          "default": false,
+          "default": true,
           "description": "a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space",
           "type": "boolean",
           "x-affects": [
@@ -4963,11 +5339,23 @@
         },
         "typeset": {
           "properties": {
+            "commands": {
+              "default": true,
+              "type": "boolean"
+            },
+            "fonts": {
+              "default": true,
+              "type": "boolean"
+            },
             "hyphenate": {
               "default": true,
               "type": "boolean"
             },
             "linebreak": {
+              "default": true,
+              "type": "boolean"
+            },
+            "mathwidths": {
               "default": true,
               "type": "boolean"
             }
@@ -5034,6 +5422,11 @@
                 "microtype-available",
                 "preamble-cost",
                 "comment-marker",
+                "primitive-tex-command",
+                "unused-package",
+                "redundant-package-load",
+                "unused-color",
+                "unintended-escape",
                 "user-pattern",
                 "unreferenced-numbered-display",
                 "build-shell-escape-missing",
@@ -5053,6 +5446,15 @@
             },
             "lints": {
               "properties": {
+                "clones": {
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "unused-definition": {
                   "properties": {
                     "report_public": {
@@ -5085,6 +5487,11 @@
                 "microtype-available",
                 "preamble-cost",
                 "comment-marker",
+                "primitive-tex-command",
+                "unused-package",
+                "redundant-package-load",
+                "unused-color",
+                "unintended-escape",
                 "user-pattern",
                 "unreferenced-numbered-display",
                 "build-shell-escape-missing",
@@ -5104,6 +5511,15 @@
             },
             "lints": {
               "properties": {
+                "clones": {
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "unused-definition": {
                   "properties": {
                     "report_public": {
@@ -5133,6 +5549,11 @@
                 "microtype-available",
                 "preamble-cost",
                 "comment-marker",
+                "primitive-tex-command",
+                "unused-package",
+                "redundant-package-load",
+                "unused-color",
+                "unintended-escape",
                 "user-pattern",
                 "unreferenced-numbered-display",
                 "build-shell-escape-missing",
@@ -5151,9 +5572,19 @@
               "type": "array"
             },
             "lints": {
-              "description": "a public name is the package's own interface",
               "properties": {
+                "clones": {
+                  "description": "a macro in place of repeated library code changes when it expands no document of its own to build or typeset. And a library programs in primitives, states each package it needs and loads them for the macros its users call, and defines colors for them",
+                  "properties": {
+                    "enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "type": "object"
+                },
                 "unused-definition": {
+                  "description": "a public name is the package's own interface",
                   "properties": {
                     "report_public": {
                       "default": false,
@@ -5316,6 +5747,60 @@
       "properties": {},
       "type": "object"
     },
+    "templates": {
+      "description": "where satex new and the New document dialog get the provider files the TeX installation lacks",
+      "properties": {
+        "fetch": {
+          "default": true,
+          "description": "fetch a template's files from its provider and an archive from its URL, over HTTPS. Off, only the cache and the TeX installation serve",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`fetch: false`: satex new uses the cached NeurIPS style and never goes online"
+        },
+        "max_bytes": {
+          "default": "50.0 MiB",
+          "description": "the most an imported archive may unpack to",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_bytes: 200MiB` imports a repository with large figures"
+        },
+        "max_files": {
+          "default": 2000,
+          "description": "the most files an imported archive may hold",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_files: 10000` imports a large repository"
+        },
+        "refresh_days": {
+          "default": 7,
+          "description": "days a fetched template is used before it is fetched again. Offline the cached copy serves",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`refresh_days: 0` looks for a new release on every satex new"
+        },
+        "timeout": {
+          "default": 20,
+          "description": "seconds a download may take before it is given up",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`timeout: 5` gives up sooner on a slow network"
+        }
+      },
+      "type": "object"
+    },
     "texlive": {
       "properties": {
         "root": {
@@ -5441,6 +5926,22 @@
           "type": "object",
           "x-category": "widget"
         },
+        "class": {
+          "description": "the class's options as its code declares them: \\documentclass, the \\usepackage of a style the project ships",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Class options…\": every option the run read from the class, a template's common choices first, the header line to copy",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no class options lens or dialog"
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
         "color": {
           "description": "color names and xcolor expressions",
           "properties": {
@@ -5515,6 +6016,170 @@
                 "output"
               ],
               "x-example": "`enabled: false`: no placement hover, completion or dialog"
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
+        },
+        "font": {
+          "description": "the document's font and base size: \\documentclass",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Font and size…\": the base size as a class option, a font as a package (pdfLaTeX) or with fontspec (LuaLaTeX, XeLaTeX)",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`enabled: false`: no font lens, action or dialog"
+            },
+            "fonts": {
+              "description": "the fonts offered: the package pdfLaTeX loads, the font fontspec names (empty: pdfLaTeX only), sans for a sans serif main font",
+              "properties": {
+                "EB Garamond": {
+                  "default": [
+                    "ebgaramond",
+                    "EB Garamond"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Fira Sans": {
+                  "default": [
+                    "FiraSans",
+                    "Fira Sans",
+                    "sans"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Kp Fonts": {
+                  "default": [
+                    "kpfonts",
+                    ""
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Latin Modern": {
+                  "default": [
+                    "lmodern",
+                    "Latin Modern Roman"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Libertinus": {
+                  "default": [
+                    "libertinus",
+                    "Libertinus Serif"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Noto Serif": {
+                  "default": [
+                    "noto-serif",
+                    "Noto Serif"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "STIX Two": {
+                  "default": [
+                    "stix2",
+                    "STIX Two Text"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "Source Serif": {
+                  "default": [
+                    "sourceserifpro",
+                    "Source Serif Pro"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "TeX Gyre Heros": {
+                  "default": [
+                    "tgheros",
+                    "TeX Gyre Heros",
+                    "sans"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "TeX Gyre Pagella": {
+                  "default": [
+                    "tgpagella",
+                    "TeX Gyre Pagella"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "TeX Gyre Termes": {
+                  "default": [
+                    "tgtermes",
+                    "TeX Gyre Termes"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "XCharter": {
+                  "default": [
+                    "XCharter",
+                    "XCharter"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "type": "object",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`fonts: {Charter: [XCharter, XCharter]}`"
+            },
+            "sizes": {
+              "default": [
+                "10pt",
+                "11pt",
+                "12pt"
+              ],
+              "description": "the base sizes offered",
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "x-affects": [
+                "output"
+              ],
+              "x-example": "`sizes: [11pt, 12pt]`"
             }
           },
           "type": "object",
@@ -5645,6 +6310,21 @@
           },
           "type": "object",
           "x-category": "completion"
+        },
+        "labels": {
+          "description": "every label the run met, from a reference's completion",
+          "properties": {
+            "enabled": {
+              "default": true,
+              "description": "\"Browse all labels…\": kind, number, caption or title, place and references. A choice writes the label",
+              "type": "boolean",
+              "x-affects": [
+                "output"
+              ]
+            }
+          },
+          "type": "object",
+          "x-category": "widget"
         },
         "language": {
           "properties": {
@@ -5921,6 +6601,93 @@
           },
           "type": "object",
           "x-category": "incremental"
+        }
+      },
+      "type": "object"
+    },
+    "updates": {
+      "description": "how satex updates learns the newest release of each package the document loads, and what changed in it",
+      "properties": {
+        "archives": {
+          "default": [
+            "https://mirrors.ctan.org/install{install}",
+            "https://mirrors.ctan.org{path}.zip"
+          ],
+          "description": "where a release's files come from, tried in order. {install} and {path} are the record's install and ctan.path. A zip, or a file:// folder",
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`archives: ['file:///srv/ctan{path}']` reads releases from a local mirror"
+        },
+        "changes": {
+          "default": false,
+          "description": "run the newest release of each outdated package and list what it defines differently: commands, environments, options",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`changes: true`: an outdated enumitem lists its added, removed and changed commands"
+        },
+        "fetch": {
+          "default": false,
+          "description": "ask the index and the archives over HTTPS. Off, only the cache and file:// sources serve, and a package without a record is unknown",
+          "type": "boolean",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`fetch: true`: satex updates asks CTAN for each package"
+        },
+        "index": {
+          "default": "https://ctan.org/json/2.0/pkg/{name}",
+          "description": "the release record of package {name}, with its version number and date. A file:// path serves a local copy",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`index: file:///srv/ctan/json/{name}.json` reads a local mirror"
+        },
+        "max_bytes": {
+          "default": "50.0 MiB",
+          "description": "the most a release archive may unpack to",
+          "type": "string",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_bytes: 200MiB` takes a large bundle"
+        },
+        "max_files": {
+          "default": 5000,
+          "description": "the most files a release archive may hold",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`max_files: 20000` takes a large bundle"
+        },
+        "refresh_days": {
+          "default": 1,
+          "description": "days a fetched record counts as current. Past that a package is outdated or unknown, never current",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`refresh_days: 0` asks the index on every run"
+        },
+        "timeout": {
+          "default": 20,
+          "description": "seconds a download may take before it is given up",
+          "minimum": 0,
+          "type": "integer",
+          "x-affects": [
+            "output"
+          ],
+          "x-example": "`timeout: 5` gives up sooner on a slow network"
         }
       },
       "type": "object"

@@ -63,7 +63,7 @@ fn metadata(options: &str, preamble: &str, body: &str) -> String {
 /// The class's status comes from the installation's `latex-tagging-status.ltx`, run as TeX.
 #[test]
 fn the_run_says_what_tagging_it_set_up() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("lang=de-DE,pdfstandard=ua-2,tagging=on", "", "x"));
@@ -98,7 +98,7 @@ fn without_document_metadata_there_is_nothing_to_tag() {
 /// `inactive`, and a package the status list marks incompatible breaks nothing.
 #[test]
 fn metadata_without_tagging_is_inactive() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("", "\\usepackage{listings}\n", "x"));
@@ -111,7 +111,7 @@ fn metadata_without_tagging_is_inactive() {
 /// reported where the document loads it; one marked compatible (graphicx) is not.
 #[test]
 fn an_incompatible_package_is_reported_from_the_status_list() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n\\usepackage{listings}\n", "x"));
@@ -127,7 +127,7 @@ fn an_incompatible_package_is_reported_from_the_status_list() {
 /// unknown object number printed nothing, `useobjnum` read no number), joining the end.
 #[test]
 fn pdfua_without_any_title_is_reported() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let titled =
@@ -145,7 +145,7 @@ fn pdfua_without_any_title_is_reported() {
 /// the MathML file alone; with `$x$` under pdfLaTeX and no `main-mathml.html` it fires.
 #[test]
 fn a_pdf_title_is_no_finding_and_a_formula_wants_mathml() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata(
@@ -162,7 +162,7 @@ fn a_pdf_title_is_no_finding_and_a_formula_wants_mathml() {
 /// fix writes the guess, which leaves the PDF as it is.
 #[test]
 fn a_guessed_language_is_reported_and_written() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let a = analyze(&metadata("tagging=on", "\\usepackage{graphicx}\n", BODY));
@@ -192,17 +192,17 @@ fn metadata_after_the_class_is_reported() {
 }
 
 /// With tagging on, `\includegraphics` without `alt`, `artifact` or `actualtext` is reported;
-/// one with them is not, and one whose options come from a macro is left alone (its keys
-/// are not known from the text).
+/// one with them is not. One whose options come from a macro is reported too: the run knows
+/// its keys (latex-lab warns there), where the source text did not.
 #[test]
 fn a_graphic_without_alternative_text_is_reported() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let body = "\\includegraphics[width=1cm]{a}\n\\includegraphics[alt={A dot}]{a}\n\\includegraphics[artifact]{a}\n\\def\\opts{width=1cm}\\expandafter\\includegraphics\\expandafter[\\opts]{a}";
     let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n", body));
     let msgs = found(&a, "graphic-without-alt");
-    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    assert_eq!(msgs.len(), 2, "{msgs:?}");
 }
 
 /// A 1×1 PNG: a figure the graphics driver reads the size of.
@@ -341,6 +341,32 @@ fn an_fp_eval_of_an_unknown_integer_forks_only_on_its_length() {
     assert!(a.forks <= SIGN_THEN_LENGTH_FORKS, "{} forks", a.forks);
 }
 
+/// Soundness of the same document: `\fp_eval:n` of an unknown integer gives that integer's
+/// digits (up to ten, perhaps a sign), so what `\y` ends with must cover them, and the
+/// `\tl_gset:Ne` ends at its own `}`. Bug pinned: past the site's fork budget a widened `\if`
+/// inside the expansion skipped arms that read the input after them, so `\y` ended as one of
+/// a single unknown character, a single unknown letter, or the token `\ExplSyntaxOff` from
+/// behind the brace: no text of several digits, and one arm read past the body.
+#[test]
+fn an_fp_eval_of_an_unknown_integer_covers_its_digits() {
+    // expl3 without e-type variants (TeX Live 2022) has no `\tl_gset:Ne`.
+    if !crate::support::installed_file_has("expl3-code.tex", "\\cs_gset_nopar:Npe") {
+        return;
+    }
+    let source = "\\documentclass{article}\n\\begin{document}\n\\ExplSyntaxOn\\tl_gset:Ne\\x{\\int_use:N\\pdflastxpos}\\tl_gset:Ne\\y{\\fp_eval:n{\\x}}\\ExplSyntaxOff\n\\gdef\\after{reached}\n\\end{document}\n";
+    let a = crate::support::analyze_latex(source);
+    let y = a.interner.lookup("y").and_then(|sym| a.env.slot(sym)).expect("\\y is defined");
+    let texts: Vec<_> = match &y.may {
+        Some(may) => may.iter().filter_map(|m| m.as_macro()).map(|m| m.replacement_text.clone()).collect(),
+        None => y.meaning.as_macro().map(|m| m.replacement_text.clone()).into_iter().collect(),
+    };
+    let spelled: Vec<String> = texts.iter().map(|t| satex::engine::tex::detokenize(t, &a.interner)).collect();
+    assert!(!spelled.iter().any(|t| t.contains("ExplSyntaxOff")), "an arm read past the body: {spelled:?}");
+    // a text of one character token covers no number of two digits
+    let one_char = |t: &[satex::engine::tex::Token]| matches!(t, [c] if c.cs().is_none());
+    assert!(!texts.iter().all(|t| one_char(t)), "no text covers several digits: {spelled:?}");
+}
+
 /// LuaLaTeX makes MathML only through luamml, which latex-lab loads when unicode-math is
 /// loaded (`latex-lab-math.ltx`, else the warning `unicode-math-missing`). Without it the
 /// formulas get no MathML just as under pdfLaTeX: one finding. With unicode-math luamml opens
@@ -369,12 +395,12 @@ fn lualatex_without_unicode_math_writes_no_mathml() {
 /// `alt-text-missing` in mode `alt` (the default, and `tag=⟨struct⟩`) when `alt` is empty.
 /// lualatex warns for the first three below and not for the rest (TeX Live 2026). Before,
 /// any key named `alt` or `tag` counted as alternative text, so `alt={}`, `tag=Figure` and
-/// `artifact,alt=` were missed. Red (known): the run loses every `\includegraphics` after the
-/// first tagged one. latex-lab's BBox `\fp_eval:n` over `\property_ref:een{…}{xpos}{0}` forks per
-/// character of an unknown and widens the nesting, so only the first graphic is an occurrence.
+/// `artifact,alt=` were missed. Also pinned: pdftex.def loads a file once (`\pdfximage`) and
+/// places it again by `\pdfrefximage`, and only the load was an occurrence, so every include
+/// of `a` after the first one had none and was never checked.
 #[test]
 fn a_graphic_is_tagged_by_its_last_mode_key() {
-    if !crate::support::installed() {
+    if !crate::support::tagging_installed() {
         return;
     }
     let warned = ["alt={}", "tag=Figure", "artifact,alt="];
@@ -399,7 +425,7 @@ fn a_graphic_is_tagged_by_its_last_mode_key() {
 /// and C007 as certain. `clip` skips latex-lab's BBox trim fp and its forks.
 #[test]
 fn a_tagged_graphic_raises_no_error_at_the_end() {
-    if !crate::support::installed() {
+    if !crate::support::kernel_has("\\DocumentMetadata") {
         return;
     }
     let source =
@@ -411,4 +437,120 @@ fn a_tagged_graphic_raises_no_error_at_the_end() {
         .map(|f| format!("{:?} {:?}", f.get("code"), f.get("message")))
         .collect();
     assert!(certain.is_empty(), "{certain:#?}");
+}
+
+/// A tagged here-figure, then a list. The l3 code tagging them meets unknown text, and on an
+/// approximated path an expandable error's `\???` scan runs off (a runaway). Bug pinned: that
+/// path read past `\end{document}`, and the run gave `missing-end` as a certain error, though
+/// pdflatex ends the document. An end the run approximated on the way to is the analysis' end:
+/// `missing-end` may still be noted after the gap, but never as an error or warning, and its fix
+/// (appending `\end{document}`) is never safe to apply.
+#[test]
+fn an_approximated_tagged_float_is_no_missing_end() {
+    if !crate::support::installed() {
+        return;
+    }
+    let body = "\\begin{figure}[h]\n\\end{figure}\n\\begin{itemize}\\item one \\item two\\end{itemize}";
+    let a = analyze(&metadata("lang=en,pdfversion=2.0,pdfstandard=ua-2,testphase={phase-III}", "", body));
+    let bad: Vec<_> = satex::linter::lint(&a)
+        .into_iter()
+        .filter(|f| {
+            f.get("code").is_some_and(|c| c == "missing-end")
+                && (matches!(f.get("severity").and_then(|s| s.as_str()), Some("error" | "warning"))
+                    || f.get("applicability").and_then(|s| s.as_str()) == Some("safe"))
+        })
+        .collect();
+    assert!(bad.is_empty(), "{bad:?}");
+}
+
+/// `tagging=on` declares tagging (`document/tagging` is `active`), but `\tagpdfsetup` after the
+/// class switches it off again: pdflatex prints `\tag_if_active:TF` as false and writes no
+/// structure tree. Bug pinned: satex read only the declaration, called the document tagged and
+/// reported listings as incompatible with a tagging that never runs.
+#[test]
+fn the_tagging_code_says_whether_it_tags() {
+    if !crate::support::tagging_installed() {
+        return;
+    }
+    let off = "\\usepackage{listings}\n\\tagpdfsetup{activate/all=false}\n";
+    let a = analyze(&metadata("lang=en,tagging=on", off, "x"));
+    let t = tagging::of(&a).expect("tagging facts");
+    assert_eq!(t.tagging, Val::Text("active".into()));
+    assert_eq!(t.running, Val::Text("0".into()));
+    assert!(!t.active());
+    assert_eq!(found(&a, "tagging-incompatible-package"), Vec::<String>::new());
+    let on = analyze(&metadata("lang=en,tagging=on", "", BODY));
+    let t = tagging::of(&on).expect("tagging facts");
+    assert_eq!(t.running, Val::Text("1".into()));
+    assert!(t.active());
+}
+
+/// Four graphics without `alt`: one under `\SuspendTagging`, one tagged, one in a group after
+/// `\tag_stop:`, one an artifact. pdflatex warns `alt-text-missing` once, for the second. Bug
+/// pinned: the rule read the keys of each call from the source and knew nothing of the tagging
+/// state where the graphic stands, so it reported three. Now it reports where the run raised
+/// latex-lab's warning. The run's marked content says the same: one `Figure` sequence.
+#[test]
+fn a_graphic_set_while_tagging_is_suspended_is_no_finding() {
+    if !crate::support::tagging_installed() {
+        return;
+    }
+    let body = "Text one\n\\SuspendTagging{x}%\n\\includegraphics{a}%\n\\ResumeTagging{x}%\n\\includegraphics{a}%\n\
+                {\\ExplSyntaxOn\\tag_stop:\\ExplSyntaxOff\n\\includegraphics{a}}\n\\includegraphics[artifact]{a}\nText two.";
+    let a = analyze(&metadata("lang=en,tagging=on", "\\usepackage{graphicx}\n", body));
+    let msgs = found(&a, "graphic-without-alt");
+    assert_eq!(msgs.len(), 1, "{msgs:?}");
+    let t = tagging::of(&a).expect("tagging facts");
+    let count = |tag: &str| t.marked.iter().find(|(t, _)| t == tag).map_or(0, |(_, n)| *n);
+    assert_eq!(count("Figure"), 1, "{:?}", t.marked);
+    assert!(count("Artifact") >= 1, "{:?}", t.marked);
+}
+
+/// Whether the installation ships the tagging project's status list (TeX Live 2026 does, 2022 does not).
+fn status_list_installed() -> bool {
+    crate::support::installed_file_has("latex-tagging-status.ltx", "")
+}
+
+/// A package the status list has no entry for (the document's own `mine.sty`) is `unlisted`,
+/// not left out: nobody checked it. The tagging code's own files (status 8) are the modules
+/// the run loaded, not packages to judge. Before, an unlisted file was silently missing.
+#[test]
+fn an_unlisted_package_is_named_and_the_tagging_code_is_a_module() {
+    if !crate::support::tagging_installed() || !status_list_installed() {
+        return;
+    }
+    let source = metadata("lang=en,tagging=on", "\\usepackage{mine}\n", "x");
+    let dir = crate::support::tmp_root().join(format!("tagging-{:x}", fxhash(&source)));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("mine.sty"), "\\ProvidesPackage{mine}\n").unwrap();
+    let a = analyze(&source);
+    let t = tagging::of(&a).expect("tagging facts");
+    let mine = t.statuses.iter().find(|s| s.file == "mine.sty").expect("mine.sty has a status");
+    assert_eq!((mine.code, mine.meaning()), (None, "unlisted"));
+    assert!(!mine.incompatible() && !mine.flagged());
+    assert!(t.modules.iter().any(|m| m == "tagpdf.sty"), "{:?}", t.modules);
+    assert!(t.statuses.iter().all(|s| !t.modules.contains(&s.file)));
+}
+
+/// A document without `\DocumentMetadata` has no tagging state, but its packages have a status:
+/// what turning tagging on would meet (listings is incompatible). Before, the statuses were
+/// only there once tagging was set up. Where the installation has no status list (TeX Live
+/// 2022), there are no statuses at all, and no file is called unlisted.
+#[test]
+fn packages_have_a_status_before_tagging_is_set_up() {
+    if !crate::support::installed() {
+        return;
+    }
+    let a = analyze("\\documentclass{article}\n\\usepackage{listings}\n\\begin{document}\ny\n\\end{document}\n");
+    assert!(tagging::of(&a).is_none());
+    let loaded = tagging::loaded(&a);
+    if !status_list_installed() {
+        assert!(loaded.is_empty(), "{loaded:?}");
+        return;
+    }
+    let listings = loaded.iter().find(|s| s.file == "listings.sty").expect("listings.sty has a status");
+    assert!(listings.incompatible(), "{listings:?}");
+    let rows =
+        satex::queries::query::run(&a, satex::queries::query::Query::Tagging, &satex::queries::query::Filter::Always);
+    assert!(!rows.is_empty() && rows.iter().all(|r| r["kind"] == "status"), "{rows:?}");
 }

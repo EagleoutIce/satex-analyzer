@@ -21,7 +21,7 @@
 
 \csname ifdraft\endcsname\else
 % Directly recursive; found by the `recursion` query.
-\newcommand{\repeat}[1]{#1\repeat{#1}}
+\newcommand{\recurse}[1]{#1\recurse{#1}}
 \fi
 \begin{document}
 

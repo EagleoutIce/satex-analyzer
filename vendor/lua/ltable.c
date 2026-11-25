@@ -425,6 +425,7 @@ Table *luaH_new (lua_State *L) {
   t->flags = cast_byte(~0);
   t->array = NULL;
   t->sizearray = 0;
+  t->satex_epoch = G(L)->satex_epoch;
   setnodevector(L, t, 0);
   return t;
 }

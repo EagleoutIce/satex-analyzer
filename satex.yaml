@@ -32,6 +32,10 @@ load:  # which files the run follows from the document
   expect_detect: true  # guess those from what the installed packages define, and say which it picked
     #! affects: precision
     #! example: a `.sty` that uses `\setbeamercolor` gets beamer loaded first
+  alone: article  # the class a package analyzed alone is loaded under. The file is read as a document loads it. Empty reads it by itself
+    #! affects: soundness, precision
+    #! example: `satex -f my.sty lint` runs `\documentclass{article}\usepackage{my}` and an empty body
+    #! example: `alone: ''`: `\ProcessOptions` in `my.sty` runs outside any package, as nothing in LaTeX does
   build_files: false  # read the .aux, .toc, .bbl and others an earlier build left. Off, satex works them out itself
     #! affects: soundness, precision
     #! example: on: `\ref{x}` reads the number a stale `.aux` holds
@@ -89,7 +93,7 @@ conventions:  # how TeX is usually written, where the text alone does not say
   internal: ['@', '^__', '_.*:']  # names matching these patterns count as internal: hidden in completion, private to lints
     #! affects: output
     #! example: add `'^my@'` to hide your package's helper macros
-  definers: []  # your commands that define the name written after them, like \newcommand does
+  definers: ['NewDocumentEnvironment', 'NewDocumentEnvironment end', 'RenewDocumentEnvironment', 'RenewDocumentEnvironment end', 'ProvideDocumentEnvironment', 'ProvideDocumentEnvironment end', 'DeclareDocumentEnvironment', 'DeclareDocumentEnvironment end']  # commands that define the name written after them, like \newcommand does, besides those the runs show (`X end`: also `end` + the name). Add your own
     #! affects: precision
     #! example: `definers: ['\defmacro']`
     #! example: `\defmacro\foo{...}` then counts as a definition of `\foo`
@@ -203,6 +207,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     after: 24  # characters past a display its sentence's punctuation is looked for
       #! affects: output
       #! example: `after: 8`
+    inline: auto  # the inline math delimiters satex writes (a quick fix, a completion): \(, $, or auto, which takes $ without a LaTeX kernel or in a file that sets formulas with $ and never \(, else \(
+      #! affects: output
+      #! example: `inline: $`
   csname:  # commands that do a \csname's job, the first one defined is advised
     use: [csuse, '@nameuse']  # using a control sequence by name
       #! affects: output
@@ -235,6 +242,13 @@ conventions:  # how TeX is usually written, where the text alone does not say
     slanted: [itdefault, sldefault]  # macros naming the shapes LaTeX gives a slanted face
       #! affects: output
       #! example: `slanted+: [scdefault]`
+  writing:  # how the LaTeX a widget writes reads the document's own
+    macros: false  # inserted text that is the whole body of your command without arguments is written as that command (\model for TinyNet) where the run typeset prose beside it: never in verbatim, math, a comment, a URL or an argument the run did not typeset. Assumes a call typesetting its argument's characters typesets the command the same
+      #! affects: output
+      #! example: `macros: true`: a sentence typed `we use TinyNet here` is written `we use \model{} here`
+    repeat_min: 16  # characters a written call needs for a note when it then stands twice, offering to extract it
+      #! affects: output
+      #! example: `repeat_min: 8`: a second \textbf{Note} is noted too
   # alternatives: {hskip: '`\hspace`', vskip: '`\vspace`', ...}  # primitives LaTeX has a command for, with that command, as chktex's Primitives. latex_alternatives adds to it
     #! affects: output
     #! example: alternatives: {hskip: '`\hspace`'}
@@ -263,6 +277,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     math_depth: 2  # expansions a command's body is followed to find math-only material (\over, a \mathchardef), which ranks it first in math
       #! affects: output, speed
       #! example: `math_depth: 0`: only math characters and primitives count
+    wrap_math: true  # a math-only command completed in text is set in math (math.inline), the caret inside
+      #! affects: output
+      #! example: `wrap_math: false`: the command is written as typed
     math_environments: [equation, align, gather, multline, flalign, alignat, eqnarray, math, displaymath, dmath]  # environments whose body is math (starred too): completion ranks math commands first there
       #! affects: output
       #! example: `math_environments+: [IEEEeqnarray]`
@@ -272,6 +289,9 @@ conventions:  # how TeX is usually written, where the text alone does not say
     body: 80  # characters of an undocumented body its hover shows as what the command expands to
       #! affects: output
       #! example: `body: 0` hides it
+    common: [textbf, emph, textit, section, subsection, label, ref, cite, begin, end, item, includegraphics, caption, centering, usepackage, footnote, url, href, frac, sqrt, sum, int, alpha, beta, mathbf, mathrm, texttt, textsc, newcommand, hline, vspace, hspace, noindent, paragraph, chapter, subsubsection, eqref, cref, left, right]  # commands authors type most, most first: among names as close to what is typed and used as often in the document, these lead (\textb takes \textbf before \textbackslash)
+      #! affects: output
+      #! example: `common+: [SI]`
     pick: [begin, end, usepackage, documentclass, ref, cref, cite]  # commands whose argument is picked from a list, so completion opens again inside the braces
       #! affects: output
       #! example: `pick+: [autoref]`
@@ -296,6 +316,9 @@ lints:  # what a single rule reads, under its code
     report_public: true  # also report an unused command with a public name. Off for packages, whose commands are their interface
       #! affects: output
       #! example: `\newcommand\Hello{hi}` never used: reported only when on
+    private: ['@', '__']  # patterns on the names that are private, which the rule reports also with report_public off
+      #! affects: output
+      #! example: in a package `\__my_helper:n` never used is reported, `\my_function:n` is its interface
     ignore: []  # patterns on command names the rule leaves alone
       #! affects: output
       #! example: `ignore: ['^todo']`
@@ -388,6 +411,12 @@ lints:  # what a single rule reads, under its code
       #! example: `20` also reports pairs that are only hard to tell apart
     apart: 30.0  # CIELAB distance from which two colors are meant to differ for normal vision
       #! affects: output
+  spelled-out-macro:  # a word a command of the document sets, typed out by hand
+    equivalence: glyphs  # when a typed word is the command's: exact, glyphs, case or letters
+      #! affects: output
+      #! example: `case` also reports `tinynet` for `\newcommand\model{TinyNet}`
+    min-length: 3  # words shorter than this are left alone
+      #! affects: output
   clones:  # blocks of the source that repeat with only their values changed
     enabled: true  # look for clones at all
       #! affects: output
@@ -453,8 +482,15 @@ profiles:  # the settings each kind of input (document, package, class, literate
   document: {}  # a LaTeX document: every default above already fits it
   package: &library  # a .sty, read as its own author sees it
     at_letter: true
-    lints: {unused-definition: {report_public: false}}  # a public name is the package's own interface
-    lint_off: [analysis-imprecision, unused-label, microtype-available, build-shell-escape-missing,
+    lints:
+      unused-definition: {report_public: false}  # a public name is the package's own interface
+      clones: {enabled: false}  # a macro in place of repeated library code changes when it expands
+    # no document of its own to build or typeset. And a library programs in primitives, states
+    # each package it needs and loads them for the macros its users call, and defines colors for them
+    lint_off: [analysis-imprecision, unused-label, microtype-available, preamble-cost, comment-marker,
+               primitive-tex-command, unused-package, redundant-package-load, unused-color,
+               unintended-escape,
+               user-pattern, unreferenced-numbered-display, build-shell-escape-missing,
                build-shell-escape-unneeded, build-engine-mismatch,
                build-bibliography-disabled, build-bibliography-unneeded,
                build-missing-custom-dependency, build-unused-custom-dependency,
@@ -622,6 +658,9 @@ analysis:  # where paths join, and what the run assumes
   assume_call_learned_effect: true  # assume a call that keeps forking on unknown values leaves what other runs of its definition left, values widened to their type
     #! affects: precision, soundness, speed
     #! example: off: `\pgfmathparse{\the\wd0}` walks the printed width digit by digit
+  assume_variable_kind_shape: true  # assume a widened expl3 variable holds a value of its kind (an fp stays an fp), as the module's functions write
+    #! affects: precision, soundness
+    #! example: off: an `fp` widened by a cut is any text, and `\fp_use:N` of it runs away
 
 # shell_escape: restricted # which programs \write18 may run: none, restricted or full. Unset: what the build files ask for
 #! affects: precision, soundness
@@ -701,6 +740,10 @@ bib:  # the bibliography as the build makes it
     #! example: `backend: bibtex`
     #! example: `\usepackage{biblatex}` then runs bibtex in the build, not biber
     #! plugin: bib
+  early: true  # a build run makes the .bbl itself when it first looks for it, from what it cited so far: a bibliography after its citations settles a run sooner. Off, the bibliography tool runs between two runs only
+    #! affects: speed
+    #! example: off: `\cite{k}` before `\bibliography{refs}` finds its label in run 3, not run 2
+    #! plugin: bib
 
 lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug library
   run: true  # run the code. Off, every \directlua result is unknown
@@ -723,20 +766,31 @@ lua:  # \directlua code, run by satex's own Lua 5.3 with no io, os or debug libr
     #! affects: precision
     #! example: `modules: 2`: a third nested require gives an unknown module
     #! plugin: lua_run
+  outcomes: 8  # runs one piece of Lua code gets at most when it tests unknown values: one per outcome of its tests
+    #! affects: precision, speed
+    #! example: `outcomes: 1`: `\directlua{if os.clock() > 1 then tex.print("a") end}` prints something unknown
+    #! plugin: lua_run
 
 compile:  # what satex compile runs and shows
   system: auto  # the build system: auto (arara directives, then Tectonic.toml, then latexmk, then the engine), latexmk, arara, tectonic, make, l3build, engine or satex (its own incremental build: a preamble format, reruns only while the build files move)
     #! affects: output
     #! example: `system: arara`: the `% arara:` directives of the main file build it
     #! example: `system: satex`: a body edit is one pdfTeX pass from the dumped preamble, an unchanged build none
-  explain: true  # explain the build's messages by a full analysis. false explains by rule and waits for none
+  explain: true  # explain the build's messages by a full analysis. false explains by rule only
+    #! affects: speed
+  wait: false  # wait for the analysis that explains the build's messages. false: the build returns with the PDF, explained by rules and by what the last analysis said of the same messages, and a detached satex analyzes for the next call
     #! affects: speed
   passes: 4  # engine passes at most of the satex build, until the build files rest
     #! affects: output
-  warm: false  # keep pdfTeX started on the next build's format, the main file a named pipe between builds. Only for a build directory of its own (satex gui sets it)
+  warm: true  # keep pdfTeX started on the next build's format (Linux), waiting on a named pipe under .satex-build that it reads in the main file's stead: the next build within the same clock minute feeds it and saves the engine's start. The engine ends with its minute. false starts none
+    #! affects: speed
+  timeout: 600  # seconds a build asked for by a page (satex gui, the playground's server) may run before the server stops it with every process it started. 0: no limit
     #! affects: speed
   clock: minute  # the clock a document may read: a satex build whose read files, searched directories and clock are as the last rested build left them runs no pass. minute (TeX's \time, sound) or day (assumes only \today reads it). A fixed clock (SOURCE_DATE_EPOCH with FORCE_SOURCE_DATE=1) never parts builds
     #! affects: speed
+  memoize: true  # the satex build extracts memoize's externs itself between passes (memoize's TeX method, no shell escape, no Perl or Python module) and tells memoize not to. false: memoize extracts as the document says
+    #! affects: speed
+    #! example: an unchanged picture is included from its extern, its code not run again
   # viewer: none  # a PDF viewer `satex compile --view` opens: none or auto (the system's opener) or a program. Only your own config sets it
     #! affects: output
 
@@ -749,6 +803,15 @@ lsp:  # how satex lsp serves an editor
   pause_ms: 10  # how long a run goes on at most before it answers hover, completion and widgets from the last run. Lower answers sooner, the run takes a little longer
     #! affects: speed
     #! example: `50`: requests during a run wait up to 50 ms
+  provisional: true  # a build run that another run follows publishes its findings at once, those a later run may change marked provisional (dimmed, "build run k"). The build's last run replaces them
+    #! affects: speed
+    #! example: `false`: a big document shows its findings only once the build's files are at rest
+  provisional_after_ms: 2000  # only a run that took at least this long publishes provisional findings: a short build's final ones come soon anyway
+    #! affects: speed
+    #! example: `0`: every run of a build publishes its findings
+  rows_per_message: 256  # the Typeset view's rows go out in messages of at most this many, each built, sent and dropped before the next: the server never holds a whole document's rows. 0 sends them in one message
+    #! affects: memory, speed
+    #! example: `64`: smaller messages, a big document's rows come in more steps
   # port: 2087  # a TCP port to serve on instead of stdio
     #! affects: output
 
@@ -846,16 +909,36 @@ type_plugins:  # editor features by type, grouped by category: widget, hover, co
     #! category: widget
     enabled: true  # a manager: kinds with counters and styles, instances with labels and references, rename, numbering
       #! affects: output
+  labels:  # every label the run met, from a reference's completion
+    #! category: widget
+    enabled: true  # "Browse all labels…": kind, number, caption or title, place and references. A choice writes the label
+      #! affects: output
   page:  # the page geometry the run computed: \documentclass, geometry's calls and keys, a sectioning command, a blank line
     #! category: widget
     enabled: true  # "Page layout…": margins, paper, header and footer to scale, for the document or a part
       #! affects: output
       #! example: `enabled: false`: no page layout lens, link or dialog
+  font:  # the document's font and base size: \documentclass
+    #! category: widget
+    enabled: true  # "Font and size…": the base size as a class option, a font as a package (pdfLaTeX) or with fontspec (LuaLaTeX, XeLaTeX)
+      #! affects: output
+      #! example: `enabled: false`: no font lens, action or dialog
+    sizes: [10pt, 11pt, 12pt]  # the base sizes offered
+      #! affects: output
+      #! example: `sizes: [11pt, 12pt]`
+    fonts: {EB Garamond: [ebgaramond, EB Garamond], Fira Sans: [FiraSans, Fira Sans, sans], Kp Fonts: [kpfonts, ''], Latin Modern: [lmodern, Latin Modern Roman], Libertinus: [libertinus, Libertinus Serif], Noto Serif: [noto-serif, Noto Serif], STIX Two: [stix2, STIX Two Text], Source Serif: [sourceserifpro, Source Serif Pro], TeX Gyre Heros: [tgheros, TeX Gyre Heros, sans], TeX Gyre Pagella: [tgpagella, TeX Gyre Pagella], TeX Gyre Termes: [tgtermes, TeX Gyre Termes], XCharter: [XCharter, XCharter]}  # the fonts offered: the package pdfLaTeX loads, the font fontspec names (empty: pdfLaTeX only), sans for a sans serif main font
+      #! affects: output
+      #! example: `fonts: {Charter: [XCharter, XCharter]}`
   tagging:  # PDF tagging: \DocumentMetadata
     #! category: widget
     enabled: true  # "Accessibility…": tagging, PDF standard, language and title, figures' alternative text, tables' header rows
       #! affects: output
       #! example: `enabled: false`: no accessibility lens or manager
+  class:  # the class's options as its code declares them: \documentclass, the \usepackage of a style the project ships
+    #! category: widget
+    enabled: true  # "Class options…": every option the run read from the class, a template's common choices first, the header line to copy
+      #! affects: output
+      #! example: `enabled: false`: no class options lens or dialog
   forest:  # a forest environment the run met, a blank line of the document body
     #! category: widget
     enabled: true  # "Edit tree…": add, delete, rename and drag nodes, node and `for tree` options, indented outlines in
@@ -982,7 +1065,7 @@ playground:  # what only the web playground reads
   smart_scripts: true  # typing `_` or `^` into math in the PDF or Typeset view opens a group a space or operator closes
     #! affects: output
     #! example: `x_42` types `x_{42}`
-  smart_wrap: false  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
+  smart_wrap: true  # a line typed past conventions.lines.length breaks at its best space: a sentence's end, after a closing brace, after a comma, else the last space
     #! affects: output
 
 slice:  # what satex slice leaves out
@@ -992,6 +1075,49 @@ slice:  # what satex slice leaves out
   standalone: true  # make the slice one file that compiles in an empty directory. Local files it reads go in as filecontents, graphics as example-image of the same size
     #! affects: output
     #! example: `standalone: false`: `satex slice --out` also copies the local files the slice names
+
+templates:  # where satex new and the New document dialog get the provider files the TeX installation lacks
+  fetch: true  # fetch a template's files from its provider and an archive from its URL, over HTTPS. Off, only the cache and the TeX installation serve
+    #! affects: output
+    #! example: `fetch: false`: satex new uses the cached NeurIPS style and never goes online
+  refresh_days: 7  # days a fetched template is used before it is fetched again. Offline the cached copy serves
+    #! affects: output
+    #! example: `refresh_days: 0` looks for a new release on every satex new
+  timeout: 20  # seconds a download may take before it is given up
+    #! affects: output
+    #! example: `timeout: 5` gives up sooner on a slow network
+  max_bytes: 50MiB  # the most an imported archive may unpack to
+    #! affects: output
+    #! example: `max_bytes: 200MiB` imports a repository with large figures
+  max_files: 2000  # the most files an imported archive may hold
+    #! affects: output
+    #! example: `max_files: 10000` imports a large repository
+
+updates:  # how satex updates learns the newest release of each package the document loads, and what changed in it
+  fetch: false  # ask the index and the archives over HTTPS. Off, only the cache and file:// sources serve, and a package without a record is unknown
+    #! affects: output
+    #! example: `fetch: true`: satex updates asks CTAN for each package
+  index: https://ctan.org/json/2.0/pkg/{name}  # the release record of package {name}, with its version number and date. A file:// path serves a local copy
+    #! affects: output
+    #! example: `index: file:///srv/ctan/json/{name}.json` reads a local mirror
+  archives: ['https://mirrors.ctan.org/install{install}', 'https://mirrors.ctan.org{path}.zip']  # where a release's files come from, tried in order. {install} and {path} are the record's install and ctan.path. A zip, or a file:// folder
+    #! affects: output
+    #! example: `archives: ['file:///srv/ctan{path}']` reads releases from a local mirror
+  changes: false  # run the newest release of each outdated package and list what it defines differently: commands, environments, options
+    #! affects: output
+    #! example: `changes: true`: an outdated enumitem lists its added, removed and changed commands
+  refresh_days: 1  # days a fetched record counts as current. Past that a package is outdated or unknown, never current
+    #! affects: output
+    #! example: `refresh_days: 0` asks the index on every run
+  timeout: 20  # seconds a download may take before it is given up
+    #! affects: output
+    #! example: `timeout: 5` gives up sooner on a slow network
+  max_bytes: 50MiB  # the most a release archive may unpack to
+    #! affects: output
+    #! example: `max_bytes: 200MiB` takes a large bundle
+  max_files: 5000  # the most files a release archive may hold
+    #! affects: output
+    #! example: `max_files: 20000` takes a large bundle
 
 docs:  # where a package's documentation is looked for and which conventions of it are read
   source_root: source  # the folder of a TDS tree that holds the documented sources
@@ -1114,6 +1240,8 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   provider_probes: 4  # packages a write may try, most loaded first, for a name it adds that the run lacks: each a small run of the call. 0 loads the most loaded untried
     #! affects: speed, precision
     #! example: `\includegraphics[width=5cm]` loads graphicx, whose definition takes the key, not graphics
+  provider_steps: 100000000  # tokens one such run may read. Past them the package does not take the call. The same on every machine
+    #! affects: speed, precision
   format_steps: 9000000000  # the same for reading the LaTeX format, which is cached after the first time
     #! affects: speed
     #! example: rarely needs a change
@@ -1144,16 +1272,20 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   walk_per_step: 1  # map entries a join, compare or resume of waiting paths walks per step charged to the line, so line_steps also bounds that work
     #! affects: speed
     #! example: 100 paths waiting at one line are joined at a cost the line's budget sees
+  walk_texts: 100000  # texts the walks inside one step may open (macro bodies, one-of members). Past them a walk reads the rest as unknown
+    #! affects: precision, speed
+    #! example: a text naming the one before it twenty times, eight deep, is not walked 20^8 times
   scan_site_factor: 16  # site_forks inside a value scan, as a factor: its arms join where the scan ends
     #! affects: precision, speed
     #! example: expl3's walker over an unknown file name widens instead of forking per token without end
   replay_steps: 50000  # how long satex may rerun a line the document wrote to a file, to learn the labels in it
     #! affects: precision, speed
     #! example: a huge `\write` to the `.aux` is read without its labels past this
-  seconds: 300  # most seconds one run may take, a safety net. 0 for no limit
+  seconds: 600  # most seconds one run may take, a safety net. 0 for no limit
     #! affects: speed
     #! example: `seconds: 30` for an editor that should never wait long
   lock_seconds: 60  # how long a run waits for another one building the same cache before it builds it itself
+  probe_seconds: 20  # most seconds one probe document may take (a package tried for a command the run lacks), a backstop past provider_steps. One it stops counts as untried and is tried again later. 0 = no limit
     #! affects: speed
   repeat_failures: 8  # how often satex may meet the same thing it cannot follow at one place before skipping that expansion
     #! affects: precision, speed
@@ -1167,6 +1299,9 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   digit_lengths: 3  # how many digit counts a number of unknown digits is read apart into, one path each. Past them the longer counts are one path
     #! affects: precision, speed
     #! example: lower: `\int_rand:n {16777215}` read digit by digit forks less. Higher: pgfmath tells two from three digits
+  parshape_lines: 64  # how many lines of a \parshape satex keeps. Lines past them are read but unknown
+    #! affects: precision, memory
+    #! example: higher: `\parshapelength 100` of a 200-line shape is known
   paths: 16  # how many alternative paths satex keeps at once before merging the oldest two. Higher is more precise and slower
     #! affects: precision, speed, memory
     #! example: `\ifdraft ... \fi` many times over: more paths keep each combination apart
@@ -1188,6 +1323,10 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   build_runs: 5  # how many LaTeX runs satex simulates to settle .aux, .toc and the rest. 1 runs once with no earlier files
     #! affects: precision, speed
     #! example: `1`: `\ref` and `\tableofcontents` read nothing from an earlier run
+    #! plugin: build
+  build_widen_after: 2  # the build run after which a file whose lines a run changed again is read as the join of both texts. 1 widens what the second run changed: one run fewer, page numbers that moved are unknown digits
+    #! affects: precision, speed
+    #! example: `1`: a page number that run 2 moved is read as any digit in run 3, and the build ends there if run 3 writes one it covers
     #! plugin: build
   recursion_depth: 100  # how deep an undecided recursion is followed before it is assumed to end
     #! affects: precision, speed
@@ -1213,13 +1352,17 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   call_memo_longest: 200000  # a run longer than this keeps no effect and stops being recorded, so its log costs nothing
     #! affects: speed
     #! example: a whole `tikzpicture` is not recorded, the point computations in it are
+  write_log: 1048576  # writes logged since the last token read from a file before the log keeps one entry per name and group depth. A call or loop that began before reads as one that wrote any of them
+    #! affects: memory, precision
+    #! example: a `\foreach` that assigns for minutes holds a few MiB of log, not GiBs
   call_memo_probes: 8  # runs of a definition that may stay short or unclean before its calls are no longer recorded for call_memo_steps. Probed again after probes << n such calls (n: times it ran out)
     #! affects: speed
     #! example: 0 records every call, which costs on every call
   call_memo_variants: 4  # kept effects per code and arguments, one per state they met
     #! affects: speed
     #! example: `\pgfmathparse{\x+1}` for four values of `\x`
-  call_memo_entries: 100000  # kept effects in all, past it none are added. Also how many calls met once are remembered
+  call_memo_entries: 100000  # how many calls met once are remembered
+  call_memo_bytes: 256MiB  # what the kept effects may hold in all. Past it they are dropped and kept anew
     #! affects: speed
     #! example: bounds the memory a long tikz document spends on them
   call_memo_verify: 0  # debug: a call a kept effect stands for runs for real instead, and where its run differs from the kept effect is printed
@@ -1272,6 +1415,24 @@ limits:  # what bounds the analysis: reaching one stops that part of the run, so
   facts: 2000000  # most definitions, uses and other facts recorded
     #! affects: memory, output
     #! example: queries miss facts past this on huge documents
+  hyph_words: 50000  # most words whose hyphenation points a language's patterns keep once found (a paragraph is hyphenated twice, words recur)
+    #! affects: memory
+    #! example: `hyph_words: 0` finds every word's points anew
+  list_items: 8388608  # most items of the lists the run records to break lines and set boxes (a paragraph's characters, glue and boxes). Equal lists share theirs. Past it a list is not recorded. Past half of it a run after an edit keeps its own numbering, so it cannot take the last run's rest and runs to the document's end
+    #! affects: memory, speed, output
+    #! example: a book of 1000 pages of prose records about 2 million items: with `list_items: 2097152` every edit in it runs to the end
+  paragraph_items: 4000  # most items of one recorded list (a paragraph's characters, glue and boxes, a box, the page's marks). Past it that list is not recorded and its lines and size stay unknown
+    #! affects: speed, output
+    #! example: a paragraph of 800 words is about 5000 items: with the default its line breaks stay unknown
+  nesting: 300  # how deeply steps nest inside scans, and quantities inside quantities (`\numexpr(\numexpr(…`), before the nesting is widened. The stack bounds it too
+    #! affects: output
+    #! example: `nesting: 1000` follows deeper nesting where the stack allows it
+  probe_contexts: 4  # environments a completion's probe tries a command in when alone it raises an error before reading its arguments (`\caption` outside a float). Editor only
+    #! affects: output, speed
+    #! example: `probe_contexts: 0` leaves `\caption` without a completion shape
+  table_reach: 4000  # most macros the table widget follows through the run's calls from an environment to the code that splits its body at `&` (tabularray)
+    #! affects: output
+    #! example: `table_reach: 0` offers the table dialog on array tables only
   trace: 200000  # most events satex trace records
     #! affects: memory, output
     #! example: a trace of a long run shows only its start

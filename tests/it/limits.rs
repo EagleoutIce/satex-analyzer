@@ -186,9 +186,15 @@ const READ_ONLY: [(&str, &str); 6] = [
     ("mathscriptcharmode", "1"),
 ];
 
+/// [`READ_ONLY`] as far as the installed LuaTeX has them: TeX Live 2019's has no
+/// `\mathdefaultsmode`, which satex then leaves undefined as the engine does.
+fn installed_read_only() -> impl Iterator<Item = (&'static str, &'static str)> {
+    READ_ONLY.into_iter().filter(|(name, _)| crate::support::luatex_has(name))
+}
+
 #[test]
 fn the_read_only_math_mode_parameters_ignore_a_write() {
-    for (name, reads) in READ_ONLY {
+    for (name, reads) in installed_read_only() {
         assert_eq!(the(Engine::LuaTeX, "", &format!("\\{name}")), reads, "\\{name} before a write");
         let source = format!("\\{name}=2 ");
         let (after, refused) = if math_modes_assignable() { ("2", 0) } else { (reads, 1) };
@@ -202,7 +208,7 @@ fn the_read_only_math_mode_parameters_ignore_a_write() {
 /// read-only whatever was written.
 #[test]
 fn a_read_only_parameter_stays_exact_under_an_unpinnable_write() {
-    for (name, reads) in READ_ONLY {
+    for (name, reads) in installed_read_only() {
         let source = format!("\\{name}=\\uniformdeviate 2 \\relax ");
         let value = the(Engine::LuaTeX, &source, &format!("\\{name}"));
         // Where the engine takes the write, the value is the one written:
@@ -216,7 +222,7 @@ fn a_read_only_parameter_stays_exact_under_an_unpinnable_write() {
 
 #[test]
 fn the_read_only_math_mode_parameters_are_luatex_names_only() {
-    for (name, _) in READ_ONLY {
+    for (name, _) in installed_read_only() {
         assert!(defined(Engine::LuaTeX, name), "\\{name} under LuaTeX");
         for engine in [Engine::Tex, Engine::PdfTeX, Engine::XeTeX] {
             assert!(!defined(engine, name), "\\{name} must be undefined under {engine:?}");
@@ -843,6 +849,26 @@ fn an_outer_name_ending_a_scan_is_read_again() {
     assert_eq!((body(&run, "zR"), body(&run, "zS")), ("undefined".into(), "\\outer macro:#1->[#1]".into()));
 }
 
+/// An `\outer` name in a macro's argument ends the call with TeX's inserted
+/// `\par` as `long_state = outer_call` (tex.web §§ 339, 392): the call is
+/// abandoned silently, `\long` or not, and only the outer name is reported.
+/// Pins a second, false "Paragraph ended" and a `\long` call taking the `\par`.
+#[test]
+fn an_outer_name_in_an_argument_abandons_the_call_once() {
+    for long in ["", "\\long"] {
+        let source =
+            format!("\\outer\\def\\zo{{}}{long}\\def\\za#1{{\\def\\zR{{taken}}}}\\def\\zR{{dropped}}\\za{{x\\zo}}");
+        let run = analyze(Engine::PdfTeX, &source);
+        assert_eq!(body(&run, "zR"), "dropped", "{long}");
+        let codes: Vec<_> = run.facts.diagnostics.iter().map(|d| (d.code, d.message.as_str())).collect();
+        assert!(
+            codes.iter().any(|(c, m)| *c == "forbidden-outer" && m.starts_with("Forbidden control sequence")),
+            "{codes:?}"
+        );
+        assert!(!codes.iter().any(|(c, _)| *c == "runaway-argument"), "{long}: {codes:?}");
+    }
+}
+
 /// Past `limits.degrade_at_percent` of `limits.steps` the run lowers its
 /// precision limits once and says so; at 100 it never does.
 #[test]
@@ -858,4 +884,44 @@ fn a_run_degrades_its_precision_once_past_the_soft_limit() {
     };
     assert_eq!(run(1), 1);
     assert_eq!(run(100), 0);
+}
+
+/// Intuition: a recursion satex cuts drops the text its open calls still hold, counting the groups and
+/// conditionals that text would close, through parameterless macros. Each macro is counted once: a
+/// tower whose every level names the one below twice was walked 2^40 times per dropped call. Pins a
+/// hang past `limits.seconds` on a cut acmart title (`\@currentaffiliation` grows per `\and`).
+#[test]
+fn a_cut_call_counts_each_macro_of_the_dropped_text_once() {
+    let name = |k: usize| format!("\\csname zt{k}\\endcsname");
+    let mut tower = format!("\\expandafter\\def{}{{\\relax}}", name(0));
+    for k in 1..=40 {
+        let below = format!("\\expandafter\\noexpand{}", name(k - 1));
+        tower += &format!("\\expandafter\\edef{}{{{below}{below}}}", name(k));
+    }
+    // every open `\\zr` holds the tower's top after it: the cut drops them all
+    let source = format!(
+        "\\catcode`\\{{=1 \\catcode`\\}}=2 {tower}\\edef\\zr{{\\noexpand\\zr\\expandafter\\noexpand{}}}\\zr",
+        name(40)
+    );
+    let started = std::time::Instant::now();
+    analyze(Engine::PdfTeX, &source);
+    assert!(started.elapsed().as_secs() < 30, "took {:?}", started.elapsed());
+}
+
+/// Intuition: a walk into one-of tokens (balanced, printed, classified, first meanings) follows the
+/// texts each one stands for, and a text may name the one-of of the pass before many times. Such a
+/// tower is a small graph but a huge tree: every level names the one below twenty times, so a walk
+/// that follows each name visits 20^8 texts inside one step, where no budget check runs. Pins walks
+/// that count each one-of they open against a per-step walk budget, past which it reads as nested too deep.
+#[test]
+fn a_walk_into_one_of_texts_stops_at_the_walk_budget() {
+    let copies = "\\y".repeat(20);
+    let mut source = String::from("\\def\\y{a}");
+    for _ in 0..8 {
+        source += &format!("\\edef\\y{{\\ifnum\\pdfuniformdeviate 2=0 {copies}\\fi}}");
+    }
+    source += "\\edef\\z{\\detokenize\\expandafter{\\y}}\\message{\\y}\\ifx\\y\\z\\fi";
+    let started = std::time::Instant::now();
+    analyze(Engine::PdfTeX, &source);
+    assert!(started.elapsed().as_secs() < 30, "took {:?}", started.elapsed());
 }

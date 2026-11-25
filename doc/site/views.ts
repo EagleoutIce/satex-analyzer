@@ -288,15 +288,24 @@ const satexViews = (() => {
   const RENDER: Record<string, Renderer> = {
     text: (s, view, ctx) => el('div', 'tv-text', ctx.markdown(s.markdown)),
     table: (s) => el('table', 'tv-table', `<thead><tr>${s.columns.map((c: Rec) => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>${s.rows.map((r: Rec) => `<tr>${r.map((c: Rec) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody>`),
+    // buttons that apply their edits: `on` marks the run's own choice (pressed, nothing to write), `detail` is what one writes,
+    // `svg` a sample TeX drew of it (a font's): an image, so the glyph ids of two samples never meet
     actions: (s, view, ctx) => {
-      const box = el('div', 'tv-actions');
+      const box = el('div', s.items.some((a: Rec) => a.svg) ? 'tv-actions tv-samples' : 'tv-actions');
       for (const a of s.items) {
-        const b = el('button', 'tv-button', esc(a.title));
+        const sample = a.svg ? `<img class="tv-sample" alt="" src="data:image/svg+xml,${encodeURIComponent(a.svg)}">` : '';
+        const b = el('button', a.on ? 'tv-button tv-on' : 'tv-button', sample + (sample ? `<span>${esc(a.title)}</span>` : esc(a.title)));
         b.type = 'button';
+        if (a.detail) b.title = a.detail;
+        if (a.on != null) b.setAttribute('aria-pressed', String(!!a.on));
+        b.disabled = !!a.on || !a.edits?.length;
         b.onclick = () => ctx.apply(a.edits);
         box.append(b);
       }
-      return box;
+      if (!s.title) return box;
+      const group = el('div', 'tv-group');
+      group.append(el('div', 'tv-h', esc(s.title)), box);
+      return group;
     },
     // a filterable list: each choice applies its edits
     choices: (s, view, ctx) => {
@@ -316,13 +325,60 @@ const satexViews = (() => {
       input.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); list.querySelector('button')?.click(); } };
       draw();
       box.append(input, list);
-      setTimeout(() => input.focus(), 0);
+      // a list beside other sections (`focus: false`) leaves the keys where they are
+      if (s.focus !== false) setTimeout(() => input.focus(), 0);
+      if (!s.title) return box;
+      const group = el('div', 'tv-group');
+      group.append(el('div', 'tv-h', esc(s.title)), box);
+      return group;
+    },
+    // a load's options (src/lsp/plugins/class.rs): the declared ones to tick, a template's common choices first,
+    // others typed as a key list; the header line as the server's printer writes it, to copy, and Write
+    options: (s, view, ctx) => {
+      const box = el('div', 'tv-options'), snap = self.satexSnapshot;
+      const known = new Set<string>(s.offered.map((o: Rec) => o.name));
+      const given = new Set<string>(s.given);
+      // `a, b={c,d}` as [key, value] pairs: commas inside braces stay
+      const pairs = (t: string) => { const out: string[] = []; let d = 0, cur = ''; for (const c of t) { if (c === ',' && !d) { out.push(cur); cur = ''; continue; } d += c === '{' ? 1 : c === '}' ? -1 : 0; cur += c; } out.push(cur);
+        return out.map((x) => x.trim()).filter(Boolean).map((x): [string, string | null] => { const i = x.indexOf('='); return i < 0 ? [x, null] : [x.slice(0, i).trim(), x.slice(i + 1).trim().replace(/^\{([\s\S]*)\}$/, '$1')]; }); };
+      const filter = Object.assign(el('input', 'tv-input'), { placeholder: `filter ${s.offered.length} options`, spellcheck: false, ariaLabel: 'filter options' });
+      const grid = el('div', 'tv-opts');
+      const order = [...s.offered].sort((a: Rec, b: Rec) => Number(!!b.hint) - Number(!!a.hint) || Number(given.has(b.name)) - Number(given.has(a.name)) || a.name.localeCompare(b.name));
+      const boxes = order.map((o: Rec) => {
+        const lab = el('label', o.hint ? 'tv-opt tv-hint' : 'tv-opt', `<input type="checkbox"${given.has(o.name) ? ' checked' : ''}> <code>${esc(o.name)}</code>${o.default ? `<span class="tv-muted">=${esc(o.default)}</span>` : ''}`);
+        lab.title = o.hint ? 'a common choice of the template' : 'declared by the code';
+        return [o.name, lab, lab.querySelector('input')!] as [string, HTMLLabelElement, HTMLInputElement];
+      });
+      grid.append(...boxes.map(([, l]) => l));
+      const more = Object.assign(el('input', 'tv-input'), { placeholder: 'other options: key=value, …', spellcheck: false, ariaLabel: 'other options' });
+      more.value = (snap.list(s.node) ?? []).filter((k) => !known.has(k.key)).map((k) => k.value == null ? k.key : `${k.key}=${k.value}`).join(', ');
+      const line = el('pre', 'tv-headline'), said = el('span', 'tv-muted');
+      line.textContent = s.node.text;
+      const node = () => {
+        const keys: [string, string | null][] = [...boxes.filter(([, , i]) => i.checked).map(([n]): [string, string | null] => [n, null]), ...pairs(more.value)];
+        const n = structuredClone(s.node) as SnapNode;
+        return snap.setKeys(n, (snap.list(n) ?? []).map((k) => k.key), keys);
+      };
+      let ask = 0;
+      const show = () => { const k = ++ask; ctx.print([node()]).then((r) => { if (k === ask) { line.textContent = r?.texts?.[0] ?? s.node.text; said.textContent = r?.error ?? ''; } }).catch((e) => { said.textContent = String(e?.message ?? e); }); };
+      filter.oninput = () => { const q = filter.value.trim().toLowerCase(); for (const [n, l] of boxes) l.hidden = !!q && !n.toLowerCase().includes(q); };
+      grid.onchange = show;
+      more.oninput = show;
+      const copy = el('button', 'tv-button', 'Copy'), write = el('button', 'tv-button tv-primary', 'Write');
+      copy.type = write.type = 'button';
+      copy.title = 'copy the header line';
+      copy.onclick = () => navigator.clipboard?.writeText(line.textContent ?? '').then(() => { said.textContent = 'copied'; }, () => { getSelection()?.selectAllChildren(line); said.textContent = 'selected: press Ctrl+C'; });
+      write.onclick = () => snap.write(ctx, [node()], (m) => { said.textContent = m; });
+      const acts = el('div', 'tv-actions');
+      acts.append(write, copy, said);
+      box.append(filter, grid, more, el('div', 'tv-h', 'Header line'), line, acts);
       return box;
     },
     // a manager (bibliography, glossary, index, theorems): the shared master/detail list; each record opens to
     // its uses, its fields (edited through edit templates, `${value}` the new text), a table and actions; `add` is a form of templates
     records: (s, view, ctx) => {
       const box = el('div', 'tv-records');
+      if (s.heading) box.append(el('h3', 'tv-records-head', esc(s.heading)));
       const sitesOf = (r: Rec) => r.sites ?? [];
       // what the run reports of each record sets the chips: every facet with two values or more, and which are used
       const facets = [...new Set<string>(s.items.flatMap((r: Rec) => Object.keys(r.facets ?? {})))];
@@ -330,11 +386,13 @@ const satexViews = (() => {
       const chips: Rec[] = facets.flatMap<Rec>((f: string) => values(f).length > 1 ? values(f).map((v) => ({ id: `${f}:${v}`, group: f, html: esc(v), title: f, test: (r: Rec) => r.facets?.[f] === v })) : [])
         .concat([{ id: 'used', html: 'used', test: (r: Rec) => sitesOf(r).length > 0 }, { id: 'unused', html: 'unused', test: (r: Rec) => !sitesOf(r).length }]);
       const first = (r: Rec) => Object.values(r.facets ?? {})[0];
+      // the facets after the first: a pill each, beside the title in the list and in the detail
+      const pills = (r: Rec, from: number) => Object.values(r.facets ?? {}).slice(from).map((v) => `<span class="tv-type" style="--h:${hue(v)}">${esc(v)}</span>`).join('');
       const md = masterDetail({
         label: s.title ?? 'records', placeholder: s.placeholder ?? 'search', query: s.query, rows: s.items, chips, head: [first(s.items[0] ?? {}) ? 'Kind' : '', 'Entry'],
         hay: (r: Rec) => (r.search ?? r.title).toLowerCase(),
         sorts: (s.sorts ?? []).map((k: string) => ({ id: k, label: k, key: (r: Rec) => String(r.sort?.[k] ?? r.title) })),
-        row: (r: Rec) => ({ kind: first(r), title: r.title, sub: r.detail, flags: r.badge ? `<span class="tv-flag">${esc(r.badge)}</span>` : '' }),
+        row: (r: Rec) => ({ kind: first(r), title: r.title, sub: r.detail, flags: pills(r, 1) + (r.badge ? `<span class="tv-flag">${esc(r.badge)}</span>` : '') }),
         selected: s.items.find((r: Rec) => r.title === s.focus) ?? s.items[0] ?? null, none: s.empty ?? 'nothing found',
         show: (r: Rec, pane: Rec) => pane.replaceChildren(record(r)),
       });
@@ -342,7 +400,7 @@ const satexViews = (() => {
       const kept = () => ({ q: md.search.value, open: md.selected()?.title });
       const record = (r: Rec) => {
         const body = el('div', 'tv-body');
-        body.append(el('div', 'tv-md-title', `<b>${esc(r.title)}</b>${r.detail ? `<span class="tv-muted">${esc(r.detail)}</span>` : ''}`));
+        body.append(el('div', 'tv-md-title', `<b>${esc(r.title)}</b>${pills(r, 0)}${r.detail ? `<span class="tv-muted">${esc(r.detail)}</span>` : ''}`));
         // every use, from the run: one view for all managers; a place opens in the editor and the manager steps aside
         if (r.sites) body.append(usesView(r.sites, ctx));
         else if (r.uses) body.append(Object.assign(el('div', 'tv-text tv-uses', ctx.markdown(r.uses)), { onclick: (e: Rec) => { if (e.target.closest('a.place')) ctx.close?.(); } }));
@@ -355,9 +413,17 @@ const satexViews = (() => {
         if (r.why) body.append(el('div', 'tv-text', `<p>${esc(r.why)}</p>`));
         if (r.table?.rows.length) body.append(RENDER.table!(r.table, view, ctx));
         // deleting is kept, but behind the uses: what a record is used by comes first
-        if (r.actions?.length) {
+        // a record's own choice (a label written into the reference) stands first, unfolded
+        const picks = (r.actions ?? []).filter((a: Rec) => a.close);
+        if (picks.length) {
           const acts = el('div', 'tv-actions');
-          for (const a of r.actions) {
+          for (const a of picks) acts.append(Object.assign(el('button', 'tv-button tv-primary', esc(a.title)), { type: 'button', onclick: () => { ctx.apply(a.edit, kept()); ctx.close?.(); } }));
+          body.children[0]!.after(acts);
+        }
+        const rest = (r.actions ?? []).filter((a: Rec) => !a.close);
+        if (rest.length) {
+          const acts = el('div', 'tv-actions');
+          for (const a of rest) {
             const b = el('button', 'tv-button' + (a.danger ? ' tv-danger' : ''), esc(a.title));
             b.type = 'button';
             b.disabled = !!a.disabled;
@@ -365,8 +431,8 @@ const satexViews = (() => {
             b.onclick = () => ctx.apply(a.edit, kept());
             acts.append(b);
           }
-          const why = r.actions.filter((a: Rec) => a.disabled || a.note).map((a: Rec) => `${a.title}: ${a.disabled ?? a.note}`);
-          body.append(fold(r.actions.some((a: Rec) => a.danger) ? 'Delete…' : 'More actions', acts, why.length ? el('div', 'tv-text', why.map((w: Rec) => `<p>${esc(w)}</p>`).join('')) : null));
+          const why = rest.filter((a: Rec) => a.disabled || a.note).map((a: Rec) => `${a.title}: ${a.disabled ?? a.note}`);
+          body.append(fold(rest.some((a: Rec) => a.danger) ? 'Delete…' : 'More actions', acts, why.length ? el('div', 'tv-text', why.map((w: Rec) => `<p>${esc(w)}</p>`).join('')) : null));
         }
         // one primary button in the pane: the record's own form, the others plain
         body.querySelectorAll('.tv-form .tv-primary').forEach((b, k) => { if (k) b.classList.remove('tv-primary'); });
@@ -532,8 +598,20 @@ const satexViews = (() => {
       if (s.expressions) {
         const row = el('label', 'tv-expr', '<span>mix</span>');
         const input = Object.assign(el('input', 'tv-input'), { placeholder: 'red!40!blue', spellcheck: false, value: s.name.includes('!') ? s.name : '' });
-        input.oninput = () => { const c = mix(input.value, s.defined); expr = c ? input.value.trim() : null; input.classList.toggle('tv-bad', !c && !!input.value); if (c) { hsb = toHsb(c); draw(false); } };
-        row.append(input);
+        // the defined colors offered at each name of the expression (`red!40!ora` completes the last name), a slider for the share
+        const names = el('datalist', '') as HTMLDataListElement, id = `tv-names-${Math.random().toString(36).slice(2, 8)}`;
+        names.id = id;
+        input.setAttribute('list', id);
+        const offer = () => { const head = /^(.*!)?[^!]*$/.exec(input.value)?.[1] ?? ''; names.innerHTML = s.defined.map((d: Rec) => `<option value="${esc(head + d.name)}"></option>`).join(''); };
+        const share = Object.assign(el('input', 'tv-share'), { type: 'range', min: '0', max: '100', step: '5', title: 'the share of the first color (red!40!blue: 40 % red)' });
+        const shareOf = () => { const m = /^([^!]+)!(\d+)(?:!(.*))?$/.exec(input.value.trim()); share.disabled = !m && !/^[^!]+$/.test(input.value.trim()); share.value = m ? m[2]! : '100'; };
+        share.oninput = () => { const m = /^([^!]+)(?:!\d+(?:!(.*))?)?$/.exec(input.value.trim()); if (!m) return; input.value = `${m[1]}!${share.value}${m[2] ? `!${m[2]}` : ''}`; input.oninput!(new Event('input')); };
+        share.onchange = () => settle();
+        const run = () => { const c = mix(input.value, s.defined); expr = c ? input.value.trim() : null; input.classList.toggle('tv-bad', !c && !!input.value); if (c) { hsb = toHsb(c); draw(false); } };
+        input.oninput = () => { run(); offer(); shareOf(); };
+        offer();
+        shareOf();
+        row.append(input, names, share);
         side.append(row);
       }
       box.append(pick, side);
@@ -848,7 +926,8 @@ const satexViews = (() => {
     const indent = items.find((i) => i.lead.includes('\n'))?.lead.split('\n').pop() ?? '  ';
     const stmt = (i: Item) => i.type === 'matrix' ? matrixText(i, k, indent) : i.type === 'node' ? nodeText(i, k) : edgeText(i);
     const text = (i: Item) => {
-      const nl = `\n${i.lead.includes('\n') ? i.lead.split('\n').pop() : indent}`, first = i.lead || nl;
+      // a statement of the text keeps its own lead, none too (`\node…;` first in `\begin{tikzpicture}\node…;`)
+      const nl = `\n${i.lead.includes('\n') ? i.lead.split('\n').pop() : indent}`, first = i.lead || (i.text != null ? '' : nl);
       if (!i.moved) return first + stmt(i);
       const own = i.layer === 'main' ? `${first}${stmt(i)}` : `${first}\\begin{pgfonlayer}{${i.layer}}${nl}  ${stmt(i)}${nl}\\end{pgfonlayer}`;
       if (!i.block) return own;
@@ -856,7 +935,9 @@ const satexViews = (() => {
       const bl = `\n${i.block.lead.split('\n').pop()}`;
       return `${first.replace(/\n[ \t]*$/, '') || ''}${bl}${i.block.closeCode}${nl}${own.slice(first.length)}${bl}${i.block.code}`;
     };
-    const kept = items.filter((i) => !i.deleted && i.lead), added = items.filter((i) => !i.deleted && !i.lead);
+    // new: neither read from the text nor standing in for a statement of it (toMatrix keeps its first node's lead)
+    const fresh = (i: Item) => i.text == null && !i.lead;
+    const kept = items.filter((i) => !i.deleted && !fresh(i)), added = items.filter((i) => !i.deleted && fresh(i));
     // new statements go after the last one's line, its comment included
     const line = tail.match(/^[^\n]*/)![0];
     return kept.map((i) => i.dirty || i.moved ? text(i) : i.text).join('') + line + added.map(text).join('') + tail.slice(line.length);
@@ -1127,11 +1208,15 @@ const satexViews = (() => {
   const LOGO: Record<string, (string | number)[][]> = { TeX: [['T'], ['E', -0.17, 0.22], ['X', -0.12, -0.22]] };
   LOGO.LaTeX = [['L'], ['A', -0.36, -0.2, 0.7], ['T', -0.15, 0.2], ...LOGO.TeX.slice(1)];
   type Run = [string, number?, number?, number?, boolean?];
-  const runs = (label?: string) => {
+  /** The document's text macros (`net` → `Größe-Net`, the run's `macros`): a label's `\\net` shows their text. */
+  let labelMacros: Record<string, string> = {};
+  const runs = (label?: string, macros = labelMacros, depth = 0): Run[] => {
     const out: Run[] = [];
     let italic = false;
     for (const [m, cs, sym] of (label ?? '').matchAll(/\\([A-Za-z]+)\s*(?:\{\})?|\\(.)|[^\\${}~]+|./g)) {
-      if (cs) out.push(...(LOGO[cs] ?? []).map(([t, dx = 0, dy = 0, size = 1]): Run => [t as string, dx as number, dy as number, size as number, italic]));
+      // a macro's text, one level deep: a body naming another macro shows that one's name dropped as before
+      if (cs && Object.hasOwn(macros, cs) && !depth) out.push(...runs(macros[cs], macros, 1).map((r): Run => [r[0], r[1], r[2], r[3], r[4] || italic]));
+      else if (cs) out.push(...(Object.hasOwn(LOGO, cs) ? LOGO[cs]! : []).map(([t, dx = 0, dy = 0, size = 1]): Run => [t as string, dx as number, dy as number, size as number, italic]));
       else if (m === '$') italic = !italic;
       else if (m === '~' || sym === '\\' || sym === ',') out.push([' ']);
       else if (sym) out.push([sym, 0, 0, 1, italic]);
@@ -1139,7 +1224,7 @@ const satexViews = (() => {
     }
     return out;
   };
-  const plain = (label?: string) => runs(label).map((r) => r[0]).join('');
+  const plain = (label?: string, macros = labelMacros) => runs(label, macros).map((r) => r[0]).join('');
   function setLabel<T extends Element>(t: T, label?: string): T {
     for (const [text, dx, dy, size, italic] of runs(label)) {
       const span = Object.assign(svgEl('tspan'), { textContent: text });
@@ -1190,6 +1275,7 @@ const satexViews = (() => {
 
   function drawing(s: Rec, view: Rec, ctx: ViewCtx) {
     const R = s.run ?? {}, keys = R.layer_keys ?? {};
+    labelMacros = R.macros ?? {};
     const state = parse(s.body, keys), run = new Map<string, Rec>((s.nodes ?? []).map((n: Rec) => [n.name, n]));
     const S = self.satexSnapshot, pic = picOptions(S.text(s.node, '[') ?? '');
     let picDirty = false;
@@ -1908,16 +1994,17 @@ const satexViews = (() => {
     const preamble = () => {
       const out = structuredClone(R.defs ?? []), tikz = { name: 'tikz', options: '' };
       for (const d of docStyles.filter((d: Rec) => d.def != null && (d.deleted || d.body !== d.orig))) d.deleted ? S.setKeys(out[d.def], [d.key], []) : S.set(out[d.def], d.key, d.body);
-      if (!R.load_at) return out;
       // a shape of a library not loaded: its load as the run's shapes name it (`\usetikzlibrary{shapes.geometric}`)
       const shapeLoads = own().map((n) => shapeInfo.get(shapeName(n))?.load?.match(/^\\use(tikz|pgf)library\{(.+)\}$/)).filter((m): m is RegExpMatchArray => !!m);
       const need = ([['matrix', live().some((i) => i.type === 'matrix')], ['positioning', own().some((n) => n.place && !n.place.centers)], ...shapeLoads.filter((m) => m[1] === 'tikz').map((m) => [m[2]!, true])] as [string, boolean][])
         .filter(([l, used]) => used && !(R.libraries ?? []).includes(l)).map(([l]) => l);
       const made = docStyles.filter((d: Rec) => d.isNew && !d.deleted).map((d: Rec) => ({ key: `${d.name}/.style`, value: d.body }));
-      if (need.length) out.push(S.call('usetikzlibrary', [S.keys('{', [...new Set(need)].map((l) => [l, '']))], R.load_at, tikz));
+      // library loads: the printer joins them to the preamble's list, the root's for an `\input` file (no place needed)
+      const at = R.load_at ?? { line: 0, character: 0 };
+      if (need.length) out.push(S.call('usetikzlibrary', [S.keys('{', [...new Set(need)].map((l) => [l, '']))], at, tikz));
       const pgfLibs = [...new Set(shapeLoads.filter((m) => m[1] === 'pgf').map((m) => m[2]))];
-      if (pgfLibs.length) out.push(S.call('usepgflibrary', [S.keys('{', pgfLibs.map((l) => [l, '']))], R.load_at, tikz));
-      if (made.length) out.push(S.call('tikzset', [{ ...S.keys('{'), keys: made }], R.load_at, tikz));
+      if (pgfLibs.length) out.push(S.call('usepgflibrary', [S.keys('{', pgfLibs.map((l) => [l, '']))], at, tikz));
+      if (made.length && R.load_at) out.push(S.call('tikzset', [{ ...S.keys('{'), keys: made }], R.load_at, tikz));
       return out;
     };
     const writeIt = () => {
@@ -2388,6 +2475,88 @@ const satexViews = (() => {
       t.pre = rest ? `${lead}for tree={${text}}, ${rest}` : `${t.root.place ?? '\n'}for tree={${text}}`;
     }
   }
+  // a node's keys by name: `k=v` items of its options
+  const keyOf = (o: string) => o.split('=')[0]!.trim();
+  /** Key `k` of node `n`: its value ('' bare), null when not set. */
+  const valOf = (n: TNode, k: string) => { const o = n.opts.find((x) => keyOf(x) === k); return o == null ? null : o.includes('=') ? o.slice(o.indexOf('=') + 1).trim() : ''; };
+  /** Sets key `k` of node `n` to `v` (null: the key goes). */
+  const setKey = (n: TNode, k: string, v: string | null) => { n.opts = [...n.opts.filter((o) => keyOf(o) !== k), ...v == null ? [] : [`${k}=${v}`]]; n.dirty = true; };
+  const order = (n: TNode): TNode[] => [n, ...n.children.flatMap(order)];
+  /** The label of the edge into `n`, as forest writes it on the child: `edge label={node[midway, side]{text}}`. */
+  const EDGE_LABEL = /^\s*node\s*\[([^\]]*)\]\s*\{([^]*)\}\s*$/;
+  const edgeLabel = (n: TNode) => { const m = EDGE_LABEL.exec((valOf(n, 'edge label') ?? '').replace(/^\{([^]*)\}$/, '$1')); return m ? { text: m[2]!, side: splitTop(m[1]!).find((k) => k !== 'midway') ?? '' } : null; };
+  const setEdgeLabel = (n: TNode, text: string, side: string) => setKey(n, 'edge label', text.trim() ? `{node[${['midway', side].filter(Boolean).join(', ')}]{${text}}}` : null);
+  /** Node `n`'s name: its `name` key, else one made from its text, unique in the tree and among `taken` (the run's), written on it. */
+  function nameFor(t: Tree, n: TNode, taken: string[] = []) {
+    const own = valOf(n, 'name');
+    if (own) return own.replace(/^\{(.*)\}$/, '$1');
+    const all = [...taken, ...order(t.root).map((x) => valOf(x, 'name') ?? '')], base = n.content.replace(/\\[a-zA-Z]+/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '') || 'node';
+    let name = base;
+    for (let k = 2; all.includes(name); k++) name = `${base}${k}`;
+    setKey(n, 'name', name);
+    return name;
+  }
+  /** The lines drawn after the tree between named nodes (`\draw[->] (a) -- (b);`): each one's place in `post`, options and ends. */
+  const LINK = /\\draw\s*(?:\[([^\]]*)\])?\s*\(([^().\s]+)(?:\.[^)]*)?\)\s*(?:--|to\b(?:\s*\[[^\]]*\])?)\s*\(([^().\s]+)(?:\.[^)]*)?\)\s*;/g;
+  const linksOf = (t: Tree) => [...t.post.matchAll(LINK)].map((m) => ({ from: m.index!, to: m.index! + m[0].length, opts: m[1] ?? '', a: m[2]!, b: m[3]! }));
+  /** A line from node `a` to `b` (TikZ options `opts`) drawn on top of the tree: forest runs the code after the tree in its picture. */
+  function link(t: Tree, a: TNode, b: TNode, taken: string[] = [], opts = '->') {
+    const x = nameFor(t, a, taken), y = nameFor(t, b, taken), tail = t.post.match(/\s*$/)![0];
+    t.post = `${t.post.slice(0, t.post.length - tail.length)}\n  \\draw[${opts}] (${x}) -- (${y});${tail || '\n'}`;
+  }
+  const unlink = (t: Tree, k: number) => { const l = linksOf(t)[k]; if (l) t.post = t.post.slice(0, l.from).replace(/\n[ \t]*$/, '') + t.post.slice(l.to); };
+  /** Adds item `item` to the preamble's key list. */
+  const preAdd = (t: Tree, item: string) => { t.pre = !t.pre.trim() ? `${t.root.place ?? '\n'}${item}` : /,\s*$/.test(t.pre) ? `${t.pre} ${item}` : `${t.pre}, ${item}`; };
+  /** The braces of `where level=N{…}{…}` in the preamble: start of the item, its first group's inside, the item's end; null without one. */
+  function whereLevel(pre: string, lvl: number) {
+    const m = new RegExp(`where\\s+level\\s*=\\s*${lvl}\\s*\\{`).exec(pre);
+    if (!m) return null;
+    const close = (i: number) => { for (let d = 1; i < pre.length; i++) { if (pre[i] === '\\') i++; else if (pre[i] === '{') d++; else if (pre[i] === '}' && !--d) return i; } return -1; };
+    const a = m.index + m[0].length, b = close(a), c = b < 0 ? -1 : pre.slice(b + 1).match(/^\s*\{/)?.[0].length ?? -1, e = c < 0 ? b + 1 : close(b + 1 + c) + 1;
+    return b < 0 || e <= 0 ? null : { item: m.index, keys: [a, b] as [number, number], end: e };
+  }
+  /** The nodes on level `lvl` styled with `keys` (`where level=lvl{keys}{}`); empty keys drop the item. */
+  function setWhereLevel(t: Tree, lvl: number, keys: string) {
+    const w = whereLevel(t.pre, lvl);
+    if (w && keys.trim()) t.pre = t.pre.slice(0, w.keys[0]) + keys + t.pre.slice(w.keys[1]);
+    else if (w) t.pre = (t.pre.slice(0, w.item).replace(/,\s*$/, '') + t.pre.slice(w.end).replace(/^\s*,\s*/, t.pre.slice(0, w.item).trim() ? ', ' : '')).replace(/^\s*$/, '');
+    else if (keys.trim()) preAdd(t, `where level=${lvl}{${keys}}{}`);
+  }
+  /** The keys of `for tree` as a list, and setting key `key` there on or off. */
+  const forTreeKeys = (t: Tree) => { const f = forTree(t.pre); return f ? splitTop(t.pre.slice(...f)) : []; };
+  const forTreeToggle = (t: Tree, key: string, on: boolean) => setForTree(t, [...forTreeKeys(t).filter((k) => k !== key), ...on ? [key] : []].join(', '));
+  /** Where an edge meets a node box of half width `w` and half height `h` at anchor `a` (forest's default: `dflt`), as an offset. */
+  const treeAnchor = (a: string | null, w: number, h: number, dflt: string) => { const s = a || dflt; return [/east/.test(s) ? w : /west/.test(s) ? -w : 0, /north/.test(s) ? -h : /south/.test(s) ? h : 0]; };
+  // a feature model's roles in pairs, each set by a style the run found by its name (forest plugin `features`): what a
+  // node is, how its edge binds it, how its children group; '' is the pair's unstyled default (concrete, none, and)
+  const FEATURE_PAIRS: Record<string, string[]> = { kind: ['abstract', 'concrete'], edge: ['mandatory', 'optional'], group: ['or', 'alternative'] };
+  const MARKS: Record<string, string> = { abstract: 'A', concrete: 'C', mandatory: '●', optional: '○', or: '∨', alternative: '⊕' };
+  /** A role's mark on a toggle; the unstyled default's: C, –, ∧. */
+  const featureMark = (pair: string, role: string) => MARKS[role] ?? { kind: 'C', edge: '–', group: '∧' }[pair] ?? '';
+  /** The role of pair `pair` node `n` has: the role whose style (`feats[role]`) is among its options, else ''. */
+  const featureOf = (n: TNode, feats: Rec, pair: string) => FEATURE_PAIRS[pair]!.find((r) => feats[r] && n.opts.some((o) => o.trim() === feats[r])) ?? '';
+  /** Gives node `n` role `role` of pair `pair` ('' none): the pair's other styles go. */
+  function setFeature(n: TNode, feats: Rec, pair: string, role: string) {
+    const keys = FEATURE_PAIRS[pair]!.map((r) => feats[r]).filter(Boolean);
+    n.opts = [...n.opts.filter((o) => !keys.includes(o.trim())), ...role && feats[role] ? [feats[role]] : []];
+    n.dirty = true;
+  }
+  /** A toggle's next role: abstract ↔ concrete, mandatory ↔ optional (a role without a style is ''), and → or → alternative. */
+  function nextFeature(n: TNode, feats: Rec, pair: string) {
+    const have = FEATURE_PAIRS[pair]!.filter((r) => feats[r]), states = pair === 'group' || have.length < 2 ? ['', ...have] : have, now = featureOf(n, feats, pair);
+    return states[(states.indexOf(now) + 1) % states.length]!;
+  }
+  /** The toggles node `n` (child of `parent`) offers with the run's feature styles: [pair, its role now, the next]. */
+  const featureToggles = (n: TNode, parent: TNode | undefined, feats: Rec | null | undefined) => !feats ? [] : (['kind', 'edge', 'group'] as const)
+    .filter((p) => FEATURE_PAIRS[p]!.some((r) => feats[r]) && (p !== 'edge' || parent) && (p !== 'group' || n.children.length > 1))
+    .map((p) => ({ pair: p, now: featureOf(n, feats, p), next: nextFeature(n, feats, p) }));
+  /** The run's feature styles when tree `t` uses one of them (a node's option or a `for tree` key), else null: a
+   * syntax tree beside a feature model in one document gets no toggles. */
+  const featuresIn = (t: Tree, feats: Rec | null | undefined) => {
+    const used = new Set(Object.values(feats ?? {}));
+    return used.size && (order(t.root).some((n) => n.opts.some((o) => used.has(o.trim()))) || forTreeKeys(t).some((k) => used.has(k))) ? feats! : null;
+  };
+  const featureName = (pair: string, role: string) => role || (pair === 'kind' ? 'concrete' : pair === 'group' ? 'and' : 'unmarked');
   // presets of the tree dialog: a preset names option sets (each a choice of keys, '' none) and the styles that
   // define the keys; it is on when a tree uses its keys, or started from its template
   // a group's arc between its first and last edge, 3mm below the parent (calc comes with forest)
@@ -2442,7 +2611,8 @@ const satexViews = (() => {
     walk(root, 0);
     return out;
   }
-  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf };
+  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf,
+    FEATURE_PAIRS, featureMark, featureOf, featuresIn, setFeature, nextFeature, featureToggles, featureName, valOf, setKey, edgeLabel, setEdgeLabel, nameFor, linksOf, link, unlink, whereLevel, setWhereLevel, forTreeKeys, forTreeToggle };
 
   function forest(s: Rec, view: Rec, ctx: ViewCtx) {
     const root = el('div', 'tv-draw tv-forest');
@@ -2455,11 +2625,20 @@ const satexViews = (() => {
     const ran = () => { const order: TNode[] = []; const pre = (n: TNode) => { order.push(n); n.children.forEach(pre); }; pre(t.root);
       return (s.nodes ?? []).length === order.length && s.nodes.every((r: Rec, k: number) => r.content === order[k]!.content) ? new Map<TNode, Rec>(order.map((n, k): [TNode, Rec] => [n, s.nodes[k]])) : new Map<TNode, Rec>(); };
     let run = ran();
-    let sel = t.root, dragging: TNode | null = null;
+    // the selection: a node, else the edge into `edge`, else line `line` drawn after the tree; `linking`: a line's start, its end picked next
+    let sel = t.root, dragging: TNode | null = null, edge: TNode | null = null, line: number | null = null, linking: TNode | null = null, level = 1;
+    const unselect = () => { edge = null; line = null; };
     // undo: the shared history of the tree's data; a step back selects the root
-    const H = self.satexDialogs.history(() => t, (v: Tree) => { t = v; sel = t.root; run = ran(); draw(); });
+    const H = self.satexDialogs.history(() => t, (v: Tree) => { t = v; sel = t.root; unselect(); run = ran(); draw(); });
     const changed = () => H.changed;
     const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'tree' });
+    // the selected node's actions float beside it over the canvas
+    const stage = el('div', 'tv-forest-stage'), bar = el('div', 'tv-forest-bar');
+    bar.setAttribute('role', 'toolbar');
+    bar.ariaLabel = 'node actions';
+    stage.append(svg, bar);
+    // the names the run gave the nodes: a new name never takes one
+    const runNames = () => [...run.values()].map((r) => String(r.name ?? ''));
     const form = el('div', 'tv-forest-form');
     const status = el('span', 'tv-muted');
     const touch = () => { H.settle(); draw(); };
@@ -2485,6 +2664,7 @@ const satexViews = (() => {
       return labelled(label, box);
     };
     const at = (e: { clientX: number; clientY: number }) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM()!.inverse()); };
+    const depthOf = (x: TNode): number => { const p = parentOf(t, x); return p ? depthOf(p) + 1 : 0; };
     function drawTree() {
       const fm = presetOf(t);
       // the preset's look at once (`fm feature`: sans serif, tight corners), before any node has a kind
@@ -2502,8 +2682,28 @@ const satexViews = (() => {
       const w = Math.max(8, Math.max(...xs) - Math.min(...xs) + 2), h = Math.max(4, Math.max(...ys) - Math.min(...ys) + 1.2);
       const box = [(Math.max(...xs) + Math.min(...xs) - w) / 2, -Math.max(...ys) - 0.6, w, h];
       svg.setAttribute('viewBox', box.join(' '));
-      const out = [];
-      for (const p of pos) for (const c of p.n.children) out.push(svgEl('line', { class: 'tv-tree-edge', x1: p.x, y1: -p.y + 0.2, x2: by.get(c)!.x, y2: -by.get(c)!.y - 0.2 }));
+      const out: SVGElement[] = [];
+      // an edge from the parent's `parent anchor` to the child's `child anchor` (forest: south and north when the tree grows down); a click selects it
+      const end = (n: TNode, k: string, dflt: string) => { const q = by.get(n)!, [dx, dy] = treeAnchor(valOf(n, k), wide(n) / 2, 0.2, dflt); return [q.x + dx, -q.y + dy]; };
+      for (const p of pos) for (const c of p.n.children) {
+        const [x1, y1] = end(p.n, 'parent anchor', 'south'), [x2, y2] = end(c, 'child anchor', 'north'), g = svgEl('g', { class: `tv-edge${edge === c ? ' on' : ''}`, 'data-child': c.content });
+        g.append(svgEl('line', { class: 'tv-tree-edge', x1, y1, x2, y2 }), svgEl('line', { class: 'tv-hit', x1, y1, x2, y2, 'stroke-width': 0.22 }));
+        const lab = edgeLabel(c);
+        if (lab) g.append(Object.assign(svgEl('text', { class: 'tv-edge-label', x: (x1 + x2) / 2 + (lab.side === 'left' ? -0.25 : lab.side === 'right' ? 0.25 : 0), y: (y1 + y2) / 2 }), { textContent: lab.text }));
+        g.onpointerdown = (e) => { e.stopPropagation(); unselect(); edge = c; draw(); };
+        out.push(g);
+      }
+      // the lines drawn after the tree between named nodes, dashed, an arrow where they end
+      const named = (x: string) => pos.find((p) => (valOf(p.n, 'name') ?? run.get(p.n)?.name) === x);
+      linksOf(t).forEach((l, k) => {
+        const a = named(l.a), b = named(l.b);
+        if (!a || !b) return;
+        const g = svgEl('g', { class: `tv-edge tv-tree-link${line === k ? ' on' : ''}` }), d = `M${a.x} ${-a.y} L${b.x} ${-b.y}`;
+        g.append(svgEl('path', { d, ...(/>/.test(l.opts) ? { 'marker-end': 'url(#tv-tree-tip)' } : {}) }), svgEl('path', { class: 'tv-hit', d, 'stroke-width': 0.22 }));
+        g.onpointerdown = (e) => { e.stopPropagation(); unselect(); line = k; draw(); };
+        out.push(g);
+      });
+      out.unshift(Object.assign(svgEl('defs'), { innerHTML: '<marker id="tv-tree-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>' }));
       // a feature model's marks as its styles draw them: a circle where an edge meets the child, an arc under a group
       if (fm) for (const p of pos) {
         const kind = optOf(fm, p.n, 'kind'), group = optOf(fm, p.n, 'group'), kids = p.n.children.map((c) => by.get(c)!);
@@ -2521,7 +2721,12 @@ const satexViews = (() => {
         g.append(svgEl('rect', { x: p.x - w / 2, y: -p.y - 0.2, width: w, height: 0.4, rx: fm ? 0.035 : 0.08 }), Object.assign(svgEl('text', { x: p.x, y: -p.y }), { textContent: label }));
         const name = run.get(p.n)?.name;
         if (name) g.append(Object.assign(svgEl('title'), { textContent: `name: ${name}` }));
-        g.onpointerdown = (e) => { e.stopPropagation(); sel = p.n; dragging = p.n; try { svg.setPointerCapture(e.pointerId); } catch { /* synthetic */ } draw(); };
+        g.onpointerdown = (e) => {
+          e.stopPropagation();
+          // a line being drawn ends at the node pressed
+          if (linking) { const a = linking; linking = null; if (a !== p.n) { link(t, a, p.n, runNames()); line = linksOf(t).length - 1; edge = null; touch(); } else draw(); return; }
+          sel = p.n; unselect(); dragging = p.n; try { svg.setPointerCapture(e.pointerId); } catch { /* synthetic */ } draw();
+        };
         g.dataset.x = String(p.x); g.dataset.w = String(w);
         out.push(g);
         p.g = g;
@@ -2538,33 +2743,82 @@ const satexViews = (() => {
       };
       svg.replaceChildren(...out);
     }
+    /** The selected node's toolbar beside it over the canvas (left of it at the canvas' right edge); none while an edge or line is selected. */
+    function placeBar() {
+      const g = svg.querySelector('.tv-node.on');
+      bar.hidden = !g || edge != null || line != null;
+      if (bar.hidden || !stage.isConnected) return;
+      const r = g!.getBoundingClientRect(), box = stage.getBoundingClientRect(), right = r.right - box.left + 4;
+      bar.style.left = `${right + bar.offsetWidth > box.width ? Math.max(0, r.left - box.left - 4 - bar.offsetWidth) : right}px`;
+      bar.style.top = `${r.top - box.top + r.height / 2}px`;
+    }
     function draw() {
       drawTree();
       const n = sel, parent = parentOf(t, n), fm = presetOf(t);
-      form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
+      // the toolbar: the tree around the selected node, one undo step each
+      const act = (f: () => TNode | null) => () => { const to = f(); if (to) { sel = to; touch(); } };
+      const tool = (label: string, title: string, f: () => void, off = false) => { const b = el('button', 'tv-tool', esc(label)); b.type = 'button'; b.title = title; b.ariaLabel = title; b.disabled = off; b.onclick = f; bar.append(b); };
+      bar.replaceChildren();
+      tool('+↓', 'Add child', act(() => addChild(n)));
+      if (parent) {
+        const k = parent.children.indexOf(n);
+        tool('+→', 'Add sibling', act(() => addSibling(t, n)));
+        tool('←', 'Move before its left sibling', act(() => shift(t, n, -1)), k === 0);
+        tool('→', 'Move after its right sibling', act(() => shift(t, n, 1)), k === parent.children.length - 1);
+      }
+      // a feature model's toggles, from the styles the run found (forest plugin `features`)
+      const feats = featuresIn(t, s.features);
+      for (const f of featureToggles(n, parent, feats)) tool(featureMark(f.pair, f.now), `${featureName(f.pair, f.now)}: switch to ${featureName(f.pair, f.next)}`, () => { setFeature(n, feats!, f.pair, f.next); touch(); });
+      tool('⤳', 'Draw a line to another node: click it next', () => { linking = n; status.textContent = `click the node the line from ${n.content || 'this node'} goes to`; });
+      // a subtree goes as one undoable step; the status says what went
+      if (parent) tool('✕', n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node',
+        () => { act(() => remove(t, n))(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; });
+      requestAnimationFrame(placeBar);
+      const label = (x: TNode) => x.content.replace(/^\{(.*)\}$/, '$1') || '(empty)';
+      const up = edge && parentOf(t, edge), lk = line == null ? null : linksOf(t)[line];
+      if (edge && up) {
+        // an edge: where it leaves the parent (all its edges) and meets the child, the run's anchors of their shapes; its label
+        const c = edge, lab = edgeLabel(c), anchors = (now: string | null) => ['', ...new Set([...s.anchors ?? [], ...now ? [now] : []])];
+        form.replaceChildren(el('h4', 'tv-h', esc(`Selected edge ${label(up)} → ${label(c)}`)),
+          choice('leaves at', anchors(valOf(up, 'parent anchor')), valOf(up, 'parent anchor') ?? '', (k) => setKey(up, 'parent anchor', k || null), { '': `default (parent anchor of ${label(up)})` }),
+          choice('arrives at', anchors(valOf(c, 'child anchor')), valOf(c, 'child anchor') ?? '', (k) => setKey(c, 'child anchor', k || null), { '': 'default (child anchor)' }),
+          field('label', lab?.text ?? '', (v: string) => setEdgeLabel(c, v, edgeLabel(c)?.side ?? lab?.side ?? 'left'), ['tex']),
+          choice('label side', ['left', 'right', 'above', 'below', 'auto'], lab?.side || 'left', (k) => { const now = edgeLabel(c); if (now) setEdgeLabel(c, now.text, k); }));
+      } else if (lk) {
+        const k = line!;
+        form.replaceChildren(el('h4', 'tv-h', esc(`Selected line ${lk.a} → ${lk.b}`)),
+          field('options', lk.opts, (v: string) => { const l = linksOf(t)[k]; if (l) t.post = `${t.post.slice(0, l.from)}\\draw[${v}] (${l.a}) -- (${l.b});${t.post.slice(l.to)}`; }));
+        const row = el('div', 'tv-actions');
+        button(row, 'Delete line', () => { unlink(t, k); line = null; touch(); });
+        form.append(row);
+      } else form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
         field('content', n.content, (v: string) => { n.content = v; n.dirty = true; }, ['tex']),
         field('options', n.opts.join(', '), (v: string) => { n.opts = splitTop(v); n.dirty = true; }));
-      if (fm) {
+      if (feats && !edge && line == null) for (const f of featureToggles(n, parent, feats)) {
+        const roles = f.pair === 'group' || FEATURE_PAIRS[f.pair]!.filter((r) => feats[r]).length < 2 ? ['', ...FEATURE_PAIRS[f.pair]!.filter((r) => feats[r])] : FEATURE_PAIRS[f.pair]!.filter((r) => feats[r]);
+        form.append(choice({ kind: 'feature is', edge: 'its edge', group: 'children are' }[f.pair], roles, f.now, (k) => setFeature(n, feats, f.pair, k), Object.fromEntries(roles.map((r) => [r, `${featureName(f.pair, r)} ${featureMark(f.pair, r)}`]))));
+      }
+      else if (fm && !edge && line == null) {
         const P = PRESETS[fm];
         if (parent) form.append(choice('feature', P.node.kind, optOf(fm, n, 'kind'), (k) => setPresetOpt(fm, n, 'kind', k), P.labels));
         form.append(choice('kind', P.node.abstract, optOf(fm, n, 'abstract'), (k) => setPresetOpt(fm, n, 'abstract', k), { ...P.labels, '': 'concrete' }));
         if (n.children.length > 1) form.append(choice('children', P.group.group, optOf(fm, n, 'group'), (k) => setPresetOpt(fm, n, 'group', k), { ...P.labels, '': 'and (each on its own)' }));
       }
-      const row = el('div', 'tv-actions');
-      const act = (f: () => TNode | null) => () => { const to = f(); if (to) { sel = to; touch(); } };
-      button(row, 'Add child', act(() => addChild(n)));
-      if (parent) {
-        const k = parent.children.indexOf(n);
-        button(row, 'Add sibling', act(() => addSibling(t, n)));
-        button(row, '←', act(() => shift(t, n, -1)), 'Move before its left sibling').disabled = k === 0;
-        button(row, '→', act(() => shift(t, n, 1)), 'Move after its right sibling').disabled = k === parent.children.length - 1;
-        // a subtree goes as one undoable step; the status says what went
-        button(row, 'Delete', () => { act(() => remove(t, n))(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; },
-          n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node');
-      }
-      form.append(row, el('h4', 'tv-h', 'Every node (for tree)'));
+      form.append(el('h4', 'tv-h', 'Every node (for tree)'));
       const ft = forTree(t.pre);
       form.append(field('for tree', ft ? t.pre.slice(...ft) : '', (v: string) => setForTree(t, v)));
+      // TikZ's strut key from the run (tikz plugin `strut_key`): every node as high and deep as a line
+      if (s.strut) {
+        const box = Object.assign(el('input'), { type: 'checkbox', checked: forTreeKeys(t).includes(s.strut), ariaLabel: 'strut every node' });
+        box.onchange = () => { forTreeToggle(t, s.strut, box.checked); touch(); };
+        form.append(labelled('strut', box));
+      }
+      // the nodes of one level styled (`where level=N{keys}{}`): the levels forest computed, else the tree's depth
+      const levels = [...new Set(order(t.root).map((x) => run.get(x)?.level ?? depthOf(x)))].filter((l) => l >= 0).sort((a, b) => a - b);
+      if (!levels.includes(level)) level = levels.at(-1) ?? 0;
+      const w = whereLevel(t.pre, level);
+      form.append(choice('level', levels.map(String), String(level), (k) => { level = +k; }, Object.fromEntries(levels.map((l) => [String(l), l ? `level ${l}` : 'level 0 (root)']))),
+        field(`level ${level} keys`, w ? t.pre.slice(...w.keys) : '', (v: string) => setWhereLevel(t, level, v)));
       // a preset: its keys on every node, its styles written with the tree
       form.append(choice('preset', ['', ...Object.keys(PRESETS)], fm ?? '', (p) => {
         const f = forTree(t.pre), now = f ? splitTop(t.pre.slice(...f)) : [], every = Object.values(PRESETS).map((x: Rec) => x.every);
@@ -2604,7 +2858,7 @@ const satexViews = (() => {
       return S.write(ctx, out, (m) => { status.textContent = m; });
     };
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert tree' : 'Apply', H, tools: true });
-    root.append(svg, ...start.childElementCount ? [start] : [], form, out);
+    root.append(stage, ...start.childElementCount ? [start] : [], form, out);
     if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
     root.append(foot);
     draw();
@@ -3097,12 +3351,28 @@ const satexViews = (() => {
       const now = styleNow(s.styles, two);
       if (now) out.push(el('div', 'tv-text tv-now', ctx.markdown(now)));
       const used = () => ['head', 'foot'].some((part) => Object.values(m[part]).some((v) => String(v ?? '').trim()));
+      // the fields' texts the run's page style prints, by part, side and spot (`styles`: head/foot, odd/even, left/center/right)
+      const SPOT: Record<string, string> = { L: 'left', C: 'center', R: 'right', i: 'left', c: 'center', o: 'right' };
+      const inForce = (part: string, side: string, spot: string) => String(s.styles?.[part]?.[side === 'E' ? 'even' : 'odd']?.[SPOT[spot]!] ?? '').trim();
+      // completion: every text the page style in force prints and every text a field holds, as the field's suggestions
+      const fieldsList = el('datalist', '') as HTMLDataListElement;
+      fieldsList.id = `tv-hf-${Math.random().toString(36).slice(2)}`;
+      const texts = new Set<string>();
+      for (const part of ['head', 'foot']) for (const side of ['odd', 'even']) for (const k of ['left', 'center', 'right']) { const t = String(s.styles?.[part]?.[side]?.[k] ?? '').trim(); if (t) texts.add(t); }
+      for (const part of ['head', 'foot']) for (const v of Object.values(m[part])) if (String(v ?? '').trim()) texts.add(String(v).trim());
+      fieldsList.append(...[...texts].map((t) => Object.assign(document.createElement('option'), { value: t })));
+      out.push(fieldsList);
       const spots = SPOTS[m.package ?? 'fancyhdr']!, names: Record<string, string> = { L: 'Left', C: 'Center', R: 'Right', i: 'Inner', c: 'Center', o: 'Outer' };
       const sides = (m.package ?? 'fancyhdr') === 'fancyhdr' && two ? [['O', 'odd pages'], ['E', 'even pages']] : [['O', '']];
       for (const part of ['head', 'foot']) for (const [side, on] of sides) {
         const rows = spots.map((spot) => {
           const row = el('label', 'tv-field');
-          const input = Object.assign(el('input', 'tv-input'), { value: m[part][side + spot] ?? '', spellcheck: false, ariaLabel: `${part} ${names[spot]} ${on}`.trim() });
+          // what the page style in force prints in this field stands in it, grey, until a text is typed (footer centre `\\thepage`)
+          const now = inForce(part, side, spot);
+          const input = Object.assign(el('input', 'tv-input'), { value: m[part][side + spot] ?? '', placeholder: now, spellcheck: false, ariaLabel: `${part} ${names[spot]} ${on}`.trim() });
+          input.setAttribute('list', fieldsList.id);
+          // Tab or → on an empty field takes the text in force, to edit from there
+          input.onkeydown = (e) => { if (!input.value && now && (e.key === 'Tab' || e.key === 'ArrowRight') && !e.shiftKey) { e.preventDefault(); input.value = now; input.oninput?.(new Event('input')); } };
           input.oninput = () => { m[part][side + spot] = input.value; if (!loaded) m.package = used() ? 'fancyhdr' : null; paint(); };
           input.onchange = touch;
           row.append(el('span', '', names[spot]), input);
@@ -3379,6 +3649,10 @@ const satexViews = (() => {
 button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-spec-value:focus-visible { background: color-mix(in srgb, var(--tv-accent) 12%, transparent); color: var(--tv-accent); outline: none; }
 .tv-unit { transition: border-color .12s, background .12s, transform .12s; } .tv-unit.exact b { color: var(--tv-accent); }
 @media (prefers-reduced-motion: reduce) { .tv-unit { transition: none; } .tv-unit:hover { transform: none; } }
+.tv-options { display: grid; gap: .5rem; } .tv-opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .1rem .6rem; max-height: 40vh; overflow: auto; }
+.tv-opt { display: flex; align-items: center; gap: .3rem; font-size: .85rem; } .tv-opt.tv-hint code { color: var(--tv-accent); font-weight: 600; } .tv-opt[hidden] { display: none; }
+.tv-headline { margin: 0; padding: .45rem .6rem; border-radius: 6px; background: var(--tv-sunk); border: 1px solid var(--tv-border); white-space: pre-wrap; word-break: break-all; font-size: .85rem; user-select: all; }
+.tv-samples .tv-button { display: inline-flex; flex-direction: column; align-items: flex-start; gap: .2rem; } .tv-samples .tv-button span { font-size: .78rem; } .tv-sample { height: 1.2rem; width: auto; display: block; }
 .tv-choices { display: grid; gap: .5rem; } .tv-list { display: grid; gap: .2rem; max-height: 50vh; overflow: auto; }
 .tv-choice { font: inherit; display: flex; justify-content: space-between; gap: 1rem; padding: .35rem .6rem; border-radius: 6px; border: 1px solid transparent; background: none; color: var(--tv-fg); cursor: pointer; text-align: left; }
 .tv-choice:hover, .tv-choice:focus { border-color: var(--tv-accent); background: var(--tv-sunk); } .tv-choice span { color: var(--tv-muted); font-family: ui-monospace, monospace; font-size: .8rem; }
@@ -3396,12 +3670,14 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-spec { font-family: ui-monospace, monospace; }
 .tv-specs { display: grid; gap: .1rem; font-family: ui-monospace, monospace; font-size: .75rem; color: var(--tv-muted); }
 .tv-specs b { display: inline-block; min-width: 3.2rem; color: var(--tv-fg); font-weight: 600; }
-.tv-expr { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--tv-muted); } .tv-expr input { flex: 1; font-family: ui-monospace, monospace; }
+.tv-expr { display: flex; align-items: center; gap: .4rem; font-size: .8rem; color: var(--tv-muted); } .tv-expr input { flex: 1; font-family: ui-monospace, monospace; } .tv-expr input.tv-share { flex: 0 0 6rem; accent-color: var(--tv-accent, currentColor); } .tv-expr input.tv-share:disabled { opacity: .35; }
 .tv-defined { display: grid; gap: .45rem; max-height: 16rem; overflow: auto; }
 .tv-band { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; } .tv-band-name { flex: 0 0 100%; font-size: .72rem; color: var(--tv-muted); } .tv-band-name small { opacity: .7; }
 .tv-more { padding-left: .5rem; color: var(--tv-muted); }
 .tv-chip i { width: .9rem; height: .9rem; border-radius: 50%; border: 1px solid #8886; }
 .tv-md { --md-w: 35%; display: grid; grid-template-columns: var(--md-w) .7rem minmax(0, 1fr); height: min(66vh, 38rem); min-height: 20rem; min-width: 0; }
+/* two lists in one view (a manager's kinds and their instances): both fit the dialog */
+.tv-records:has(+ .tv-records) .tv-md, .tv-records + .tv-records .tv-md { height: min(34vh, 22rem); min-height: 13rem; }
 .tv-md-left, .tv-md-right { display: flex; flex-direction: column; gap: .45rem; min-width: 0; min-height: 0; } .tv-md-right { overflow: auto; }
 .tv-md-bar { cursor: col-resize; touch-action: none; position: relative; outline: none; }
 .tv-md-bar::before { content: ''; position: absolute; inset: 0 auto 0 50%; width: 1px; background: var(--tv-border); transition: background .12s, width .12s; }
@@ -3422,6 +3698,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-md-table th.k, .tv-md-table td.k { width: 8rem; } .tv-md-table td { padding: .3rem .4rem; border-bottom: 1px solid color-mix(in srgb, var(--tv-border) 50%, transparent); vertical-align: top; overflow: hidden; }
 .tv-md-table td.m { white-space: nowrap; text-overflow: ellipsis; } .tv-md-table td.m small { display: block; overflow: hidden; text-overflow: ellipsis; color: var(--tv-muted); }
 .tv-md-table tbody tr { cursor: pointer; } .tv-md-table tbody tr:hover { background: color-mix(in srgb, var(--tv-accent) 6%, transparent); } .tv-md-table tr.on { background: color-mix(in srgb, var(--tv-accent) 16%, transparent); }
+td.m > .tv-type { margin-left: .3rem; } .tv-records-head { margin: .8rem 0 .3rem; font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; color: var(--tv-muted); }
 .tv-flag { font-size: .66rem; padding: 0 .3rem; border-radius: 4px; margin-left: .25rem; background: var(--tv-sunk); color: var(--tv-muted); } .tv-flag.warn { background: color-mix(in srgb, #e0a000 22%, transparent); color: inherit; }
 .tv-md-empty { color: var(--tv-muted); padding: 1rem; text-align: center; } .tv-md-title { display: flex; flex-wrap: wrap; gap: .2rem .6rem; align-items: baseline; } .tv-md-title b { font-size: 1rem; }
 .tv-uses-view { display: grid; gap: .3rem; } .tv-uses-list { display: grid; max-height: 11rem; overflow: auto; border-radius: 6px; background: var(--tv-sunk); }
@@ -3445,6 +3722,7 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-style { display: grid; gap: .3rem; padding: .15rem 0; } .tv-style.on { border: 1px solid var(--tv-border); border-radius: 8px; padding: .3rem; background: var(--tv-sunk); }
 .tv-style > .tv-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; gap: .3rem; align-items: center; } .tv-style .tv-choice { min-width: 0; padding: .2rem .4rem; overflow: hidden; } .tv-style .tv-choice span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tv-style-new { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .3rem; } .tv-style-new input { flex: 1 1 7rem; min-width: 0; } .tv-style-new select { flex: 0 1 11rem; min-width: 0; } .tv-draw-side .tv-input { font-size: .82rem; } .tv-styles[open], .tv-draw-side > .tv-mermaid[open] { display: grid; gap: .35rem; }
+.tv-group { display: grid; gap: .3rem; } .tv-button.tv-on:disabled { opacity: 1; cursor: default; border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .tv-beside { display: flex; gap: .2rem; } .tv-beside .tv-button { min-width: 2rem; padding: 0 .4rem; }
 @media (max-width: 760px) { .tv-draw { height: auto; } .tv-draw-main { grid-template-columns: 1fr; } .tv-draw-side { overflow: visible; } .tv-draw-main > .tv-canvas { height: auto; max-height: 55vh; } }
 .tv-muted { color: var(--tv-muted); font-size: .78rem; } .tv-sel { align-items: center; min-height: 2rem; } .tv-sel input { flex: 1; font-size: .88rem; }
@@ -3474,8 +3752,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-path { fill: none; stroke: var(--tv-muted); stroke-width: .03; stroke-dasharray: .1 .07; }
 .tv-kept pre { margin: .15rem 0; padding: .3rem .5rem; border-radius: 6px; background: var(--tv-sunk); font-size: .75rem; white-space: pre-wrap; color: var(--tv-muted); }
 .tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
-.tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
-.tv-forest { height: auto; grid-template-rows: none; } .tv-forest > .tv-canvas { height: clamp(8rem, 30vh, 22rem); min-height: 0; }
+.tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-tree-link path:not(.tv-hit) { stroke-dasharray: .08 .05; } .tv-edge text.tv-edge-label { font: .22px var(--serif, Georgia, serif); }
+.tv-forest-stage { position: relative; } .tv-forest-stage > .tv-canvas { display: block; height: clamp(8rem, 30vh, 22rem); }
+.tv-forest-bar { position: absolute; transform: translateY(-50%); display: flex; gap: 2px; padding: 2px; z-index: 2; background: var(--tv-bg); border: 1px solid var(--tv-border); border-radius: 6px; box-shadow: 0 2px 6px rgb(0 0 0 / .18); }
+.tv-forest-bar[hidden] { display: none; } .tv-forest-bar .tv-tool { min-width: 1.6rem; height: 1.5rem; padding: 0 .3rem; font-size: .8rem; line-height: 1; border: 0; border-radius: 4px; background: transparent; color: var(--tv-fg); cursor: pointer; }
+.tv-forest-bar .tv-tool:hover:not(:disabled), .tv-forest-bar .tv-tool:focus-visible { background: color-mix(in srgb, var(--tv-accent) 18%, transparent); } .tv-forest-bar .tv-tool:disabled { opacity: .4; cursor: default; } .tv-node.dirty rect { stroke: var(--tv-accent); }
+.tv-forest { height: auto; grid-template-rows: none; }
 .tv-forest-form { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .4rem .6rem; align-items: center; }
 .tv-forest-form > .tv-h, .tv-forest-form > .tv-actions, .tv-forest-form > .tv-kept { grid-column: 1 / -1; } .tv-forest-form > .tv-h { margin: .5rem 0 0; } .tv-forest-form > .tv-h:first-child { margin-top: 0; }
 .tv-forest-form > .tv-row { display: contents; } .tv-forest-form > .tv-row > span { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tv-forest-form .sd-err { grid-column: 2; }
@@ -3713,16 +3995,65 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
    * the newest version whose final rows are shown): never older rows, never a preview of a text already final. */
   const rowsWin = (final: number | undefined, version: number | null | undefined, preview: boolean) =>
     version == null || final == null || (preview ? version > final : version >= final);
+  /** One `satex/typesetRows` message (src/lsp/typeset_stream.rs) taken into `wire`: the rows it completes, null while
+   * they are not whole, or 'lost' where they cannot be made (the caller asks for them).
+   * Rows come in parts (`part` from 0, `more` on all but the last); a set is whole once its last part is in, and a part
+   * out of turn loses the set. Final rows (`serial`) are kept as the base later messages name (`base`): the next run's
+   * rows begin with the base's first `keep` rows, which are not sent again; a preview's `patch` puts its `rows` in at
+   * row `at` and drops the base's rows `drop`. A patch of another base says nothing: the final rows follow. */
+  type RowsWire = { parts: { key: string; next: number; rows: Rec[] } | null; base: { uri: string; serial: number; rows: Rec[] } | null };
+  const rowsOf = (wire: RowsWire, p: { uri: string; version?: number | null; rows: Rec[]; preview?: boolean; part?: number; more?: boolean; serial?: number;
+    base?: number; keep?: number; patch?: { base: number; at: number; drop: number[] } }): Rec[] | null | 'lost' => {
+    const based = (serial: number | undefined) => wire.base && wire.base.uri === p.uri && wire.base.serial === serial ? wire.base.rows : null;
+    if (p.patch) {
+      const b = based(p.patch.base), { at } = p.patch;
+      if (!b) return null;
+      const drop = new Set(p.patch.drop);
+      return [...b.slice(0, at), ...p.rows, ...b.slice(at).filter((_, i) => !drop.has(at + i))];
+    }
+    let rows = p.rows;
+    if (p.part !== undefined) {
+      const key = `${p.uri}@${p.version}@${p.serial}@${!!p.preview}`;
+      if (p.part === 0) {
+        const kept = p.keep === undefined ? [] : based(p.base)?.slice(0, p.keep);
+        wire.parts = kept ? { key, next: 0, rows: kept } : null;
+      }
+      const set = wire.parts;
+      if (!set || set.key !== key || set.next !== p.part) { wire.parts = null; return p.more ? null : 'lost'; }
+      set.next++;
+      for (const r of p.rows) set.rows.push(r);
+      if (p.more) return null;
+      wire.parts = null;
+      rows = set.rows;
+    }
+    if (p.serial !== undefined && !p.preview) wire.base = { uri: p.uri, serial: p.serial, rows };
+    return rows;
+  };
   /** Completion lists the playground answers from while the worker is busy (playground.js `completions`). */
   type Completion = { label: string; detail?: string; filterText?: string; sortText?: string; insertText?: string; insertTextFormat?: number; textEdit?: { newText: string };
-    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string } };
+    additionalTextEdits?: unknown[]; args?: string; math?: boolean; doc?: string; data?: { math?: boolean; args?: string | null; doc?: string; prior?: string };
+    labelDetails?: { detail?: string; description?: string } };
   /** A command's snippet from its argument letters (`m` mandatory, `o` optional, `s` star: the lean scope's `args`), as the
-   * server writes one: an optional argument a removable `[options]` field, a mandatory one `{}` with a field, the star left
-   * out. The caret takes the first field, Tab the next. Null without arguments. */
+   * server writes one: a mandatory argument `{}` with a field, what may be left out (`[…]`, the star) left to the writer.
+   * The caret takes the first field, Tab the next. Null without a mandatory argument. */
   const snippet = (label: string, args: string | undefined | null): string | null => {
     let k = 0, out = label;
-    for (const a of args ?? '') if (a === 'm') out += `{$${++k}}`; else if (a === 'o') out += `\${${++k}:[options]}`;
+    for (const a of args ?? '') if (a === 'm') out += `{$${++k}}`;
     return k ? `${out}$0` : null;
+  };
+  /** The arguments a command item shows beside its name (`*[⟨options⟩]{⟨arg⟩}`): the server's signature. */
+  const argShape = (i: Completion): string => i.labelDetails?.detail ?? '';
+  /** What the server said of each name last (its shape, description and snippet), kept so that a list answered from the
+   * kept items during a run shows them as well: `remember` takes the items of an answer, `recall` fills an item from it. */
+  const remember = (memo: Map<string, Completion>, items: Completion[]) => {
+    for (const { textEdit: _, sortText: _s, ...i } of items) if (argShape(i) || docOf(i)) memo.set(i.label, i);
+  };
+  const recall = <T extends Completion>(memo: Map<string, Completion> | undefined, i: T): T => {
+    const m = memo?.get(i.label);
+    if (!m) return i;
+    const doc = docOf(i) || docOf(m), snip = !i.insertText && m.insertText ? { insertText: m.insertText, insertTextFormat: m.insertTextFormat } : {};
+    const bare = !i.detail || i.detail === `\\${i.label}`;
+    return { ...i, ...snip, labelDetails: i.labelDetails ?? m.labelDetails, ...(doc ? { doc } : {}), detail: bare ? m.detail ?? i.detail : i.detail };
   };
   /** Whether a completion item is a math command: the server's flag (lean `math`, an item's `data.math`), else the preview's own
    * table of math symbols (mathlayout.ts), so a list the server never flagged still ranks `\\sum` first in math. */
@@ -3777,11 +4108,34 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   };
   /** The control symbol the caret stands right after (`\\\\`, `\\,`), else null: a `\\` and one non-letter are a whole name
    * (tex.web §354), so no longer name is being typed there. The `\\` must not be the second half of a `\\\\`. */
-  const controlSymbol = (before: string): string | null => {
+  const controlSymbol = (before: string, letters = ''): string | null => {
     const x = before.at(-1);
-    if (!x || /[A-Za-z@\s]/.test(x)) return null;
+    if (!x || /\s/.test(x) || isLetter(x, letters)) return null;
     return /\\*$/.exec(before.slice(0, -1))![0].length % 2 ? x : null;
   };
+  /** The run's letter changes of one file (query `letters`: `{line, col, char, letter}`, line 0 the letters the file
+   * opened with), replayed up to 1-based `line`:`col`: the non-alphabetic characters that are letters there, as the
+   * server's `letters_at`. A file the run never read has none: TeX's own letters only. */
+  type LetterChange = { line: number; col: number; char: string; letter: boolean };
+  const lettersAt = (changes: LetterChange[] | null | undefined, line: number, col: number): string => {
+    let out = '';
+    // in the run's order, as the server replays them (a file read twice is not in place order)
+    for (const c of changes ?? []) if (c.line < line || c.line === line && c.col < col) out = out.replace(c.char, '') + (c.letter ? c.char : '');
+    return out;
+  };
+  /** Whether `c` is a letter (catcode 11) where `letters` are the non-alphabetic ones: a name goes on through it. */
+  const isLetter = (c: string, letters: string) => /\p{Alphabetic}/u.test(c) || letters.includes(c);
+  /** The command name being typed at the end of `before` (`\\su` gives `su`, a lone `\\` gives ''), else null: its
+   * letters are the letters there (tex.web §356), so after `\\sum_` in a document's body (`_` a subscript) no name is
+   * typed. The `\\` must not be the second half of a `\\\\`. */
+  const nameBefore = (before: string, letters: string): string | null => {
+    let k = before.length;
+    while (k > 0 && isLetter(before[k - 1]!, letters)) k--;
+    return k > 0 && before[k - 1] === '\\' && /\\*$/.exec(before.slice(0, k))![0].length % 2 ? before.slice(k) : null;
+  };
+  /** Whether a command named `label` can be typed where `letters` are the letters: every character of a longer name a
+   * letter there (`\\c__fp_…` under `\\ExplSyntaxOn` only, `\\c__socket_x/y` nowhere), a control symbol always. */
+  const typeable = (label: string, letters: string) => [...label].length < 2 || [...label].every((c) => isLetter(c, letters));
   /** `name` typed in full, and taking item `i` (the server's, with its snippet) writes nothing more (`\\noindent`: no
    * braces, no load): Enter after it is the key's own new line, not the item. A prefix or a name with arguments takes it. */
   const whole = (i: Completion | undefined | null | false, name: string): boolean => !!i && i.label === name
@@ -3796,21 +4150,30 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
   const subsequence = (text: string, typed: string) => { let k = 0; for (const c of text) if (c === typed[k]) k++; return k === typed.length; };
   const closeness = (i: Completion, typed: string) => {
     const label = i.label.toLowerCase(), found = (i.filterText ?? '').toLowerCase();
-    return label === typed ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
+    // one letter typed starts a name: `\\t` is the start of `\\textbf` far more often than the tie accent `\\t`
+    return label === typed && typed.length > 1 ? -1 : label.startsWith(typed) ? 0 : label.includes(typed) ? 1 : found.includes(typed) ? 2 : subsequence(label, typed) ? 3 : null;
   };
   /** LSP's `sortText` order: by code point, as the server sorts (`~` after digits); `localeCompare` puts `~` first. */
   const byCode = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
   /** `math`: the caret is in math, so math commands come first among equally close ones, text ones after them. */
+  // a name only a package the document does not load defines (its item loads it: `\\textb` of drm) comes after every
+  // name the document has, however close: what the document loads and uses first (user 2026-11-21)
+  const unloaded = (i: Completion) => i.additionalTextEdits?.length || /^~/.test(i.sortText ?? '') ? 1 : 0;
+  /** The server's rank of a command whatever is typed (tier, the document's uses, the seed of common commands): kept
+   * with the item, so a list answered from kept items ranks as the server does; `~` (after digits) where none. */
+  const prior = (i: Completion): string => i.data?.prior ?? '~';
+  const cased = (i: Completion, typed: string) => i.label.startsWith(typed) ? 2 : i.label.includes(typed) ? 1 : 0;
   const rank = <T extends Completion>(items: T[], typed: string, math = false): T[] => items
     .map((i) => [i, tier(i) + (math ? (mathItem(i) ? -3 : 3) : 0), closeness(i, typed.toLowerCase())] as const).filter((x) => x[2] !== null)
-    .sort((a, b) => a[2]! - b[2]! || a[1] - b[1] || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
+    // the case typed decides between equally close names: `\\Blind` takes `Blinddocument` before `blinddocument`
+    .sort((a, b) => unloaded(a[0]) - unloaded(b[0]) || a[2]! - b[2]! || cased(b[0], typed) - cased(a[0], typed) || a[1] - b[1] || byCode(prior(a[0]), prior(b[0])) || byCode(a[0].sortText ?? '', b[0].sortText ?? '') || a[0].label.length - b[0].label.length || a[0].label.localeCompare(b[0].label)).map((x) => x[0]);
   /** The kept list of a kind of place: the server's last items there, then the names in force it lacks (no snippet, they
    * add only names). An item asked elsewhere replaces no range here: its text goes in at the cursor's word, and the
    * server's order there (`sortText`, for another word) ranks nothing here: `\\emp` takes `emph` before `empty`. */
-  const kept = (served: Completion[] | undefined, names: Completion[] | undefined) => {
+  const kept = (served: Completion[] | undefined, names: Completion[] | undefined, memo?: Map<string, Completion>) => {
     const have = new Set((served ?? []).map((i) => i.label)), both = [...(served ?? []), ...(names ?? []).filter((n) => !have.has(n.label))];
-    // a name in force brings its arguments' snippet from its `args`
-    const filled = (i: Completion) => { const s = !i.insertText && snippet(i.label, i.args); return s ? { ...i, insertText: s, insertTextFormat: 2 } : i; };
+    // what the server said of a name last, else a name in force's snippet from its `args`
+    const filled = (i: Completion) => { i = recall(memo, i); const s = !i.insertText && snippet(i.label, i.args); return s ? { ...i, insertText: s, insertTextFormat: 2 } : i; };
     return served || names ? both.map(({ textEdit, sortText: _, ...i }) => filled(textEdit ? { ...i, insertText: i.insertText ?? textEdit.newText } : i)) : null;
   };
   /** The selection of a list refreshed under the person's eyes: the item of the same label, else the first. */
@@ -3842,6 +4205,6 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
     }
     return out;
   };
-  return { followRows, rowsWin, complete: { rank, kept, reselect, controlSymbol, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
+  return { followRows, rowsWin, rowsOf, complete: { rank, kept, remember, recall, shapeOf: argShape, reselect, controlSymbol, lettersAt, isLetter, nameBefore, typeable, whole, snippet, mathItem, docOf, plainSnippet, opensArgument, stepsOver, previewOf, tikzTarget }, loads: { unlanded, lacked }, tipBag, yaml, history: { historyEvent }, render, RENDER, hue, passes, masterDetail, usesView, fold, SPEC, mix, colorBand, oklch, drawing: { expandStyles, STYLE_DEF, parse, emit, plain, mermaidIn, mermaidOut, mermaidLoss, layout, importMermaid, tipsOf, toMatrix, cellPlaces, toLayer, picOptions, relocate, relPos, nearestAnchor, anchorAt, tipMarker, shapeSample, shapeList, cycle, STYLE }, forest: forestFns, circuit: { parse: cParse, body: cBody, emit: cEmit }, page: { pageOf, pageBox, textArea, styleNow, taggedNote, pageNodes, numberNodes, numberInForce, headerOf, headerCalls, headerNodes, footSetup, fmtRead, fmtWrite, styleNodes, styleSet, styleEdits }, dev: { traceCsv, stateHtml }, templates: { fill, filled, chosen } };
 })();
 self.satexViews = satexViews;

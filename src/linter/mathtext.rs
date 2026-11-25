@@ -49,7 +49,8 @@ Fix by writing `\\[ … \\]`.",
         explanation: "\
 `^` and `_` attach the single next token to the atom before them (The TeXbook,
 chapter 16).  `x^12` sets the exponent 1 and then a 2 of its own size, and
-`(a+b)^2` puts the exponent on the closing parenthesis alone.
+`(a+b)^2` puts the exponent on the closing parenthesis alone. That last one is
+the usual notation and looks as meant, so it is only a note.
 
 The rule lexes the source with TeX's own mouth where the run really was in
 math mode, so a `^` under another catcode regime is not one, and
@@ -491,12 +492,10 @@ fn math_script_braces(report: &mut Report) {
         }
     }
     for finding in findings {
-        report.add_fix(
-            finding.span,
-            finding.name,
-            finding.message,
-            Fix::new(finding.fix, Applicability::Safe, finding.edits),
-        );
+        // `(a+b)^2` is the usual notation and sets as the author means: a note, never a warning
+        let severity = if finding.name == "bracket" { Severity::Info } else { Severity::Warning };
+        let fix = Fix::new(finding.fix, Applicability::Safe, finding.edits);
+        report.add_fix_as(severity, finding.span, finding.name, finding.message, fix);
     }
 }
 
@@ -752,9 +751,36 @@ fn source_char_before(edits: &Edits, span: Span) -> Option<char> {
 /// (source2e, ltdefns.dtx).
 fn sets_letters(analysis: &Analysis, word: &str) -> bool {
     [word.to_string(), format!("{word} ")].iter().any(|name| match meaning_of(analysis, name) {
-        Meaning::Macro(mac) => mac.arity() == 0 && body_sets(&mac.replacement_text, word),
+        Meaning::Macro(mac) => {
+            mac.arity() == 0
+                && body_sets(&mac.replacement_text, word)
+                && reaches_mathop(analysis, &mac.replacement_text)
+        }
         _ => false,
     })
+}
+
+/// Whether a replacement text reaches TeX's `\mathop` (The TeXbook, chapter 17) through the
+/// macros it names: `\log` and a `\DeclareMathOperator` name do, `\section`, whose body
+/// also holds the word `section`, does not.
+fn reaches_mathop(analysis: &Analysis, body: &[Token]) -> bool {
+    use crate::engine::builtins::Syntax;
+    let mut seen = HashSet::default();
+    let mut work: Vec<Sym> = body.iter().filter_map(Token::cs).collect();
+    // each macro once: the walk ends, and runs only for a word some macro's body sets
+    while let Some(sym) = work.pop() {
+        if !seen.insert(sym) {
+            continue;
+        }
+        let meaning = analysis.env.meaning(sym);
+        if meaning.prim() == Some(Primitive::Command(Syntax::MathComp(1))) {
+            return true;
+        }
+        if let Some(mac) = meaning.as_macro() {
+            work.extend(mac.replacement_text.iter().filter_map(Token::cs));
+        }
+    }
+    false
 }
 
 /// Whether a replacement text holds `word` as one run of character tokens.
@@ -906,6 +932,10 @@ fn between_numbers(view: &View, at: usize) -> Option<String> {
         return None;
     }
     let start = left + 1 - view.word_before(left + 1).chars().count();
+    // A letter before the digits makes one identifier (`w120x5`), no dimension.
+    if view.char_at(start).is_some_and(char::is_alphabetic) {
+        return None;
+    }
     let end = right + view.word_after(right).chars().count();
     Some(view.slice(start..end).to_string())
 }

@@ -68,6 +68,10 @@ Lists the places the run could not interpret, grouped by cause. Widened recursio
 
 {{run(6): satex query gaps -f doc/src/wiki/challenges/06-unknown.tex}}
 
+## letters
+
+Where a punctuation character becomes a letter (catcode 11) or stops being one, per file of the project, at the user's line that caused it (`\makeatletter`, `\ExplSyntaxOn`). Line 0 holds the letters a file opened with (`@` in a package). Replayed up to a place, the records give the characters a command's name may hold there. Completion uses them to end the name typed (after `\sum_` in a body none is typed) and to offer only names typeable there, and the playground's editor colors command names by them.
+
 ## occurrences
 
 Package and class identification banners, passed options, and other one-off events.
@@ -121,6 +125,7 @@ Only the places that stand behind an expansion, for a text the document never wr
 ## project
 
 The document class, engine, and build configuration SaTeX detected or was told to assume (see [profiles](configuration.md#profiles)).
+The first row's `kernel` is the LaTeX kernel's release the run read (`\fmtversion`). The playground's writers use it (`\mathcolor` from 2022-06).
 
 The rows below list what the project scan found, without what `.gitignore` excludes.
 `unreachable` lists the inputs, packages, classes and bibliographies no root reads.
@@ -167,7 +172,7 @@ Every step: which macro expanded, which primitive ran, what changed. Use `satex 
 | `paired` | the names a join kept paired across its arms, and how many arms |
 | `catcodes` | the catcode of each non-alphanumeric character in the file text ahead |
 
-A `value` names its type in the [`Ty` lattice](Domains#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
+A `value` names its type in the [`Ty` lattice](domains.md#argument-types-the-ty-lattice) (`number`, `dimen`, `glue`, `muglue`, `quantity`, `text`, `any`) and what satex knows about its value: `exact`, an `interval` `[lo, hi]`, a `set`, or `unknown`. Typed unknown text appears as its own names (`unknown digits:0..1439`). `limits.trace_state` caps each list. In the playground, *dev mode* in the settings turns this on: the trace shows the domains of the selected step, the editor menu offers *Inspect state here*, and the trace exports as JSON or CSV.
 
 ## exports
 
@@ -175,17 +180,17 @@ The names the installed packages define, read off their text, each with the file
 
 ## tagging
 
-PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX. Nothing without `\DocumentMetadata`. The tagging lints read the same facts.
+PDF tagging as `\DocumentMetadata` set it up, read from the run with the kernel's own `\GetDocumentProperties`: whether tagging is on and under which engine, the PDF standards claimed (`UA-2`, `A-4F`), the language (and, under `set`, the one the preamble wrote, before LaTeX guesses one), the title the XMP gets, and the PDF version. `running` is the tagging code's own answer at `\begin{document}` (`\tag_if_active:TF`), which `\tagpdfsetup` can turn against the declaration. `modules` are the tagging code's files the run read, `marked` the marked-content sequences it wrote by tag (pdfTeX). Then each loaded package and class with its status in TeX Live's `latex-tagging-status.ltx`, which satex runs as TeX: `unlisted` where the list has no entry. Without `\DocumentMetadata` only these statuses: what turning tagging on would meet. An installation without the list gives none. The tagging lints read the same facts.
 
 ## type-plugins
 
-The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](Type-plugins) for what each does.
+The editor's type plugins this run would offer: each plugin, its category, the types it triggers on and its features. See [type plugins](type-plugins.md) for what each does.
 
 {{run(6): satex query type-plugins -f samples/paper.tex}}
 
 ## typeset
 
-The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](Challenges) compare it with what pdflatex sets.
+The text satex computes for the typeset document, one row per paragraph, then the named assumptions it rests on. `{a|b}` is a choice between the arms of an undecided conditional. `⟦x⟧` is text set in a box: it reaches the page only if the box is used. `⟨?⟩` is a character the run could not know. `│` is a table's `|`, `―` an `\hline` or other `\hrule`, `▬` a `\rule` bar. Rules of no width (struts) are left out. The [challenges](challenges.md) compare it with what pdflatex sets.
 
 {{run(6): satex query typeset -f doc/src/wiki/challenges/04-typesetting.tex}}
 

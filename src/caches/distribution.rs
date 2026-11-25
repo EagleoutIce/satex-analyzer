@@ -47,16 +47,21 @@ pub struct Distribution {
 }
 
 impl Distribution {
+    /// The installation, as a finding names it: the same whether its index was cached or not.
     pub fn describe(&self) -> String {
         let year = self.year.map_or_else(|| "unknown".into(), |y| y.to_string());
         let format = self.format_version.as_deref().unwrap_or("unknown");
         format!(
-            "TeX Live {year}, LaTeX2e {format}, {} trees via {}, {} files indexed{}",
+            "TeX Live {year}, LaTeX2e {format}, {} trees via {}, {} files indexed",
             self.roots.len(),
             self.discovery.as_str(),
             self.indexed,
-            if self.index_cached { " (cached)" } else { "" }
         )
+    }
+
+    /// [`Distribution::describe`], and whether the index was cached: for a status line.
+    pub fn status(&self) -> String {
+        format!("{}{}", self.describe(), if self.index_cached { " (cached)" } else { "" })
     }
 }
 
@@ -102,6 +107,21 @@ impl Trees {
     pub fn get(&self, file: &str) -> Option<&PathBuf> {
         self.index.get(file)?.iter().find(|path| path.is_file())
     }
+
+    /// Where a name with folders in it is (`thumbnails/x.jpeg`): the first
+    /// file of that name whose path ends in those folders, as kpathsea
+    /// matches such a name against the directories of its `ls-R`. A name
+    /// that leaves its folder (`../x`, `/x`) is no tree's. Of the one file
+    /// per name and tree the index keeps: a namesake elsewhere in the tree
+    /// can hide it, and the name is then not found (as before).
+    pub fn get_under(&self, name: &str) -> Option<&PathBuf> {
+        use std::path::Component::Normal;
+        let rel = Path::new(name);
+        if !rel.components().all(|c| matches!(c, Normal(_))) {
+            return None;
+        }
+        self.index.get(rel.file_name()?.to_str()?)?.iter().find(|path| path.ends_with(rel) && path.is_file())
+    }
 }
 
 /// The installation's file names ending in `ext` (`.cls`) under `dir` of
@@ -146,6 +166,11 @@ pub fn files_with(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {
         .collect();
     files.sort();
     files
+}
+
+/// Whether the index of `roots` (their ls-R files, the playground's bundle) names a file `name`.
+pub fn has_file(roots: &[PathBuf], name: &str) -> bool {
+    index_for(roots, None).0.get(name).is_some_and(|paths| !paths.is_empty())
 }
 
 /// Which index `roots` have now: changes when they are indexed again, so a
@@ -226,16 +251,28 @@ fn roots_without_bundle(request: &Request, cache: Option<&Path>) -> Roots {
     if !request.probe_fallback {
         return (Vec::new(), Discovery::None);
     }
-    let roots = fallback_roots(request.year, request.platform);
+    let tex = crate::project::paths::which("tex").ok().and_then(|t| t.canonicalize().ok());
+    let roots = fallback_roots(request.year, request.platform, tex.as_deref().and_then(installation_of));
     let discovery = if roots.is_empty() { Discovery::None } else { Discovery::Fallback };
     (roots, discovery)
 }
 
-fn fallback_roots(year: Option<u32>, platform: Platform) -> Vec<PathBuf> {
+/// The TeX Live tree of the installation whose `bin/<arch>/` holds `tex`.
+fn installation_of(tex: &Path) -> Option<PathBuf> {
+    let tree = tex.ancestors().nth(3)?.join("texmf-dist");
+    tree.is_dir().then_some(tree)
+}
+
+/// The well-known trees. Without a year asked for, the installation whose
+/// `tex` is on the path (`on_path`) stands for every versioned one: the
+/// engine that runs is that one, whatever newer release is installed.
+fn fallback_roots(year: Option<u32>, platform: Platform, on_path: Option<PathBuf>) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     // More than one personal tree can exist per platform; probe each.
     roots.extend(platform.home_trees().into_iter().filter(|tree| tree.is_dir()));
-    for pattern in platform.roots() {
+    let on_path = on_path.filter(|_| year.is_none());
+    roots.extend(on_path.clone());
+    for pattern in platform.roots().iter().filter(|p| on_path.is_none() || !p.contains('*')) {
         // A pattern matches one directory per installed version: the wanted
         // year wins, otherwise the newest.
         let mut found: Vec<PathBuf> =
@@ -646,6 +683,45 @@ mod tests {
         std::fs::write(real.join("ls-R"), "./tex/latex/x:\nx.sty\n").unwrap();
         let trees = discover(&Request { roots: vec![stale, real.clone()], ..Request::default() });
         assert_eq!(trees.get("x.sty"), Some(&real.join("tex/latex/x/x.sty")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Intuition: kpathsea finds `thumbnails/x.jpeg` in a tree by the
+    /// folders the name spells, wherever they hang. Pins a false
+    /// missing-graphic on Elsevier's CAS class, which loads its e-mail icon
+    /// that way; a name that climbs out (`../x`) stays no tree's.
+    #[test]
+    fn a_name_with_folders_is_found_under_them() {
+        let dir = std::env::temp_dir().join(format!("satex-under-{}", std::process::id()));
+        let at = dir.join("tex/latex/pack/thumbnails");
+        std::fs::create_dir_all(&at).unwrap();
+        std::fs::write(at.join("x.jpeg"), "").unwrap();
+        let trees = discover(&Request { roots: vec![dir.clone()], ..Request::default() });
+        assert_eq!(trees.get_under("thumbnails/x.jpeg"), Some(&at.join("x.jpeg")));
+        assert_eq!(trees.get_under("pack/thumbnails/x.jpeg"), Some(&at.join("x.jpeg")));
+        assert_eq!(trees.get_under("nails/x.jpeg"), None);
+        assert_eq!(trees.get_under("../thumbnails/x.jpeg"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Intuition: with no year asked for, the fallback takes the tree of the TeX Live whose
+    /// `tex` runs, not the newest under `/usr/local/texlive`. Bug: an older release first on
+    /// the path was analysed against the newest's files (fonts it lacks found).
+    #[test]
+    fn the_fallback_takes_the_installation_on_the_path() {
+        let dir = std::env::temp_dir().join(format!("satex-onpath-{}", std::process::id()));
+        let bin = dir.join("2019/bin/x86_64-linux");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(dir.join("2019/texmf-dist")).unwrap();
+        std::fs::write(bin.join("tex"), "").unwrap();
+        let tree = installation_of(&bin.join("tex"));
+        assert_eq!(tree, Some(dir.join("2019/texmf-dist")));
+        let roots = fallback_roots(None, Platform::Linux, tree.clone());
+        assert!(roots.contains(&dir.join("2019/texmf-dist")), "{roots:?}");
+        assert!(!roots.iter().any(|r| r.starts_with("/usr/local/texlive/") && r.ends_with("texmf-dist")), "{roots:?}");
+        // a year asked for still wins
+        assert!(!fallback_roots(Some(2019), Platform::Linux, tree).contains(&dir.join("2019/texmf-dist")));
+        assert_eq!(installation_of(Path::new("/usr/bin/tex")), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

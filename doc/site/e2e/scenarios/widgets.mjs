@@ -1,5 +1,10 @@
 import { FM, is, after, KINDS, at } from './sources.mjs';
 
+/** A 3x3 tabular: rules around and inside, a centred and a right column. */
+/** A booktabs tabularx: `@{}` ends, an X column, a span over two columns with a \cmidrule under it, a `\\[2pt]`. */
+const TABLEX = '\\documentclass{article}\n\\usepackage{booktabs,tabularx}\n\\begin{document}\n\\begin{tabularx}{\\linewidth}{@{}lXr@{}}\n\\toprule\nName & Notes & Cost \\\\\n\\midrule\nAlpha & \\multicolumn{2}{c}{Wide} \\\\\n\\cmidrule(lr){2-3}\nBeta & text & 3 \\\\[2pt]\n\\bottomrule\n\\end{tabularx}\n\\end{document}\n';
+const TABLE3 = '\\documentclass{article}\n\\begin{document}\nSome text above.\n\n\\begin{tabular}{|l|cr|}\n\\hline\nAlpha & Beta & Gamma \\\\\n\\hline\nDelta & Eps & Zeta \\\\\nEta & Theta & Iota \\\\\n\\hline\n\\end{tabular}\n\n\\end{document}\n';
+
 export default [
   // a table column's letter changed from its chip menu
   // the user's 18:18 report: the middle column of thesis chapter.tex's {lrr} set to c must write {lcr}, never a p{…}
@@ -7,6 +12,52 @@ export default [
     steps: 'thesis.tex, chapter.tex opened; widths layer on; hover the table of Table 1, open the middle column\'s ⋯ menu, choose c: the source says {lcr}, nothing stray drawn on the page' },
   { kind: 'col', name: 'col-align', source: KINDS, example: 'hello.tex', word: is('cellword'), to: 'c', spec: /\\begin\{tabular\}\{cl\}/, pages: 1, maxMut: 12,
     steps: 'a doc with a tabular{ll}; widths layer on; hover the table, open column 1\'s ⋯ menu, choose c: the source says {cl}, the old page stays shown at full opacity, one swap when the build lands, the chips never vanish or dim' },
+  // a table's rows and columns from the page: the bars of the pointer's column and row, drags, the cell menu
+  { kind: 'tableops', name: 'table-col-insert', source: TABLE3, example: 'hello.tex', word: is('Alpha'), act: { what: 'col', k: 0, act: 'insert', at: 1 }, cols: 4, shot: true,
+    want: /\\begin\{tabular\}\{\|l\s*l\|c\s*r\|\}[^]*Alpha\s*&\s*&\s*Beta\s*&\s*Gamma/,
+    steps: 'a 3x3 tabular{|l|cr|}; widths layer on; the pointer on Alpha shows column 1\'s bar under the table and row 1\'s left of it, no other, none over the text above; its right +: 4 columns, the next build shows 4 chips' },
+  { kind: 'tableops', name: 'table-col-insert-rules', source: TABLEX, example: 'hello.tex', word: is('text'), act: { what: 'col', k: 1, act: 'insert', at: 2 },
+    want: /\{@\{\}lXXr@\{\}\}[^]*\\toprule[^]*Name\s*&\s*Notes\s*&\s*&\s*Cost[^]*\\midrule[^]*Alpha\s*&\s*\\multicolumn\{3\}\{c\}\{Wide\}[^]*\\cmidrule\(lr\)\{2-4\}[^]*Beta\s*&\s*text\s*&\s*&\s*3\s*\\\\\[2pt\][^]*\\bottomrule/,
+    steps: 'a booktabs tabularx {@{}lXr@{}} with a \\multicolumn{2}, a \\cmidrule(lr){2-3} and a \\\\[2pt]; insert right of the X column: {@{}lXXr@{}}, the span 3, the cmidrule 2-4, the row end and rules kept' },
+  { kind: 'tableops', name: 'table-col-drag', source: TABLE3, example: 'hello.tex', word: is('Alpha'), act: { what: 'col', k: 0, to: is('Gamma') },
+    want: /\\begin\{tabular\}\{\|cr\|l\|\}[^]*Beta\s*&\s*Gamma\s*&\s*Alpha/,
+    steps: 'the same table; drag column 1\'s chip onto Gamma\'s column: {|cr|l|}, the inner rule went with l until it became last, the outer rules stay; every row follows' },
+  { kind: 'tableops', name: 'table-col-drag-cline', source: TABLE3.replace('Gamma \\\\\n\\hline', 'Gamma \\\\\n\\cline{1-1}'), example: 'hello.tex', word: is('Alpha'), act: { what: 'col', k: 0, to: is('Beta') }, shot: true,
+    want: /\\begin\{tabular\}\{\|cl\|r\|\}[^]*Beta\s*&\s*Alpha\s*&\s*Gamma\s*\\\\\s*\\cline\{2-2\}/,
+    steps: 'a \\cline{1-1} under row 1; drag column 1 onto column 2: {|cl|r|} (the | goes with l), the \\cline follows to {2-2}' },
+  { kind: 'tableops', name: 'table-row-drag', source: TABLE3, example: 'hello.tex', word: is('Alpha'), act: { what: 'row', k: 0, to: is('Eta') }, shot: true,
+    want: /\\hline\s*Delta[^]*\\\\\s*Eta[^]*\\\\\s*\\hline\s*Alpha[^]*\\hline/,
+    steps: 'the same table; drag row 1\'s grip onto Eta: the rows read Delta, Eta, Alpha; the \\hline under Alpha went with it, the top and bottom rules stay' },
+  { kind: 'tableops', name: 'table-row-drag-rules', source: TABLEX, example: 'hello.tex', word: is('Name'), act: { what: 'row', k: 0, to: is('Alpha') },
+    want: /\\toprule\s*Alpha[^]*\\cmidrule\(lr\)\{2-3\}\s*Name[^]*\\midrule\s*Beta[^]*\\\\\[2pt\]/,
+    steps: 'booktabs: drag the header row onto Alpha: \\toprule stays on top, the header\'s \\midrule goes under it, Alpha\'s \\cmidrule under Alpha, Beta keeps its \\\\[2pt]' },
+  { kind: 'tableops', name: 'table-row-shared-line', source: TABLE3.replace('Zeta \\\\\nEta', 'Zeta \\\\ Eta'), example: 'hello.tex', word: is('Eta'), act: { what: 'row', k: 2, to: is('Delta') },
+    want: /\\hline\s*Eta\s*&\s*Theta\s*&\s*Iota\s*\\\\\s*Delta\s*&\s*Eps\s*&\s*Zeta/,
+    steps: 'rows 2 and 3 on one source line; each still gets its own grip (told apart by baseline); drag row 3 onto row 2: Eta before Delta' },
+  { kind: 'tableops', name: 'table-row-insert', source: TABLE3, example: 'hello.tex', word: is('Delta'), act: { what: 'row', act: 'insert', at: 2, between: [is('Delta'), is('Eta')] }, shot: true,
+    want: /Delta & Eps & Zeta \\\\\n\s*&\s*&\s*\\\\\n\s*Eta/,
+    steps: 'the same table; the pointer walks from Delta left along the line between rows 2 and 3 to its + in the gutter and clicks it: an empty row between Delta and Eta' },
+  { kind: 'tableops', name: 'table-row-delete', source: TABLE3, example: 'hello.tex', word: is('Eps'), act: { what: 'row', k: 1, act: 'delete', at: 1 },
+    want: /\\hline\s*Alpha[^]*\\\\\s*\\hline\s*Eta & Theta & Iota/,
+    steps: 'the same table; the pointer walks from Eps to its row\'s × left of the table and clicks it: the Delta row goes, the rules stay' },
+  { kind: 'tableops', name: 'table-edge-drag-calm', source: TABLE3, example: 'hello.tex', word: is('Beta'), act: { what: 'col', edge: 1 }, shot: true,
+    steps: 'the same table; at rest on Beta its column\'s controls show; the pointer walks to column 2\'s edge and drags it over the cells, below and back: no bar, +, × or grip shows while the button is held' },
+  // an empty cell clicked in Type mode takes the caret: the user's 20:30 report, no caret where no word stood
+  { kind: 'cellclick', name: 'table-empty-cell-type', source: TABLE3.replace('Delta & Eps & Zeta', 'Delta &  & Zeta'), example: 'hello.tex', left: is('Delta'), right: is('Zeta'), type: 'x',
+    want: /Delta\s*&\s*x\s*&\s*Zeta/,
+    steps: 'a 3x3 tabular whose middle cell is empty; click it: a caret in it; type x: the source reads Delta & x & Zeta and the next build sets x' },
+  { kind: 'cellclick', name: 'table-tilde-cell-type', source: TABLE3.replace('Eta & Theta & Iota', 'Eta & ~ & Iota'), example: 'hello.tex', left: is('Eta'), right: is('Iota'), type: 'y',
+    want: /Eta\s*&\s*~y\s*&\s*Iota/,
+    steps: 'a cell holding only ~; click it: the caret after the ~; type y: Eta & ~y & Iota, the build sets y' },
+  { kind: 'tableops', name: 'table-col-delete-span', source: TABLE3.replace('Beta & Gamma', '\\multicolumn{2}{c|}{Wide}'), example: 'hello.tex', word: is('Zeta'), act: { what: 'col', k: 2, act: 'delete', at: 2 },
+    want: /\\begin\{tabular\}\{\|l\|c\|\}[^]*Alpha\s*&\s*(\\multicolumn\{1\}\{c\|\}\{Wide\}|Wide)\s*\\\\[^]*Delta\s*&\s*Eps\s*\\\\/,
+    steps: 'row 1 holds \\multicolumn{2}{c|}{Wide} over columns 2-3; delete column 3 from its bar: the span shrinks to 1, Wide kept, the other rows lose their third cell' },
+  { kind: 'tableops', name: 'table-menu-row', source: TABLE3, example: 'hello.tex', word: is('Eps'), act: { what: 'col', k: 1, menu: ['Row', 'Insert below'] }, shot: true,
+    want: /Delta & Eps & Zeta \\\\\n\s*&\s*&\s*\\\\\n\s*Eta/,
+    steps: 'the same table; right click Eps, Row ▸ Insert below: an empty row of 3 cells between Delta and Eta' },
+  { kind: 'tstable', name: 'table-ts-menu', source: TABLE3, example: 'hello.tex', cell: 'Eps', menu: ['Column', 'Delete column'],
+    want: /\\begin\{tabular\}\{\|l\|r\|\}[^]*Alpha\s*&\s*Gamma[^]*Delta\s*&\s*Zeta/,
+    steps: 'the same table in the Typeset view; right click Eps, Column ▸ Delete column: {|l|r|}, every row loses its middle cell' },
   // forest nodes in the PDF: a right click on a node's word, its menu as a TikZ node's (shape, frame, tree edits)
   { kind: 'forest', name: 'forest-child', source: FM, example: 'hello.tex', word: is('Engine'), choose: 'Add child', want: /\[Engine, fm mandatory, fm alternative \[Electric\] \[Gas\]\s*\[new\]\]/,
     steps: 'feature-model.tex, PDF; right click the node Engine, Add child: a [new] child after Gas, nothing else changed' },
@@ -16,6 +67,10 @@ export default [
     steps: 'feature-model.tex, PDF; hover the node Engine, its +↓ button: a [new] child after Gas' },
   { kind: 'forest', name: 'forest-plus-sibling', source: FM, example: 'hello.tex', word: is('Radio'), plus: 'sibling', want: /\[Radio\]\s*\[new\]\s*\[Navigation\]/,
     steps: 'feature-model.tex, PDF; hover the node Radio, its +→ button: a [new] node between Radio and Navigation' },
+  { kind: 'forest', name: 'forest-plus-glide', source: FM, example: 'hello.tex', word: is('Radio'), plus: 'right', glide: true, want: /\[Navigation\]\s*\[Radio\]\]/,
+    steps: 'feature-model.tex, PDF; hover the node Radio, glide the pointer over the gap to its → button and click: Radio after Navigation (the toolbar vanished on the way)' },
+  { kind: 'forest', name: 'forest-feature-edge', source: FM, example: 'hello.tex', word: is('Body'), plus: 'feat-edge', glide: true, want: /\[Body, fm optional\]/,
+    steps: 'feature-model.tex, PDF; hover the node Body, its ● toggle (the run found fm mandatory and fm optional): Body becomes optional' },
   { kind: 'forest', name: 'forest-drag-after', source: FM, example: 'hello.tex', word: is('Radio'), plus: 'drag', to: is('Navigation'), want: /\[Navigation\]\s*\[Radio\]\]/,
     steps: 'feature-model.tex, PDF; hover the node Radio, drag its ⠿ handle onto the right part of Navigation: [Navigation] [Radio], one undo step' },
   { kind: 'forest', name: 'forest-look-lsep', source: FM, example: 'hello.tex', word: is('Engine'), choose: ['Feature model look', 'Level distance (l sep)', '12mm'], outside: true,

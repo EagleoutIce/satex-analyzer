@@ -507,7 +507,9 @@ impl Search<'_> {
             .sum();
         let total = self.tokens(a0, a1).max(self.tokens(b0, b1)).max(1);
         let units = (a1 - a0).max(b1 - b0);
-        let lines = |from: u32, to: u32| self.u[to as usize - 1].end.line - self.u[from as usize].start.line + 1;
+        // a place whose units come from different files may end on an earlier line than it starts
+        let lines =
+            |from: u32, to: u32| self.u[to as usize - 1].end.line.saturating_sub(self.u[from as usize].start.line) + 1;
         shared as usize >= self.cfg.min_tokens
             && f64::from(total - shared) <= self.cfg.max_value_share * f64::from(total)
             && f64::from(pair.matched()) >= self.cfg.similarity * f64::from(units)
@@ -625,10 +627,18 @@ fn clones(report: &mut Report) {
     let start = report.index().document_start();
     let mut lexer = Lexer::new(cfg);
     let mut texts: HashMap<FileId, Rc<Text>> = HashMap::default();
+    // a document file that sets no text only defines (`stats.tex` a script writes): its lines repeat
+    // by nature, as a table of values does
+    let data_files = crate::linter::shared::definition_files(analysis, &report.edits());
     for file in verbatim::files(analysis, sources) {
         let path = analysis.file_name(file.id);
         let file_path = std::path::Path::new(path);
-        if crate::linter::written_by_run(path)
+        let package_file = matches!(
+            analysis.files.get(file.id as usize).map(|f| f.kind),
+            Some(crate::engine::builtins::LoadKind::Package | crate::engine::builtins::LoadKind::Class)
+        );
+        if (!package_file && data_files.contains(&file.id))
+            || crate::linter::written_by_run(path)
             || !crate::engine::loader::tex_source(file_path)
             || frozen.holds(file_path)
         {
@@ -873,8 +883,14 @@ fn same_bodies(report: &mut Report) {
     let mut seen: HashMap<String, (crate::engine::tex::Sym, Span)> = HashMap::default();
     let mut names: HashSet<crate::engine::tex::Sym> = HashSet::default();
     let mut found = Vec::new();
+    // two values of a data file that happen to be equal are no copy
+    let data_files = crate::linter::shared::definition_files(analysis, &report.edits());
     for def in &analysis.facts.defs {
-        if def.tag != "macro" || !index.own_definition(def) || index.implements_sibling(def) || !names.insert(def.name)
+        if def.tag != "macro"
+            || !index.own_definition(def)
+            || index.implements_sibling(def)
+            || data_files.contains(&def.span.file)
+            || !names.insert(def.name)
         {
             continue;
         }

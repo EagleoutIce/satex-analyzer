@@ -329,7 +329,7 @@ impl Gui {
         let started = std::time::Instant::now();
         let mut command = Command::new(std::env::current_exe().unwrap_or_else(|_| "satex".into()));
         command.args(&self.flags).args(strings(&ask["args"])).current_dir(self.cwd(&ask["cwd"]));
-        let Ok(out) = compile::output_unless(&mut command, || false) else {
+        let Ok(out) = compile::output_unless(&mut command, || None) else {
             return json!({ "lines": [["err", "satex did not start"]], "status": "aborted", "ms": 0 });
         };
         let lines = |kind: &str, bytes: &[u8]| -> Vec<Value> {

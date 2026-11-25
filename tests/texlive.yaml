@@ -1,0 +1,18 @@
+# The TeX Live installations the suite runs against, and the tests that do not apply to one.
+#
+# `TEXLIVE=2019 scripts/t.sh <filter>` (also scripts/ci-test.sh, scripts/test-tier.sh) puts that
+# installation's binaries first on PATH, so kpsewhich, tex and satex's texmf lookup all see it.
+# TEXLIVE may also name an installation directory (the one holding bin/ and texmf-dist/).
+# Without TEXLIVE the suite uses whatever TeX Live is on PATH (CI: the job's container).
+installs:
+  2019: ~/texlive-old/2019
+  2022: ~/texlive-old/2022
+  2025: /usr/local/texlive/2025
+  2026: /usr/local/texlive/2026
+
+# Tests not run on a TeX Live older than `before`, because that installation lacks what the test
+# checks.  Only for a missing feature, never for a satex bug: a test satex gets wrong stays red.
+# `why` names the feature and how it is missing.  scripts/ci-test.sh prints every skip it makes.
+# One entry per line:
+#   - {test: module::name, before: 2023, why: "TeX Live 2022's kernel has no \\foo (grep latex.ltx)"}
+skip: []
