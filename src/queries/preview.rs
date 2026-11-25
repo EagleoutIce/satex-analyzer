@@ -322,9 +322,29 @@ static SHEET: Mutex<Sheet> = Mutex::new(Sheet { svgs: BTreeMap::new(), loaded: N
 /// The sheet of the installation `analysis` ran on: TeX draws the sprites,
 /// so one drawn by another release (its tips, its `dvisvgm`) is not this one's.
 fn sheet_path(analysis: &Analysis) -> Option<std::path::PathBuf> {
+    sheet_in(&analysis.settings, installation_key(analysis))
+}
+
+/// The sheet of installation `key` in the run's cache directory, as every cache picks it
+/// (`cache.dir`, `SATEX_CACHE`, the platform's): a test or project with its own cache never
+/// reads or writes the user's sheet. None when the cache is off.
+fn sheet_in(cfg: &crate::project::config::Config, key: u64) -> Option<std::path::PathBuf> {
     // `-v3`: shapes drawn around a text box; an older sheet holds cut-off tips or collapsed shapes
-    let name = format!("previews-v3-{:016x}.json", installation_key(analysis));
-    crate::caches::format::default_cache_dir().map(|d| d.join(name))
+    crate::caches::format::enabled_cache_dir(cfg).map(|d| d.join(format!("previews-v3-{key:016x}.json")))
+}
+
+/// Whether `svg` is a whole sprite `key`: drawn, and an arrow's at least the box around its line
+/// (`TIP_ROOM` around `ARROW_W`, in the view box's bp). A smaller arrow is cut off (a `dvisvgm` or
+/// an older satex dropped the box), so it is neither kept nor read back: it is drawn again.
+fn whole(key: &str, svg: &str) -> bool {
+    if svg.is_empty() || !key.starts_with("arrow:") {
+        return !svg.is_empty();
+    }
+    let view = svg.split("viewBox=").nth(1).and_then(|v| v.get(1..)?.split(['\'', '"']).next()).unwrap_or_default();
+    let size: Vec<f64> = view.split_whitespace().skip(2).filter_map(|n| n.parse().ok()).collect();
+    // 2% short of the box: rounding of the bounding box, not a cut tip
+    let bp = |cm: f64| cm * 72.0 / 2.54 * 0.98;
+    matches!(size[..], [w, h] if w >= bp(ARROW_W + 2.0 * TIP_ROOM) && h >= bp(TIP_ROOM))
 }
 
 /// The installation a sprite is drawn with: its trees, release and format,
@@ -362,12 +382,12 @@ fn load(sheet: &mut Sheet, analysis: &Analysis) {
     }
 }
 
-/// The sprites drawn in the sheet at `path`. One TeX could not draw is never
-/// read back: a later run tries it again.
+/// The sprites drawn in the sheet at `path`. One TeX could not draw, or drew
+/// cut off ([`whole`]), is never read back: a later run tries it again.
 fn read_sheet(path: &std::path::Path) -> BTreeMap<String, String> {
     let read = std::fs::read(path).ok();
     let svgs = read.and_then(|b| serde_json::from_slice::<BTreeMap<String, String>>(&b).ok()).unwrap_or_default();
-    svgs.into_iter().filter(|(_, svg)| !svg.is_empty()).collect()
+    svgs.into_iter().filter(|(key, svg)| whole(key, svg)).collect()
 }
 
 /// The picture of a tip or pattern TeX drew ([`sprite_of`]).
@@ -401,7 +421,7 @@ fn sprite_of(analysis: &Analysis, key: &str) -> Option<String> {
                 plan.names.retain(|w| !sheet.svgs.contains_key(w));
                 let path = sheet.loaded.clone().flatten();
                 std::thread::spawn(move || {
-                    let svgs = render(&plan);
+                    let svgs = render(&plan, path.as_deref());
                     if let Ok(mut sheet) = SHEET.lock()
                         && sheet.loaded.as_ref() == Some(&path)
                     {
@@ -417,13 +437,14 @@ fn sprite_of(analysis: &Analysis, key: &str) -> Option<String> {
     }
 }
 
-/// The sheet written to `path`, without the sprites TeX did not draw: a
-/// failure is this process's, never a later one's.
+/// The sheet written to `path`, without the sprites TeX did not draw whole
+/// ([`whole`]): a failure is this process's, never a later one's.
 fn save(path: Option<&std::path::Path>, svgs: &BTreeMap<String, String>) {
-    let drawn: BTreeMap<&String, &String> = svgs.iter().filter(|(_, svg)| !svg.is_empty()).collect();
+    let drawn: BTreeMap<&String, &String> = svgs.iter().filter(|(key, svg)| whole(key, svg)).collect();
     if let (Some(path), Ok(json)) = (path, serde_json::to_vec(&drawn)) {
         let _ = path.parent().map(std::fs::create_dir_all);
-        let tmp = path.with_extension("json.tmp");
+        // this process's: another one saving at once never writes into it
+        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
         if std::fs::write(&tmp, json).is_ok() {
             let _ = std::fs::rename(tmp, path);
         }
@@ -491,17 +512,18 @@ pub fn sheet(analysis: &Analysis) -> BTreeMap<String, String> {
     let wanted = plan.names.clone();
     plan.names.retain(|w| !sheet.svgs.contains_key(w));
     if !plan.names.is_empty() {
-        sheet.svgs.extend(render(&plan).unwrap_or_default());
-        save(sheet.loaded.clone().flatten().as_deref(), &sheet.svgs);
+        let path = sheet.loaded.clone().flatten();
+        sheet.svgs.extend(render(&plan, path.as_deref()).unwrap_or_default());
+        save(path.as_deref(), &sheet.svgs);
     }
     wanted.into_iter().filter_map(|w| Some((w.clone(), sheet.svgs.get(&w)?.clone()))).collect()
 }
 
-/// Draws each sprite of `plan` on its own page with `latex` and `dvisvgm`, `None`
-/// when they cannot run. A sprite TeX could not draw maps to nothing. The TikZ
-/// sprites share a document, each font sample has one of its own (its package's).
-fn render(plan: &Plan) -> Option<BTreeMap<String, String>> {
-    let dir = crate::caches::format::default_cache_dir()?.join(format!("previews-{}", std::process::id()));
+/// Draws each sprite of `plan` on its own page with `latex` and `dvisvgm`, beside the sheet
+/// at `sheet`, `None` when they cannot run or the cache is off. A sprite TeX could not draw
+/// maps to nothing. The TikZ sprites share a document, each font sample has one of its own.
+fn render(plan: &Plan, sheet: Option<&std::path::Path>) -> Option<BTreeMap<String, String>> {
+    let dir = workspace(sheet?.parent()?);
     let (fonts, wanted): (Vec<String>, Vec<String>) =
         plan.names.iter().cloned().partition(|w| plan.fonts.contains_key(w));
     let pictures: Vec<String> = wanted
@@ -541,6 +563,14 @@ fn render(plan: &Plan) -> Option<BTreeMap<String, String>> {
     }
     let _ = std::fs::remove_dir_all(&dir);
     Some(svgs)
+}
+
+/// A directory in `cache` no other render uses: the background one and [`sheet`]'s may draw at
+/// once, and neither may clear the other's pages.
+fn workspace(cache: &std::path::Path) -> std::path::PathBuf {
+    static RENDERS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    cache.join(format!("previews-{}-{n}", std::process::id()))
 }
 
 /// Each of `pictures` on a page of its own after `preamble`, in `dir`, as the sprites `wanted`.
@@ -591,7 +621,8 @@ fn draw(
         let svg = size.replace_all(&svg, |c: &regex::Captures| {
             format!("{}='{:.2}'", &c[1], c[2].parse::<f64>().unwrap_or_default() * PX)
         });
-        svgs.insert(w.clone(), svg.into_owned());
+        // a cut sprite is not drawn
+        svgs.insert(w.clone(), Some(svg.into_owned()).filter(|svg| whole(w, svg)).unwrap_or_default());
     }
     Some(svgs)
 }
@@ -719,11 +750,39 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(format!("sheet-{}.json", std::process::id()));
         let svgs =
-            BTreeMap::from([("arrow:a".to_string(), "<svg/>".to_string()), ("arrow:b".to_string(), String::new())]);
+            BTreeMap::from([("pattern:a".to_string(), "<svg/>".to_string()), ("pattern:b".to_string(), String::new())]);
         save(Some(&path), &svgs);
-        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["arrow:a"]);
-        std::fs::write(&path, r#"{"arrow:a":"<svg/>","arrow:c":""}"#).unwrap();
-        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["arrow:a"]);
+        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["pattern:a"]);
+        std::fs::write(&path, r#"{"pattern:a":"<svg/>","pattern:c":""}"#).unwrap();
+        assert_eq!(read_sheet(&path).keys().collect::<Vec<_>>(), ["pattern:a"]);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// The sheet lives in the run's cache directory (`cache.dir`), as every cache does, and
+    /// nowhere when the cache is off. Pins a sheet always in the user's `~/.cache/satex`: a
+    /// test run read the cut tips a stale sheet there held.
+    #[test]
+    fn the_sheet_is_in_the_run_s_cache() {
+        let mut cfg = crate::project::config::Config::default();
+        cfg.cache.dir = Some(std::path::PathBuf::from("/project/cache"));
+        let path = sheet_in(&cfg, 1).unwrap();
+        assert!(path.starts_with("/project/cache"), "{}", path.display());
+        cfg.cache.enabled = false;
+        assert_eq!(sheet_in(&cfg, 1), None);
+        // two renders at once draw apart
+        assert_ne!(workspace(std::path::Path::new("/c")), workspace(std::path::Path::new("/c")));
+    }
+
+    /// An arrow sprite smaller than the box around its line is cut off and
+    /// not whole: the sheet holding one draws it again. Pins a stale sheet's
+    /// tips, 26.3 x 0.8 bp, shown as if drawn.
+    #[test]
+    fn a_cut_arrow_is_not_whole() {
+        let svg = |w: f64, h: f64| format!("<svg width='1' viewBox='76.7 61.9 {w} {h}'></svg>");
+        assert!(!whole("arrow:diamond-", &svg(26.308613, 0.797001)));
+        assert!(whole("arrow:diamond-", &svg(42.5, 8.5)));
+        assert!(!whole("arrow:diamond-", "<svg/>"));
+        assert!(whole("shape:circle", "<svg/>"));
+        assert!(!whole("shape:circle", ""));
     }
 }

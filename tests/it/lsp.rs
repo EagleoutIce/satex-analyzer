@@ -840,6 +840,10 @@ fn an_old_style_tip_s_picture_holds_the_tip() {
     for tip in ["arrow:diamond-", "arrow:hooks-", "arrow:latex'-"] {
         assert!(height(tip) > 5.0, "{tip}: {} pt high", height(tip));
     }
+    // the sheet is the run's cache's, never the user's (`~/.cache/satex`): a stale one there held cut tips
+    let dir = analysis.settings.cache.dir.clone().expect("the tests' cache");
+    let mut sheets = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned());
+    assert!(sheets.any(|n| n.starts_with("previews-v3-") && n.ends_with(".json")), "no sheet in {}", dir.display());
 }
 
 /// `\draw[-Ki`: a key TikZ reads as arrows offers the tips of a library not
