@@ -33,10 +33,11 @@ pub fn alone(command: &mut Command) {
     #[cfg(target_os = "linux")]
     // SAFETY: runs between fork and exec, where only async-signal-safe calls are allowed:
     // `close_range` is a plain system call. It only marks the descriptors close-on-exec, so the
-    // pipe that reports a failed exec to the parent still works.
+    // pipe that reports a failed exec to the parent still works. It is called raw: glibc before
+    // 2.34 (the aarch64 cross image) has no wrapper, and a kernel before 5.11 just says ENOSYS.
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(command, || {
-            libc::close_range(3, libc::c_uint::MAX, libc::CLOSE_RANGE_CLOEXEC as libc::c_int);
+            libc::syscall(libc::SYS_close_range, 3, libc::c_uint::MAX, libc::CLOSE_RANGE_CLOEXEC);
             Ok(())
         });
     }
