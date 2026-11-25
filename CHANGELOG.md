@@ -354,6 +354,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Build and infrastructure
 
+- `fix` `TL 2019` **CI builds the formats an old image lacks before the tests.** A format dumped mid-run rewrote `language.dat`, and the kernel cache rebuilt between two warm runs.
 - `fix` **`satex cache status` no longer says "running" right after the background builder ended.** The builder unlocks its lock file before closing it, so a child process another thread started at that moment cannot hold it.
 - `fix` **Caches are keyed on the build's source digest alone.** The hand-bumped encoding and semantic versions are gone from cache file names, cache files and archives. A change to what a cache holds or how it is stored changes the digest, so no number needs bumping. Caches of an earlier satex are rebuilt once and pruned like any other build's.
 - `feat` **A container image: `docker run --rm -v "$PWD:/work" ghcr.io/eagleoutice/satex lint`.** It holds `satex`, TeX Live with the recommended LaTeX packages, latexmk and the interpreted kernel. Each release publishes it to GHCR. `lsp --host 0.0.0.0 --port 2087` serves the language server from it.
