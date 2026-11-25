@@ -7,6 +7,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+## v0.2.7 (2026-11-25)
+
 ### CLI
 
 - `fix` **The Linux ARM binary builds again.** v0.2.6 linked against glibc's `close_range` wrapper, which older glibc lacks, so the release had no binaries. The system call is now made directly.
