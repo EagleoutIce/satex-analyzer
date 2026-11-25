@@ -399,7 +399,7 @@ jobs:
     name: Full ubuntu-latest ${{ matrix.tl }} (${{ matrix.shard }})
     if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     container: ${{ matrix.container }}
     strategy:
       fail-fast: false

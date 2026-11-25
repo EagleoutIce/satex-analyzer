@@ -87,7 +87,7 @@ if [[ "${1-}" == compliance ]]; then
     exit
 fi
 if [[ "${1-}" == reds ]]; then
-    mapfile -t reds < <(grep -v '^#' tests/known-red.txt | sed '/^$/d')
+    mapfile -t reds < <(cat tests/known-red.txt $(ls tests/known-red-tl"$tl".txt 2>/dev/null) | grep -v '^#' | sed '/^$/d' | LC_ALL=C sort -u)
     gated reds timeout "${REDS_SECONDS:-1200}" "${IT[@]}" --exact "${reds[@]}"
     exit
 fi
@@ -100,6 +100,8 @@ fi
 k=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]}
 (( k <= n )) || { echo "$0: shard $k of $n" >&2; exit 2; }
 
+# This TeX Live's own reds run in `reds` too, never in a shard: an open one may take an hour.
+tlreds=$(grep -v '^#' tests/known-red-tl"$tl".txt 2>/dev/null || true)
 # Longest first onto the least loaded shard, by tests/times.txt (an unmeasured test counts
 # 60 s if tests/slow.txt names it, else one); every shard computes the same deal.
 mapfile -t tests < <(
@@ -111,7 +113,7 @@ mapfile -t tests < <(
             $0 in red { next }
             /^compliance_matrix::/ { next }
             { print ($0 in t ? t[$0] : ($0 in slow ? 60 : 1)), $0 }
-        ' tests/times.txt tests/slow.txt tests/known-red.txt /dev/fd/3 - 3<<<"$skipped" |
+        ' tests/times.txt tests/slow.txt tests/known-red.txt /dev/fd/3 - 3<<<"$skipped"$'\n'"$tlreds" |
         LC_ALL=C sort -k1,1gr -k2,2 |
         awk -v k="$k" -v n="$n" '
             { b = 1; for (i = 2; i <= n; i++) if (s[i] < s[b]) b = i; s[b] += $1; if (b == k) print $2 }
