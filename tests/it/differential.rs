@@ -1403,6 +1403,32 @@ fn a_paragraph_records_the_source_site_of_its_characters() {
     assert_eq!(site(find("and")), (body, and), "{row}");
 }
 
+/// A macro's argument read on the line it is set on: each letter at its own column, not where
+/// reading stood after the argument. Pins the whole-line finding mark of
+/// `\textcolor{brown}{\textbf{word}}`: the letters' sites missed the finding's range.
+#[test]
+fn an_argument_s_letters_stand_at_their_own_columns() {
+    let line = "Das ist \\textbf{toooll} und \\x{Quokka} hier.";
+    let rows = typeset_rows("arg-sites", "\\def\\x#1{\\textit{#1}}", line);
+    let row = rows.iter().find(|r| r["detail"].as_str().is_some_and(|d| d.contains("Das"))).expect("paragraph");
+    let body = row["line"].as_u64().unwrap();
+    let text: Vec<char> = row["detail"].as_str().unwrap().chars().collect();
+    let sites = row["sites"].as_array().expect("sites");
+    let site = |at: usize| {
+        let s = sites.iter().rev().find(|s| s["at"].as_u64().unwrap() as usize <= at).expect("an entry");
+        let step = if s["same"] == true { 0 } else { at - s["at"].as_u64().unwrap() as usize };
+        (s["line"].as_u64().unwrap(), s["col"].as_u64().unwrap() + step as u64)
+    };
+    let plain: String = text.iter().collect();
+    for word in ["toooll", "Quokka", "hier"] {
+        let at = text_offset(&text, plain.find(word).unwrap());
+        let col = line.find(word).unwrap() as u64 + 1;
+        let got: Vec<_> = (0..word.len()).map(|k| site(at + k)).collect();
+        let want: Vec<_> = (0..word.len() as u64).map(|k| (body, col + k)).collect();
+        assert_eq!(got, want, "{word}: {row}");
+    }
+}
+
 /// The characters a macro's use sets all stand at its call: the site is said once for all of them
 /// (`same`), not once per character. Pins the rows of a document of generated text (blindtext, 737
 /// pages): 99.7 % of its `sites` entries repeated the one before, half of 110 MB of rows, which the

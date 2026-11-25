@@ -7548,6 +7548,38 @@ fn mathwidths_reads_the_run_s_math_fonts() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `satex/fontAt` (the PDF echo's font of letters typed in a command's argument): the font the run set the character
+/// before the place in. `\textbf{Quokka}` is bold, a user's `\kw{…}` (sans, italic) as its definition sets it, which
+/// no source model of `\textbf` and friends knows; a place the run set no such character at (text it has not seen
+/// yet) is `null`, so the echo falls back to the source's font model.
+#[test]
+fn font_at_reads_the_run_s_font_before_a_place() {
+    let text = "\\documentclass{article}\n\\newcommand\\kw[1]{\\textsf{\\textit{#1}}}\n\\begin{document}\nSome \\textbf{Quokka} and \\kw{Wombat} here.\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("fontat", text, &[]);
+    let id = server.request("satex/typeset", json!({ "textDocument": { "uri": uri } }));
+    let _ = server.response(id);
+    let line = text.lines().position(|l| l.starts_with("Some")).unwrap();
+    let row = text.lines().nth(line).unwrap();
+    // after the word's `k`: the place right of its second letter from the end
+    let mut at = |word: &str, back: usize, c: &str| {
+        let col = row.find(word).unwrap() + word.len() - back;
+        let id = server.request(
+            "satex/fontAt",
+            json!({ "textDocument": { "uri": uri }, "position": { "line": line, "character": col }, "char": c }),
+        );
+        server.response(id)["result"].clone()
+    };
+    let bold = at("Quokka", 1, "k");
+    assert_eq!(bold["style"], "bf", "{bold}");
+    let kw = at("Wombat", 0, "t");
+    assert_eq!(kw["style"], "sf it", "{kw}");
+    assert_eq!(at("here", 0, "e")["style"], "", "the defaults");
+    assert!(at("Quokka", 1, "x").is_null(), "another character than the run set there");
+    assert!(at("\\textbf", 6, "\\").is_null(), "nothing set there: a command's name");
+    server.shutdown();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `satex/commandText` (the PDF echo of a command typed): what a control word sets alone, from a sandbox of the
 /// run. `\TeX` is T, a kern back, an E lowered by half an ex in an `\hbox`, X (latex.ltx): the E below the baseline
 /// and left of where T's width ends. `\LaTeX`'s A is set smaller, in a `\vbox` as high as T. A user's logo `\Me`
@@ -8069,6 +8101,48 @@ fn font_view_reads_the_run_and_writes_packages() {
     let titles: Vec<&str> = actions.as_array().unwrap().iter().filter_map(|a| a["title"].as_str()).collect();
     assert!(titles.contains(&"Font: Libertinus") && titles.contains(&"Base size: 10pt"), "{titles:?}");
     assert!(!titles.contains(&"Base size: 11pt"), "{titles:?}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The font view's math fonts come from the installation, not a list: on pdfLaTeX the packages that declare the
+/// math symbol fonts (newtxmath, eulervm), loaded beside what the document loads (a text font's package stays);
+/// with unicode-math the OpenType fonts with a `MATH` table, one per family, written as `\setmathfont`.
+/// Pins the playground's math Font ▸ Custom… (user 2026-11-25: math fonts other than Computer Modern).
+#[test]
+fn font_view_offers_the_installation_s_math_fonts() {
+    if !crate::support::installed() {
+        return;
+    }
+    let text = "\\documentclass{article}\n\\usepackage{lmodern}\n\\usepackage{eulervm}\n\\begin{document}\n$x$\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("font-math", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 1);
+    let math = font_section(&mut server, &uri, "Math font");
+    let titles: Vec<&str> = math["items"].as_array().unwrap().iter().filter_map(|i| i["title"].as_str()).collect();
+    assert!(titles.contains(&"newtxmath") && titles.contains(&"eulervm"), "{titles:?}");
+    assert!(!titles.contains(&"amsmath") && !titles.contains(&"article"), "no package without math fonts: {titles:?}");
+    let on: Vec<&Value> =
+        math["items"].as_array().unwrap().iter().filter(|i| i["on"] == true).map(|i| &i["title"]).collect();
+    assert_eq!(on, [&json!("eulervm")], "{math}");
+    let out = font_pick(text, &uri, &math, "newtxmath");
+    assert!(out.contains("\\usepackage{lmodern}") && out.contains("\\usepackage{newtxmath}"), "{out}");
+    assert!(!out.contains("fontenc"), "a math font wants no text encoding: {out}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let text = "% !TeX program = lualatex\n\\documentclass{article}\n\\usepackage{unicode-math}\n\\setmathfont{latinmodern-math.otf}\n\\begin{document}\n$x$\n\\end{document}\n";
+    let (mut server, uri, dir) = open_set("font-math-otf", text, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 1);
+    let views = at(&mut server, &uri, "satex/view", 1, 1);
+    let view = views.as_array().unwrap().iter().find(|v| v["plugin"] == "font").expect("a font view").clone();
+    let math = view["sections"].as_array().unwrap().iter().find(|s| s["title"] == "Math font").expect("math").clone();
+    let items = math["items"].as_array().unwrap();
+    let on: Vec<&Value> = items.iter().filter(|i| i["on"] == true).map(|i| &i["title"]).collect();
+    assert_eq!(on, [&json!("Latin Modern Math")], "{math}");
+    let stix = items.iter().find(|i| i["title"] == "STIX Two Math").expect("STIX Two Math");
+    assert_eq!(stix["detail"], "\\setmathfont{STIXTwoMath-Regular.otf}", "{stix}");
+    assert!(!items.iter().any(|i| i["title"] == "newtxmath"), "unicode-math sets OpenType fonts: {math}");
+    let out = font_pick(text, &uri, &math, "STIX Two Math");
+    assert!(out.contains("\\setmathfont{STIXTwoMath-Regular.otf}\n") && !out.contains("latinmodern-math"), "{out}");
     server.shutdown();
     std::fs::remove_dir_all(dir).ok();
 }

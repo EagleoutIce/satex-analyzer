@@ -783,6 +783,11 @@ pub fn providing_library(analysis: &Analysis, name: &str) -> Option<String> {
     exports(analysis)?.providers(&[name.to_string()]).into_iter().find_map(|(file, _)| library_load(&file, tikz))
 }
 
+/// The `kind` names (`mathfont`) the installation's files declare, each with the files declaring it.
+pub fn declared(analysis: &Analysis, kind: &str) -> Vec<(String, Vec<String>)> {
+    exports(analysis).map_or(Vec::new(), |e| e.declared(kind))
+}
+
 /// The `kind` names (`arrow`) the installation's pgf and TikZ libraries declare, each with the load
 /// that brings it.
 pub fn library_declared(analysis: &Analysis, kind: &str) -> Vec<(String, String)> {

@@ -4,6 +4,7 @@
 //! hyphenation tables. `plugins.typeset.<name>` in `satex.yaml` switches each.
 
 pub mod commands;
+pub mod fontat;
 pub mod hyphenate;
 pub mod linebreak;
 pub mod lines;
@@ -31,7 +32,7 @@ pub struct Plugin {
     pub answer: fn(&mut Facts, &str, &Json) -> Json,
 }
 
-pub const PLUGINS: [Plugin; 4] = [
+pub const PLUGINS: [Plugin; 5] = [
     Plugin {
         name: "hyphenate",
         request: "satex/hyphenate",
@@ -62,6 +63,13 @@ pub const PLUGINS: [Plugin; 4] = [
         about: "what a control word typesets alone: its characters, kerns and raised or lowered boxes",
         enabled: |s| s.commands,
         answer: |facts, _, params| commands::answer(facts, params),
+    },
+    Plugin {
+        name: "fonts",
+        request: "satex/fontAt",
+        about: "the font the run set text in at a place: its family, series and shape among the defaults",
+        enabled: |s| s.fonts,
+        answer: fontat::answer,
     },
 ];
 

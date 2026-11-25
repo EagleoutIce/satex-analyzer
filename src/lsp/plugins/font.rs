@@ -44,7 +44,7 @@ impl TypePlugin for Font {
         choices
             .into_iter()
             // the machine's fonts stay in the view's list: hundreds of actions would bury the others
-            .filter(|c| !c.on && !c.edits.is_empty() && c.group != "System fonts")
+            .filter(|c| !c.on && !c.edits.is_empty() && c.group != "System fonts" && c.group != "Math font")
             .map(|c| rewrite(cx, format!("{}: {}", c.group, c.title), c.edits))
             .collect()
     }
@@ -62,10 +62,12 @@ impl TypePlugin for Font {
             json!({ "kind": "actions", "title": "Base size", "items": items("Base size") }),
             json!({ "kind": "actions", "title": "Font", "items": items("Font") }),
         ];
-        // fontspec finds the machine's fonts by name too: a list to filter
-        let system = items("System fonts");
-        if !system.is_empty() {
-            sections.push(json!({ "kind": "choices", "title": "System fonts", "placeholder": "a font of this machine", "focus": false, "items": system }));
+        // fontspec finds the machine's fonts by name too, and the installation has many math fonts: lists to filter
+        for (title, placeholder) in [("System fonts", "a font of this machine"), ("Math font", "a math font")] {
+            let list = items(title);
+            if !list.is_empty() {
+                sections.push(json!({ "kind": "choices", "title": title, "placeholder": placeholder, "focus": false, "items": list }));
+            }
         }
         Some(json!({ "title": "Font and size", "sections": sections }))
     }
@@ -177,6 +179,15 @@ fn here(cx: &Cx) -> Option<(State, Vec<Choice>)> {
         });
     }
     let field = |spec: &[String], i: usize| spec.get(i).filter(|f| !f.is_empty()).cloned();
+    // the other offered fonts' packages: a choice drops their loads
+    let others = |spec: &[String]| -> Vec<&str> {
+        let package = spec.first().map_or("", String::as_str);
+        fonts
+            .iter()
+            .filter_map(|(_, v)| v.first().map(String::as_str))
+            .filter(|p| !p.is_empty() && *p != package)
+            .collect()
+    };
     for (name, spec) in &fonts {
         let on = state.font.as_deref() == Some(name.as_str());
         // what this engine can set: a font name for fontspec, an installed package for pdfLaTeX
@@ -185,7 +196,7 @@ fn here(cx: &Cx) -> Option<(State, Vec<Choice>)> {
             false => field(spec, 0).filter(|p| on || installed_package(a, p)).map(|p| format!("\\usepackage{{{p}}}")),
         };
         let Some(detail) = detail else { continue };
-        let nodes = font_nodes(cx, &parts, &state, &fonts, spec);
+        let nodes = font_nodes(cx, &parts, &state, &others(spec), spec, Set::Main);
         let svg = crate::queries::preview::font_sample(a, name);
         out.push(Choice { group: "Font", title: name.clone(), detail, on, edits: edits(a, doc, &nodes), svg });
     }
@@ -193,7 +204,7 @@ fn here(cx: &Cx) -> Option<(State, Vec<Choice>)> {
         let named: Vec<String> = fonts.iter().filter_map(|(_, v)| field(v, 1)).collect();
         for family in system_families().iter().filter(|f| !named.contains(f)) {
             let spec = [String::new(), family.clone()];
-            let nodes = font_nodes(cx, &parts, &state, &fonts, &spec);
+            let nodes = font_nodes(cx, &parts, &state, &others(&spec), &spec, Set::Main);
             let detail = format!("\\setmainfont{{{family}}}");
             let on = state.family.as_deref().is_some_and(|f| plain(f) == plain(family));
             out.push(Choice {
@@ -206,7 +217,39 @@ fn here(cx: &Cx) -> Option<(State, Vec<Choice>)> {
             });
         }
     }
+    // the installation's math fonts: packages declaring math symbol fonts (pdfLaTeX), OpenType
+    // fonts with a MATH table (unicode-math)
+    let mut math = crate::linter::shared::declared(a, "mathfont");
+    math.sort_by_key(|(name, _)| name.to_lowercase());
+    let set = calls(doc.body(), "setmathfont", 0, parts.begin).pop();
+    let set =
+        set.and_then(|c| c.1.iter().rfind(|g| g.open == '{').map(|g| doc.body()[g.inner.clone()].trim().to_string()));
+    for (name, files) in &math {
+        let Some(file) = files.first() else { continue };
+        let (detail, on, nodes) = match (state.unicode, file.strip_suffix(".sty")) {
+            (false, Some(package)) => {
+                // added, the loads kept: many of these packages set the text font too (lmodern, kpfonts)
+                let nodes = font_nodes(cx, &parts, &state, &[], &[package.to_string()], Set::Math);
+                (format!("\\usepackage{{{package}}}"), loaded(a, package), nodes)
+            }
+            (true, None) => {
+                let nodes = font_nodes(cx, &parts, &state, &[], &[String::new(), file.clone()], Set::Math);
+                let on = set.as_deref().is_some_and(|s| s == file || plain(s) == plain(name));
+                (format!("\\setmathfont{{{file}}}"), on, nodes)
+            }
+            _ => continue,
+        };
+        let svg = crate::queries::preview::math_font_sample(a, name);
+        out.push(Choice { group: "Math font", title: name.clone(), detail, on, edits: edits(a, doc, &nodes), svg });
+    }
     Some((state, out))
+}
+
+/// What a font choice sets: the main font, or the math font.
+#[derive(Clone, Copy, PartialEq)]
+enum Set {
+    Main,
+    Math,
 }
 
 /// The printer's edits of `nodes`, none when refused.
@@ -239,9 +282,10 @@ fn sized(a: &Analysis, class: &Node, size: &str) -> Node {
     n
 }
 
-/// The snapshots that make `spec` the main font: the other offered fonts' loads dropped, then
-/// its package (pdfLaTeX) or `\setmainfont` (fontspec), and the sans default where it is sans.
-fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<String>)], spec: &[String]) -> Vec<Node> {
+/// The snapshots that make `spec` the main or math font: the loads of `others` dropped, then
+/// its package (pdfLaTeX) or `\setmainfont` (fontspec, `\setmathfont` with unicode-math), and
+/// the sans default where it is sans.
+fn font_nodes(cx: &Cx, parts: &Parts, state: &State, others: &[&str], spec: &[String], set: Set) -> Vec<Node> {
     let (a, doc) = (cx.analysis, cx.doc);
     let text = doc.body();
     let line = text[..parts.begin].rfind('\n').map_or(0, |n| n + 1);
@@ -251,17 +295,12 @@ fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<Strin
         spec.get(1).map_or("", String::as_str),
         spec.get(2).is_some_and(|s| s == "sans"),
     );
-    let others: Vec<&str> = fonts
-        .iter()
-        .filter_map(|(_, v)| v.first().map(String::as_str))
-        .filter(|p| !p.is_empty() && *p != package)
-        .collect();
     let mut out = Vec::new();
     // each call loading another offered font: that name out, the call dropped when it loads nothing else,
     // on pdfLaTeX the first such call loads the new package in its place
     let mut calls_seen: Vec<usize> = Vec::new();
     let mut placed = state.unicode || loaded(a, package) || !loads(text, parts.begin, package).is_empty();
-    for p in &others {
+    for p in others {
         for c in loads(text, parts.begin, p) {
             if calls_seen.contains(&c.0) {
                 continue;
@@ -282,8 +321,8 @@ fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<Strin
         }
     }
     if state.unicode {
-        let set = calls(text, "setmainfont", 0, parts.begin).pop().and_then(|c| snapshot::read(doc, c.0, &[], false));
-        match set {
+        let (cmd, pkg) = if set == Set::Math { ("setmathfont", "unicode-math") } else { ("setmainfont", "fontspec") };
+        match calls(text, cmd, 0, parts.begin).pop().and_then(|c| snapshot::read(doc, c.0, &[], false)) {
             Some(mut n) => {
                 if let Some(g) = n.args.iter_mut().rfind(|g| g.open == '{') {
                     g.text = name.into();
@@ -291,8 +330,8 @@ fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<Strin
                 out.push(n);
             }
             None => {
-                let mut n = Node::call("setmainfont", &[name], at);
-                n.package = Some(Package { name: "fontspec".into(), options: String::new() });
+                let mut n = Node::call(cmd, &[name], at);
+                n.package = Some(Package { name: pkg.into(), options: String::new() });
                 out.push(n);
             }
         }
@@ -300,7 +339,7 @@ fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<Strin
         // fonts other than Computer Modern want the T1 encoding
         let t1 = macro_text(a, "encodingdefault").is_some_and(|e| e.trim() == "T1")
             || !loads(text, parts.begin, "fontenc").is_empty();
-        if !t1 {
+        if !t1 && set == Set::Main {
             out.push(Node::new_call("usepackage", vec![Arg::text('[', "T1"), Arg::text('{', "fontenc")], at));
         }
         if !placed {
@@ -312,7 +351,7 @@ fn font_nodes(cx: &Cx, parts: &Parts, state: &State, fonts: &[(String, Vec<Strin
     if sans && !state.unicode && !sf {
         out.push(Node::call("renewcommand", &["\\familydefault", "\\sfdefault"], at));
     }
-    if !sans || state.unicode {
+    if set == Set::Main && (!sans || state.unicode) {
         for c in calls(text, "renewcommand", 0, parts.begin) {
             let sets = c.1.iter().map(|g| text[g.inner.clone()].trim()).collect::<Vec<_>>()
                 == ["\\familydefault", "\\sfdefault"];

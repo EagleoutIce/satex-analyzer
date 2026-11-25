@@ -221,6 +221,11 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Playground
 
+- `feat` **`satex/fontAt` gives the font the run set text in at a place**, as its family, series and shape (`plugins.typeset.fonts`).
+- `feat` **The font widget lists the installation's math fonts.** A package that declares the math symbol fonts is one on pdfLaTeX, an OpenType font with a `MATH` table one with unicode-math. Each comes with TeX's sample and the edit that loads it.
+- `fix` **Letters typed in the PDF inside a new `\textbf{…}` or `\textit{…}` echo bold or italic at once.** The echo took the font from another word the build set with that command, and with none it stayed regular until the build landed. Once the language server has run the text, the echo takes the font the run set there, so a command of your own (`\kw{…}`) echoes in its font too.
+- `fix` **A finding on a command's argument marks only its words on the page.** The low-contrast mark of `\textcolor{brown}{\textbf{word}}` covered the whole line: the typeset view placed the argument's letters where reading stood after it, so their sites missed the finding's range. Each letter now stands at its own column.
+- `feat` **In math, Font ▸ Custom… offers the installation's math fonts, each with TeX's sample of big operators and letters in it.** On pdfLaTeX a math font is a package (newtxmath, eulervm, mathpazo …), with unicode-math an OpenType math font (`\setmathfont{STIXTwoMath-Regular.otf}`). Choosing one loads it.
 - `fix` **Type mode: bibliography and contents rows on the PDF go to their source.** A bibliography row types into the `.bib` field it shows, of the entry the build's `.bbl` sets there; a style's own words open the bibliography manager. A contents line's number and page say "Not typed here" instead of typing into `\tableofcontents`.
 - `fix` **Type mode: a click on the footer's page number draws no second number.** The page's own digits stay as set (a click on page 2 showed `23`); a page that prints no footer (`\thispagestyle{empty}`) says so instead of drawing a `1`.
 - `fix` **The typing echo never shows an environment's arguments.** A paragraph followed by a table showed `runs. [ht] l>p3.9cmr` after an edit of the table's columns: an edit past the caret's paragraph leaves its row as built, and `\begin{…}`'s brackets and braces set nothing.

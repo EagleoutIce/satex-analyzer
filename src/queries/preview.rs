@@ -406,6 +406,11 @@ pub fn font_sample(analysis: &Analysis, name: &str) -> Option<String> {
     sprite_of(analysis, &font_sprite(name))
 }
 
+/// A math font's sample as TeX set it: big operators and letters in it ([`MATH_SAMPLE`]).
+pub fn math_font_sample(analysis: &Analysis, name: &str) -> Option<String> {
+    sprite_of(analysis, &format!("mathfont:{name}"))
+}
+
 /// The sprite `key` of the sheet. One the sheet lacks is drawn in the
 /// background, with every other the run wants, for a later ask.
 fn sprite_of(analysis: &Analysis, key: &str) -> Option<String> {
@@ -455,11 +460,15 @@ fn save(path: Option<&std::path::Path>, svgs: &BTreeMap<String, String>) {
 struct Plan {
     names: Vec<String>,
     libs: Vec<String>,
-    fonts: BTreeMap<String, String>,
+    /// Each font sprite's preamble and picture, and whether XeTeX draws it (an OpenType font).
+    fonts: BTreeMap<String, (String, &'static str, bool)>,
 }
 
 /// The text a font's sample sets.
-const FONT_SAMPLE: &str = "Aa Bb 123";
+const FONT_SAMPLE: &str = "\\mbox{\\color{ink}Aa Bb 123}";
+
+/// The formula a math font's sample sets: big operators, then letters.
+const MATH_SAMPLE: &str = "\\mbox{\\color{ink}$\\displaystyle\\sum_{i}\\prod_{k}\\int f\\,dx\\; \\alpha+\\Gamma x$}";
 
 /// A font sample's sprite name in `previews.json`: `font:Libertinus`.
 fn font_sprite(name: &str) -> String {
@@ -476,14 +485,24 @@ fn wanted(analysis: &Analysis) -> Plan {
     let arrows = arrow_specs(analysis).into_iter().map(|s| sprite(Stroke::Arrows, &s));
     let patterns = pattern_names(analysis).into_iter().map(|p| sprite(Stroke::Pattern, &p));
     let shapes = shape_names(analysis).into_iter().chain(more.into_iter().map(|(n, _)| n));
-    let fonts: BTreeMap<String, String> = (analysis.settings.type_plugins.font.fonts.iter())
+    let mut fonts: BTreeMap<String, (String, &'static str, bool)> = (analysis.settings.type_plugins.font.fonts.iter())
         .filter_map(|(name, spec)| {
             let package = spec.first().filter(|p| crate::linter::shared::installed_package(analysis, p))?;
             let sans = spec.get(2).is_some_and(|s| s == "sans").then_some("\\renewcommand\\familydefault\\sfdefault");
             let preamble = format!("\\usepackage[T1]{{fontenc}}\\usepackage{{{package}}}{}", sans.unwrap_or_default());
-            Some((font_sprite(name), preamble))
+            Some((font_sprite(name), (preamble, FONT_SAMPLE, false)))
         })
         .collect();
+    // the installation's math fonts: a package (pdfTeX), an OpenType font (XeTeX, unicode-math)
+    for (name, files) in crate::linter::shared::declared(analysis, "mathfont") {
+        let Some(file) = files.first() else { continue };
+        let otf = file.ends_with(".otf");
+        let preamble = match otf {
+            true => format!("\\usepackage{{unicode-math}}\\setmathfont{{{file}}}"),
+            false => format!("\\usepackage{{{}}}", file.trim_end_matches(".sty")),
+        };
+        fonts.insert(format!("mathfont:{name}"), (preamble, MATH_SAMPLE, otf));
+    }
     let names = arrows.chain(patterns).chain(shapes.map(|s| sprite(Stroke::Shape, &s))).chain(fonts.keys().cloned());
     Plan { names: names.collect(), libs, fonts }
 }
@@ -552,14 +571,13 @@ fn render(plan: &Plan, sheet: Option<&std::path::Path>) -> Option<BTreeMap<Strin
     );
     let mut svgs = BTreeMap::new();
     if !wanted.is_empty() {
-        svgs.extend(draw(&dir, &tikz, &wanted, &pictures)?);
+        svgs.extend(draw(&dir, &tikz, &wanted, &pictures, false)?);
     }
     for (i, font) in fonts.iter().enumerate() {
-        let preamble = format!("\\documentclass{{article}}\\usepackage{{xcolor}}{}", plan.fonts[font]);
-        let picture = format!("\\mbox{{\\color{{ink}}{FONT_SAMPLE}}}");
-        svgs.extend(
-            draw(&dir.join(format!("font-{i}")), &preamble, std::slice::from_ref(font), &[picture]).unwrap_or_default(),
-        );
+        let (preamble, picture, xe) = &plan.fonts[font];
+        let preamble = format!("\\documentclass{{article}}\\usepackage{{xcolor}}{preamble}");
+        let (dir, one) = (dir.join(format!("font-{i}")), std::slice::from_ref(font));
+        svgs.extend(draw(&dir, &preamble, one, &[picture.to_string()], *xe).unwrap_or_default());
     }
     let _ = std::fs::remove_dir_all(&dir);
     Some(svgs)
@@ -573,12 +591,14 @@ fn workspace(cache: &std::path::Path) -> std::path::PathBuf {
     cache.join(format!("previews-{}-{n}", std::process::id()))
 }
 
-/// Each of `pictures` on a page of its own after `preamble`, in `dir`, as the sprites `wanted`.
+/// Each of `pictures` on a page of its own after `preamble`, in `dir`, as the sprites `wanted`;
+/// by XeTeX (`xe`: an OpenType font), else by `latex`.
 fn draw(
     dir: &std::path::Path,
     preamble: &str,
     wanted: &[String],
     pictures: &[String],
+    xe: bool,
 ) -> Option<BTreeMap<String, String>> {
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).ok()?;
@@ -595,12 +615,16 @@ fn draw(
     );
     std::fs::write(dir.join("previews.tex"), tex).ok()?;
     let run = |program: &str, args: &[&str]| std::process::Command::new(program).args(args).current_dir(dir).output();
-    run("latex", &["-interaction=batchmode", "previews.tex"]).ok()?;
+    match xe {
+        true => run("xelatex", &["-no-pdf", "-interaction=batchmode", "previews.tex"]).ok()?,
+        false => run("latex", &["-interaction=batchmode", "previews.tex"]).ok()?,
+    };
+    let output = if xe { "previews.xdv" } else { "previews.dvi" };
     // a page drawn: dvisvgm 2.6 (TeX Live 2019) ends well on an option it lacks
     let drawn =
         || std::fs::read_dir(dir).is_ok_and(|d| d.flatten().any(|e| e.path().extension() == Some("svg".as_ref())));
     let svg = |exact: &[&str]| {
-        let args = [exact, &["--no-fonts", "--page=1-", "--output=p%p.svg", "previews.dvi"]].concat();
+        let args = [exact, &["--no-fonts", "--page=1-", "--output=p%p.svg", output]].concat();
         run("dvisvgm", &args).is_ok_and(|o| o.status.success()) && drawn()
     };
     // that dvisvgm has no `--exact-bbox`; glyph-free sprites need none

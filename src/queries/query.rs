@@ -1697,6 +1697,16 @@ impl Places {
     ) {
         use crate::engine::mode::Modes;
         let read = spot.span;
+        // a macro's argument read on its line (`\textbf{word}`): set where reading stood after
+        // it, its letters stand at their own columns. A macro's own text keeps its call's site.
+        let site = match unmarked(piece).chars().count() == 1
+            && (read.file, read.line) == (site.file, site.line)
+            && read.col < site.col
+            && bodies.get(read).is_none()
+        {
+            true => Span { col: read.col + 1, ..read },
+            false => site,
+        };
         let math = match spot.modes {
             m if !m.meets(Modes::ANY_MATH) => "",
             m if m.within(Modes::DISPLAY_MATH) => "display",
@@ -1766,7 +1776,7 @@ const LIG: &str = "lig";
 /// `\itdefault`, `\sldefault`, `\scdefault`, fntguide § 2.5): `sf`, `tt`,
 /// `bf`, `it`, `sl`, `sc`, space-separated; empty for the defaults or an
 /// unknown font.
-fn font_styles(analysis: &Analysis) -> Vec<String> {
+pub(crate) fn font_styles(analysis: &Analysis) -> Vec<String> {
     // A default's text up to the kernel's `\@empty` end marker (`b\@empty`).
     let axis = |names: &[&'static str]| -> Vec<(&'static str, String)> {
         let text = |n| Some(crate::linter::shared::macro_text(analysis, n)?.split('\\').next()?.trim().to_string());

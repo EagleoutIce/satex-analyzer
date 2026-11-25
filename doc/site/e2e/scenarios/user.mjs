@@ -231,6 +231,15 @@ export default [
       { row: { sel: '#play-ctx li', starts: 'Blackboard' }, click: true }],
     expect: [{ js: /\["Ry","𝑅𝑦","𝐑𝐲","𝖱𝗒","𝚁𝚢","ℛ𝓎","ℝ𝕪","ℜ𝔶"\]/ }, { has: /\\usepackage\{amssymb\}/ }, { has: /\$x \+ \\mathbb\{Ry\}\$/ }],
     steps: 'select "Ry" in $x + Ry$, right-click, Font ▸: the eight math alphabets, each showing Ry set in it; Blackboard bold writes \\mathbb{Ry} and loads amssymb' },
+  // another math font from the selection's Font ▸ (user 2026-11-25): Custom… lists the installation's math fonts (packages
+  // declaring the math symbol fonts), each with TeX's sample of big operators; choosing one loads its package
+  { kind: 'user', name: 'u-math-font-custom', settle: true, source: '\\documentclass{article}\n\\begin{document}\nLet $x + Ry$ hold.\n\\end{document}\n',
+    do: [{ do: { select: { from: 'Ry', to: 'Ry' } } }, { wait: 300 }, { right: 'Ry', k: 1 }, { row: { sel: '#play-ctx li', starts: 'Font' } },
+      { row: { sel: '#play-ctx li', starts: 'Custom' }, click: true }, { until: { sel: '.pa-suggest button' }, ms: 60000 }, { type: 'newtx' }, { wait: 300 }, { shot: 'fonts' },
+      { js: `JSON.stringify([...document.querySelectorAll('.pa-suggest button')].map((b) => [b.querySelector('span')?.textContent, b.querySelector('small')?.textContent, !!b.querySelector('.pa-img')]))` },
+      { row: { sel: '.pa-suggest button', starts: 'newtxmath' }, click: true }],
+    expect: [{ js: /\["newtxmath","\\\\usepackage\{newtxmath\}",true\]/ }, { has: /\\usepackage\{newtxmath\}/ }],
+    steps: 'select "Ry" in $x + Ry$, right-click, Font ▸ Custom…, type "newtx": newtxmath is offered with its TeX sample (big operators); a click loads it (was: no math fonts)' },
   { kind: 'user', name: 'u-math-word-as-text', settle: true, source: '\\documentclass{article}\n\\begin{document}\nLet $x where y$ hold.\n\\end{document}\n',
     do: [{ do: { caret: { src: 'where', k: 2 } } }, { wait: 300 }, { right: 'where', k: 2 }, { row: { sel: '#play-ctx li', starts: 'Math' } }, { shot: 'menu' },
       { row: { sel: '#play-ctx li', starts: '“where” as text' }, click: true }],

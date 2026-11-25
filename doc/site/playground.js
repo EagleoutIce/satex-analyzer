@@ -2336,12 +2336,13 @@
       .then((views) => (views ?? []).find((v) => v.plugin === 'page')?.sections?.find((x) => x.kind === 'page') ?? null) };
     return pageAsk.got;
   }
-  /** The font widget's offers (src/lsp/plugins/font.rs) for the format bar's Custom… family: asked on the root's
-   * `\\documentclass` line, each with its edits making it the main font. */
-  async function fontOffers() {
+  /** The font widget's offers (src/lsp/plugins/font.rs) for Custom… in the format bar (text fonts) and in math's
+   * Font ▸ (`math`: the installation's math fonts): asked on the root's `\\documentclass` line, each with its edits
+   * making it the main or math font. */
+  async function fontOffers(math = false) {
     const root = state.root ?? state.file, target = uri(root), line = (state.texts[root] ?? '').slice(0, Math.max(0, (state.texts[root] ?? '').search(/\\documentclass\b/))).split('\n').length - 1;
     const views = await lsp('satex/view', { textDocument: { uri: target }, position: { line, character: 0 } }).catch(() => null);
-    const items = (views ?? []).find((v) => v.plugin === 'font')?.sections?.filter((x) => /^(Font|System fonts)$/.test(x.title)).flatMap((x) => x.items ?? []) ?? [];
+    const items = (views ?? []).find((v) => v.plugin === 'font')?.sections?.filter((x) => math ? x.title === 'Math font' : /^(Font|System fonts)$/.test(x.title)).flatMap((x) => x.items ?? []) ?? [];
     return items.filter((i) => !i.on && i.edits?.length).map((i) => ({ title: i.title, detail: i.detail, svg: i.svg, main: () => fix({ title: `Font: ${i.title}`, edit: { changes: { [target]: i.edits } } }) }));
   }
   async function tsHeadFoot() {
@@ -8072,11 +8073,7 @@
       if (!w) return '';
       [from, to] = [[from[0], w[0] + 1], [from[0], w[1] + 1]];
     }
-    const set = (typesetRows ?? []).map((r) => siteHits(r, file, (p) => !before(p, from) && before(p, to)).text).filter(Boolean).join(' ');
-    if (set || from[0] !== to[0]) return set;
-    // a macro's argument (`\\textcolor{c}{word}`) is set where reading stood after it, not at its letters: the
-    // range's own letters then, as the line's words are matched (pdfWordsOf)
-    return (state.texts[file]?.split('\n')[from[0] - 1] ?? '').slice(from[1] - 1, to[1] - 1).replace(/\\[A-Za-z@]+\*?|[{}]/g, ' ').replace(/\s+/g, ' ').trim();
+    return (typesetRows ?? []).map((r) => siteHits(r, file, (p) => !before(p, from) && before(p, to)).text).filter(Boolean).join(' ');
   }
   /** Where `word`, set while about line `line` of `file` was read (SyncTeX's line, within a few), was itself read (the
    * run's `origins`): its file, first line and column, and its last character's place; null when it was read where set. */
@@ -11241,7 +11238,8 @@
    * shown: `f` itself (the fallback). Once per image, font and context. */
   const pdfCtxOf = new WeakMap(), PDF_CTX_TRIES = 20;
   function pdfCtxFont(img, f, ctx) {
-    const b = img.__build ?? pdf, key = `${f.family}|${f.size}|${ctx}`, memo = pdfCtxOf.get(img) ?? new Map();
+    // the run's font there (pdfAskRunFont) is part of the key: its answer replaces the source model's guess
+    const run = pdfRunStyle.get(`${state.file}|${ctx}`), b = img.__build ?? pdf, key = `${f.family}|${f.size}|${ctx}|${run ?? ''}`, memo = pdfCtxOf.get(img) ?? new Map();
     pdfCtxOf.set(img, memo);
     // a newer build's PDF closed this one's faces: the kept font's face back, as pdfFontOf does for the row's
     if (memo.has(key)) { const F = memo.get(key); if (F.run) pdfFaceUp(F.run); return F; }
@@ -11257,17 +11255,37 @@
       if (was) pdfEchoCtx.font = was;
       break;
     }
-    memo.set(key, F ? { ...F, size: f.size, base: f.base } : pdfStyled(f, ctx));
+    memo.set(key, F ? { ...F, size: f.size, base: f.base } : pdfStyled(f, ctx, run));
     return memo.get(key);
   }
   /** Row font `f` restyled as command `ctx` sets text where the build shows no word of it yet (a `\\textbf` just typed):
-   * the fallback face in the series, shape and family the source's font model gives (refactor.ts `fontAt`, the format
-   * bar's), `f` itself for a command that changes none of them. */
-  function pdfStyled(f, ctx) {
-    const s = self.satexRefactor?.fontAt(`\\${ctx}{x`, ctx.length + 3);
+   * the fallback face in the series, shape and family the run set there (`run`, satex/fontAt's style: `bf it`), else
+   * the source's font model gives (refactor.ts `fontAt`, the format bar's); `f` itself for a command that changes none. */
+  function pdfStyled(f, ctx, run) {
+    const has = (k) => new RegExp(`\\b(?:${k})\\b`).test(run);
+    const s = run != null ? { bold: has('bf'), italic: has('it|sl'), family: has('tt') ? 'tt' : has('sf') ? 'sf' : 'rm' } : self.satexRefactor?.fontAt(`\\${ctx}{x`, ctx.length + 3);
     if (!s || !s.bold && !s.italic && s.family === 'rm') return f;
     const family = s.family === 'tt' ? PDF_MONO_FONT : s.family === 'sf' ? "'Latin Modern Sans', 'CMU Sans Serif', sans-serif" : PDF_ECHO_FONT;
     return { family, size: f.size, base: f.base, own: false, xs: f.xs, fb: `${s.bold ? 'bold ' : ''}${s.italic ? 'italic ' : ''}` };
+  }
+  /** The run's font of text typed in command `ctx` (`\\textbf`, a user's `\\kw`) of the open file, by command: the
+   * language server's satex/fontAt after the argument's first letter (typed first, so the run most likely set it),
+   * asked once per text; pdfStyled takes it over the source's font model once the run has set text there. */
+  const pdfRunStyle = new Map();
+  let pdfRunAsked = '';
+  function pdfAskRunFont(text, at, ctx) {
+    if (!ctx) return;
+    // the argument's `{`: the innermost one open before the caret
+    let open = -1;
+    for (let i = at - 1, depth = 0; i >= 0 && open < 0; i--) {
+      if (text[i] === '}' && text[i - 1] !== '\\') depth++;
+      else if (text[i] === '{' && text[i - 1] !== '\\') { if (depth) depth--; else open = i; }
+    }
+    const c = text[open + 1], key = `${state.file}|${ctx}|${text.length}|${at}`;
+    if (open < 0 || open + 1 >= at || !/[^\s\\{}]/.test(c ?? '') || key === pdfRunAsked) return;
+    pdfRunAsked = key;
+    lsp('satex/fontAt', { textDocument: { uri: uri(state.root ?? state.file) }, path: uri(state.file), position: pdfPos(text, open + 2), char: c })
+      .then((r) => { if (typeof r?.style === 'string') pdfRunStyle.set(`${state.file}|${ctx}`, r.style); }).catch(() => {});
   }
   /** The width of `t` in echo font `f` with `ctx.font` set to it at `px` px: a character its face lacks counts at the
    * fallback's width times `f.r`, as TeX sets it in the page's font, not the fallback's (the word is drawn in one
@@ -11439,6 +11457,7 @@
       // `{\\Huge …}`, reads as that command's argument, and its other uses' face at the paragraph's size is no title's)
       const par0 = Math.max(0, g.text.lastIndexOf('\n\n', A.e)), outer = pdfOuterCtx(g.text, par0, A.e), inner = pdfOuterCtx(g.text, par0, g.at);
       const exited = inner.length < outer.length || outer.some((c, i) => inner[i] !== c);
+      pdfAskRunFont(g.text, g.at, inner.at(-1));
       const plain = exited && outer.some(Boolean) && para.find((t) => t.w && !pdfOuterCtx(B, Math.max(0, B.lastIndexOf('\n\n', t.s)), t.s).some(Boolean));
       const f = pdfFontOf(img, plain ? plain.w : w[5] ? w : para[0].w), ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d');
       ctx.font = `${f.size * k}px ${f.family}`;

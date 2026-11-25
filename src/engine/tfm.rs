@@ -280,6 +280,13 @@ pub fn locate(base: &Path, roots: &[PathBuf], name: &str, ext: &str) -> Option<P
     index.get(&file).cloned()
 }
 
+/// The font files of the installation's font directories ([`locate`]'s index) ending in `ext`, sorted.
+pub fn font_files(roots: &[PathBuf], ext: &str) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = index(roots).into_iter().filter(|(n, _)| n.ends_with(ext)).collect();
+    out.sort();
+    out
+}
+
 fn index(roots: &[PathBuf]) -> HashMap<String, PathBuf> {
     let mut found = HashMap::default();
     let wanted = |relative: &str| FONT_DIRECTORIES.iter().any(|d| relative.starts_with(d));

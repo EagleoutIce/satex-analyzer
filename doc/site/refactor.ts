@@ -718,6 +718,10 @@ declare global {
     // it needs loaded with it
     const letters = body.replace(/\\[A-Za-z@]+\*?|[^A-Za-z0-9]/g, '').slice(0, 10) || 'Ab1', symb = has('(?:amssymb|amsfonts)');
     const font: PaItem[] = math ? Object.entries(ALPHABETS).map(([cmd, x]) => ({ label: x.name, hint: `\\${cmd}${x.pkg && !symb ? ` · ${x.pkg}` : ''}`, sample: { text: alphabet(cmd, letters), font: SAMPLE_FONT }, run: wrap(`\\${cmd}{`, '}', x.pkg && !symb ? x.pkg : null) })) : [['Roman', 'textrm'], ['Sans serif', 'textsf'], ['Typewriter', 'texttt']].map(([label, cmd]) => ({ label: label!, hint: `\\${cmd}`, run: wrap(`\\${cmd}{`) }));
+    // in math Custom… is another math font for the document: the installation's, each with TeX's sample of big
+    // operators and letters in it, choosing one loads it (a package, or \\setmathfont with unicode-math)
+    if (math && ctx.fonts) font.push({ label: 'Custom…', hint: 'math font', run: () => PA.ask(ctx.x, ctx.y, '', 'a math font of this installation', () => {}, false,
+      ctx.fonts!(true).then((fs) => fs.map((o): PaItem => ({ label: o.title, hint: o.detail, img: o.svg, run: o.main })))) });
     const size: PaItem[] = math ? [] : ['tiny', 'scriptsize', 'footnotesize', 'small', 'normalsize', 'large', 'Large', 'LARGE', 'huge', 'Huge'].map((z) => ({ label: z, hint: `{\\${z} …}`, run: wrap(`{\\${z} `) }));
     // any size: `\fontsize{v}{1.2v}\selectfont`, the baseline at LaTeX's usual 1.2 of the size
     const customSize = () => PA.ask(ctx.x, ctx.y, '12pt', 'the font size with its unit (12pt, 1.2em)', (v) => {
@@ -731,7 +735,7 @@ declare global {
   }
   PA.register({
     name: 'format', title: 'Format', category: 'refactor', type: 'refactor', targets: ['source'],
-    about: 'The selection bold, italic, emphasized, monospace, small caps or underlined (with ulem or soul), in a color (xcolor loaded), a font family or a size; in math \\bm, \\boldsymbol or \\mathbf, the math alphabets (\\mathrm to \\mathfrak, each with the selection set in it) and \\mathcolor. Remove formatting unwraps the command around it',
+    about: 'The selection bold, italic, emphasized, monospace, small caps or underlined (with ulem or soul), in a color (xcolor loaded), a font family or a size; in math \\bm, \\boldsymbol or \\mathbf, the math alphabets (\\mathrm to \\mathfrak, each with the selection set in it), another math font (Custom…) and \\mathcolor. Remove formatting unwraps the command around it',
     groups: formatMenu,
   });
   /** Insert's rows by group (Math ▸, Floats ▸, Lists ▸, Structure ▸, References ▸, Pictures ▸), each hinted with the LaTeX

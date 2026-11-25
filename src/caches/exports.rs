@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::fixed::{HashMap, HashSet};
 
-const VERSION: u32 = 7;
+const VERSION: u32 = 8;
 
 #[derive(Serialize, Deserialize, Default)]
 pub struct Exports {
@@ -210,6 +210,9 @@ impl Exports {
             if name.ends_with(".code.tex") {
                 defined.extend(declared(&text));
             }
+            if let Some(stem) = name.strip_suffix(".sty").filter(|_| math_font(&text)) {
+                defined.push(format!("mathfont:{stem}"));
+            }
             // what the code files it inputs define is the package's own, as far as they input more
             let mut inputs: Vec<String> = loaded.iter().filter(|l| l.ends_with(".code.tex")).cloned().collect();
             let mut read: HashSet<String> = HashSet::default();
@@ -229,6 +232,25 @@ impl Exports {
                 }
             }
             exports.loads.push(loaded.iter().filter_map(|l| position.get(l).copied()).collect());
+        }
+        // the OpenType math fonts (`\setmathfont`): one file a family, its regular face where it has one
+        let mut families: HashMap<String, (u32, bool)> = HashMap::default();
+        for (name, path) in crate::engine::tfm::font_files(roots, ".otf") {
+            if !name.to_ascii_lowercase().contains("math") {
+                continue;
+            }
+            let Some((family, regular)) = std::fs::read(&path).ok().as_deref().and_then(otf_math_family) else {
+                continue;
+            };
+            if families.get(&family).is_some_and(|&(_, r)| r || !regular) {
+                continue;
+            }
+            families.insert(family, (exports.files.len() as u32, regular));
+            exports.files.push(name);
+            exports.loads.push(Vec::new());
+        }
+        for (family, (i, _)) in families {
+            exports.defines.insert(format!("mathfont:{family}"), vec![i]);
         }
         if let Some(file) = file
             && let Ok(bytes) = postcard::to_allocvec(&exports)
@@ -379,8 +401,11 @@ impl Exports {
         let mut out: Vec<(String, String)> = (self.defines.iter())
             .filter(|(name, _)| !name.contains(['@', '_']))
             .flat_map(|(name, files)| {
-                let library =
-                    || files.iter().map(|&f| &self.files[f as usize]).find(|f| f.ends_with(".code.tex")).cloned();
+                // a library, or a font that declares itself (an OpenType math font)
+                let library = || {
+                    let own = |f: &&String| f.ends_with(".code.tex") || f.ends_with(".otf");
+                    files.iter().map(|&f| &self.files[f as usize]).find(own).cloned()
+                };
                 let first = self.package_for(name).map(|p| format!("{p}.sty")).or_else(library);
                 let others: Vec<String> = self
                     .candidates(name)
@@ -575,6 +600,29 @@ fn declared(text: &str) -> Vec<String> {
             re.captures_iter(text).flat_map(move |c| [c[1].trim().to_string(), format!("{kind}:{}", c[1].trim())])
         })
         .collect()
+}
+
+/// Whether a package's text sets math fonts: it declares the symbol fonts letters, operators or
+/// large symbols come from (fntguide § 4.4), as newtxmath, eulervm and mathpazo do.
+fn math_font(text: &str) -> bool {
+    static FORM: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"\\DeclareSymbolFont\s*\{\s*(?:letters|operators|largesymbols)\s*\}")
+            .expect("math font regex")
+    });
+    FORM.is_match(text)
+}
+
+/// An OpenType font's family and whether the file is its regular face, when it has a `MATH` table.
+fn otf_math_family(data: &[u8]) -> Option<(String, bool)> {
+    use ttf_parser::name_id;
+    let face = ttf_parser::Face::parse(data, 0).ok()?;
+    face.tables().math?;
+    let name = |ids: [u16; 2]| {
+        ids.iter().find_map(|&id| face.names().into_iter().find(|n| n.name_id == id && n.is_unicode())?.to_string())
+    };
+    let family = name([name_id::TYPOGRAPHIC_FAMILY, name_id::FAMILY])?;
+    let regular = name([name_id::TYPOGRAPHIC_SUBFAMILY, name_id::SUBFAMILY]).is_some_and(|s| s == "Regular");
+    Some((family, regular))
 }
 
 /// The text of the group after `[options]` that `tokens` start with; a

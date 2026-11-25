@@ -540,11 +540,13 @@ pub struct TypesetSwitches {
     pub mathwidths: bool,
     /// `satex/commandText`: what a control word typesets alone, from a sandbox of the run.
     pub commands: bool,
+    /// `satex/fontAt`: the font the run set the character before a place in.
+    pub fonts: bool,
 }
 
 impl Default for TypesetSwitches {
     fn default() -> TypesetSwitches {
-        TypesetSwitches { hyphenate: true, linebreak: true, mathwidths: true, commands: true }
+        TypesetSwitches { hyphenate: true, linebreak: true, mathwidths: true, commands: true, fonts: true }
     }
 }
 

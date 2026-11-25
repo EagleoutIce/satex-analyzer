@@ -34,8 +34,9 @@ declare global {
     /** Whether the grid of the picture at offset `at` shows; with `on` it is switched (this session). */
     grid?(at: number, on?: boolean): boolean;
     /** The fonts the engine can set (the font widget's offers, src/lsp/plugins/font.rs): name, what it writes
-     * (`\\usepackage{…}` on pdfLaTeX, `\\setmainfont{…}` with fontspec), TeX's sample, and `main()` making it the main font. */
-    fonts?(): Promise<{ title: string; detail: string; svg?: string | null; main(): void }[]>;
+     * (`\\usepackage{…}` on pdfLaTeX, `\\setmainfont{…}` with fontspec), TeX's sample, and `main()` making it the main
+     * font; with `math` the math fonts (`\\usepackage{newtxmath}`, `\\setmathfont{…}` with unicode-math) instead. */
+    fonts?(math?: boolean): Promise<{ title: string; detail: string; svg?: string | null; main(): void }[]>;
     /** TeX's pictures by `kind:name` (`arrow:-Stealth`), previews.json. */
     previews?: Record<string, string> | null;
   }
