@@ -423,6 +423,12 @@ fn sprite_of(analysis: &Analysis, key: &str) -> Option<String> {
             if !cfg!(target_os = "emscripten") && !sheet.busy && !sheet.failed {
                 sheet.busy = true;
                 let mut plan = wanted(analysis);
+                // a math font's sample costs a TeX run each: drawn only when one is asked for
+                let math = |w: &str| w.starts_with("mathfont:");
+                if !math(key) {
+                    plan.names.retain(|w| !math(w));
+                    plan.fonts.retain(|w, _| !math(w));
+                }
                 plan.names.retain(|w| !sheet.svgs.contains_key(w));
                 let path = sheet.loaded.clone().flatten();
                 std::thread::spawn(move || {

@@ -30,6 +30,7 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### LSP
 
+- `perf` **Math font samples are drawn only when the font view asks for one.** Each costs a TeX run, and they held up every other preview (arrows, shapes, text fonts) until all were drawn.
 - `perf` **Typing into a paragraph between generated text reuses the rest of the last run.** When the text after the paragraph comes from macros or a package (`\Blinddocument`), the last character the document set stayed on the edited line, so the run never met the last one and every keystroke ran the rest of the document again (4.4M steps, 2 s). A keystroke now meets the last run after the paragraph: 791 steps, 0.2 s.
 - `feat` **A math command typed in text is set in math.** Completing `\sum`, `\frac` or a macro of your own that ends in math-only material where the text is text writes `\(\sum\)` with the caret inside, `$\sum$` in plain TeX or in a file that uses `$`, and never inside a formula. TeX's `Missing $ inserted` before such a command gets a safe quick fix that sets the command and its arguments in the same delimiters (`completion.wrap_math`, `conventions.math.inline`).
 - `feat` **Every finding offers "Ignore here" and "Ignore rule".** The first writes `% satex-disable-next-line ⟨rule⟩` above its line, the second turns the rule off in the project's `satex.yaml`. No Fix all applies them.
