@@ -1195,13 +1195,14 @@ fn refusal(report: &Report, span: Span, name: &str, message: String) -> (String,
         );
     }
     let edits = renamed(report, span, "new", "renew");
-    let how = match owner {
-        Some(package) => format!(
-            "pick another name, or use `\\renewcommand{{{name}}}` to override {package}'s, which changes it where {package} uses it too"
-        ),
-        None => format!("use `\\renewcommand{{{name}}}` if the redefinition is intended, or pick another name"),
+    // The fix is the one action; the other way out (another name) and its cost go in the message.
+    let message = match &owner {
+        Some(package) => {
+            format!("{message}. Pick another name, or renew it, which changes it where {package} uses it too")
+        }
+        None => format!("{message}. Pick another name, or renew it if the redefinition is intended"),
     };
-    (message, Fix::new(how, Applicability::Unsafe, edits))
+    (message, Fix::new(format!("use `\\renewcommand{{{name}}}`"), Applicability::Unsafe, edits))
 }
 
 /// The arity and body text a `\newcommand{name}[n][default]{body}` at `span` gives.

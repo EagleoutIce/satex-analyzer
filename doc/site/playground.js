@@ -294,6 +294,8 @@
   worker.onmessage = (e) => onWorkerMessage(e);
   worker.onerror = (e) => onWorkerError(e);
   const escape = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+  // a pill's label: an ignore action by its kind (the rule is named beside it), a fix by its title
+  const pillLabel = (a) => (a.data?.ignore ? (/^Ignore rule/.test(a.title) ? 'Ignore rule' : 'Ignore here') : a.title);
   const SEVERITY = ['', 'error', 'warning', 'info', 'hint'];
   const sev = (d) => SEVERITY[d.severity] || 'info';
   const secs = self.satexCards.duration;
@@ -474,7 +476,7 @@
   const findingCard = (d, fixes = false) => {
     // the fixes, then always the two ways to ignore it: here, or the rule in the project
     const all = [...d.fixes ?? [], ...d.ignores ?? []];
-    const buttons = fixes && all.length ? `<div class="hover-tools">${all.map((f) => `<button type="button" class="small${f.safety === 'safe' ? '' : ' ghost'}" data-fix="${hoverFixes.push(f) - 1}" title="${f.data?.ignore ? 'ignore' : `${escape(f.safety)} fix`}">${escape(f.title)}</button>`).join('')}</div>` : '';
+    const buttons = fixes && all.length ? `<div class="hover-tools">${all.map((f) => `<button type="button" class="small${f.safety === 'safe' ? '' : ' ghost'}" data-fix="${hoverFixes.push(f) - 1}" title="${escape(f.title)}">${escape(pillLabel(f))}</button>`).join('')}</div>` : '';
     return `<div class="tip-lint f-${sev(d)}"><p><span class="sev sev-${sev(d)}">${sev(d)}</span> <code>${escape(d.code)}</code> ${inline(d.message)}</p>${buttons}</div>`;
   };
   /** A command in text, or alone in a code span, explains itself on hover (`tips.card`), as the editor's hover does. */
@@ -2885,7 +2887,7 @@
     const item = (d, i) => `<li class="f-${sev(d)}${unfolded.has(key(d)) ? ' open' : ''}"${dimmed(d)} data-i="${i}" tabindex="0">` +
       `<span class="msg">${d.number ? `<code class="rno" title="rule number">${escape(d.number)}</code> ` : ''}<b class="rn">${escape(d.code ?? '')}</b>: ${commandRefs(inline(d.message))}</span>` +
       `<span class="where"><b class="loc">${d.file ? `<span class="loc-file">${escape(d.file)}:</span>` : ''}${d.range.start.line + 1}:${d.range.start.character + 1}</b><span class="shape" title="${sev(d)}" aria-label="${sev(d)}"></span></span>` +
-      `<span class="acts">${d.fixes.map(fixButton).join('')}${editableFile() || d.file ? (d.ignores ?? []).map((g, j) => `<button class="small ghost ignore" data-g="${j}" title="${escape(g.title)}">${/^Ignore rule/.test(g.title) ? 'Ignore rule' : 'Ignore here'}</button>`).join('') : ''}${!d.file && editableFile() ? fixAllButton('rule', d.code, `Fix all ${d.code}`) : ''}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
+      `<span class="acts">${d.fixes.map(fixButton).join('')}${editableFile() || d.file ? (d.ignores ?? []).map((g, j) => `<button class="small ghost ignore" data-g="${j}" title="${escape(g.title)}">${escape(pillLabel(g))}</button>`).join('') : ''}${!d.file && editableFile() ? fixAllButton('rule', d.code, `Fix all ${d.code}`) : ''}<button class="small ghost why">${unfolded.has(key(d)) ? 'Hide rule' : 'Explain rule'}</button></span>` +
       (unfolded.has(key(d)) ? explanation(d) : '') + '</li>';
     /** Findings of one object (`group`, "table@12:1") fold together under a header; a lone one stays flat. */
     const fold = (id, cls, head, rows, inner) => `<li class="${cls}"><details${folded.has(id) ? '' : ' open'} data-fold="${escape(id)}"><summary class="cat-head" aria-label="${escape(head)}">${inner}</summary>` +

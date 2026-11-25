@@ -713,8 +713,9 @@ fn a_context_document_is_not_held_to_latex_conventions() {
 }
 
 /// A name a package defined is named with the package and its line, and the
-/// fix warns that overriding it changes the package's own uses: amsmath's
-/// `\text` is what `\newcommand{\text}` most often runs into.
+/// message warns that renewing it changes the package's own uses: amsmath's
+/// `\text` is what `\newcommand{\text}` most often runs into. The fix is one short
+/// action (`\renewcommand`), so an editor shows it as one button.
 #[test]
 fn a_package_s_command_is_named_with_its_package() {
     if !installed() {
@@ -729,7 +730,8 @@ fn a_package_s_command_is_named_with_its_package() {
         satex::linter::lint(&analysis).into_iter().find(|r| r["code"] == "already-defined").expect("a finding");
     let message = record["message"].as_str().unwrap_or_default();
     assert!(message.starts_with("\\text is already defined by amstext (amstext.sty:"), "{message}");
-    assert!(record["fix"].as_str().unwrap_or_default().contains("pick another name"), "{record:?}");
+    assert!(message.contains("changes it where amstext uses it too"), "{message}");
+    assert_eq!(record["fix"].as_str().unwrap_or_default(), "use `\\renewcommand{\\text}`", "{record:?}");
 }
 
 /// Without a LaTeX kernel (plain TeX defines no `\(`) a math-only command in text is set in `$…$`.
