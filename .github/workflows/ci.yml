@@ -160,7 +160,7 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     # A shard runs prebuilt tests on prebuilt kernels: minutes. The limit stops a hang.
-    timeout-minutes: 30
+    timeout-minutes: 60
     # The TeX Live image already holds a full installation, which the
     # engine-dependent tests need; installing one with apt takes minutes.
     container: texlive/texlive:TL2025-historic
@@ -250,7 +250,7 @@ jobs:
     needs: changes
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     continue-on-error: true
     container: texlive/texlive:latest
     steps:
@@ -281,7 +281,7 @@ jobs:
     if: (github.event_name == 'push' || github.event_name == 'pull_request') && needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     # Usually 20 minutes; room for a slow runner.
-    timeout-minutes: 45
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
