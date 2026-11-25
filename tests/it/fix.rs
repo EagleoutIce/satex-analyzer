@@ -950,26 +950,3 @@ fn a_format_line_waits_for_its_format() {
     assert!(cost.iter().all(|r| r.get("edits").is_none_or(|e| e.as_array().is_none_or(Vec::is_empty))), "{cost:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-/// An undefined name a package fixes offers every installed package that fits: one that defines the name and
-/// all the first one defines comes first, as its own fix (`\textcolor`: xcolor, then color, which the index
-/// picks as the provider). A name only one package defines gets that one alone. Pins the fix offering only
-/// color for `\textcolor` (user 2026-11-25: xcolor is the package to load).
-#[test]
-fn an_undefined_name_offers_the_wider_package_first() {
-    if !installed() {
-        return;
-    }
-    let (records, dir) = lint_codes("load-wider", &article("\\textcolor{red}{x}\n"), "undefined-control-sequence");
-    let record = records.first().expect("an undefined name");
-    assert_eq!(record["fix"], "load `xcolor`, which defines it", "{record:?}");
-    let others: Vec<&str> =
-        record["alternatives"].as_array().expect("color too").iter().filter_map(|a| a["fix"].as_str()).collect();
-    assert_eq!(others, ["load `color`, which defines it"], "{record:?}");
-    let _ = std::fs::remove_dir_all(dir);
-    let (records, dir) = lint_codes("load-one", &article("\\lipsum[1]\n"), "undefined-control-sequence");
-    let record = records.first().expect("an undefined name");
-    assert_eq!(record["fix"], "load `lipsum`, which defines it", "{record:?}");
-    assert!(record.get("alternatives").is_none(), "{record:?}");
-    let _ = std::fs::remove_dir_all(dir);
-}

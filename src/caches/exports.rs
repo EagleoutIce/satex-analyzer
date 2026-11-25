@@ -367,36 +367,6 @@ impl Exports {
         ranked.into_iter().map(|(_, f)| f.trim_end_matches(".sty").to_string()).collect()
     }
 
-    /// The other packages that define `name` themselves and every name a document can write that
-    /// `package` defines, and more, so each fits wherever `package` does (xcolor for color's `\\textcolor`):
-    /// most loaded first.
-    pub fn wider(&self, package: &str, name: &str) -> Vec<String> {
-        let public = |n: &str| !n.contains(['@', '_', ':']);
-        let Some(&own) = self.position().get(&format!("{package}.sty")) else { return Vec::new() };
-        let names_of = |f: u32| -> HashSet<&str> {
-            self.defines.iter().filter(|(n, fs)| public(n) && fs.contains(&f)).map(|(n, _)| n.as_str()).collect()
-        };
-        let mine = names_of(own);
-        let definers = self.defines.get(name).into_iter().flatten().copied();
-        let fits: Vec<u32> = definers
-            .filter(|&f| f != own && self.files[f as usize].ends_with(".sty"))
-            // more than `package`: a copy of it (`color-ltx`) is no other choice
-            .filter(|&f| {
-                let theirs = names_of(f);
-                theirs.len() > mine.len() && theirs.is_superset(&mine)
-            })
-            .collect();
-        // a file another one loads is that one's part (xcolor's rollback copy `xcolor-2022-06-12`)
-        let reached: HashSet<u32> =
-            fits.iter().chain([&own]).flat_map(|&g| self.reach(g).into_iter().filter(move |&f| f != g)).collect();
-        let mut out: Vec<(std::cmp::Reverse<usize>, &String)> = (fits.into_iter())
-            .filter(|f| !reached.contains(f))
-            .map(|f| (std::cmp::Reverse(self.users(f)), &self.files[f as usize]))
-            .collect();
-        out.sort();
-        out.into_iter().map(|(_, f)| f.trim_end_matches(".sty").to_string()).collect()
-    }
-
     /// How many files load `file`, directly or through others.
     fn users(&self, file: u32) -> usize {
         let (loaded_by, mut seen, mut queue) = (self.loaded_by(), HashSet::default(), vec![file]);

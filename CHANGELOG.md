@@ -199,7 +199,6 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ### Lints
 
-- `fix` **An undefined name offers every installed package that fits, the most general first.** `\textcolor` offered only color. Now xcolor comes first and color second, each as its own fix. A package fits too when it defines the name and everything the first one defines, as the installation's package index says.
 - `feat` **`satex query tagging` says more.** `running` is the tagging code's own answer, `modules` the tagging files loaded, `marked` the marked content written by tag. A package the status list lacks is `unlisted`. Without `\DocumentMetadata` it lists each package's status, to judge a document before tagging is on.
 - `fix` **`graphic-without-alt` follows the tagging state where the graphic stands.** It reports where the run raised latex-lab's warning. A graphic under `\SuspendTagging` or `\tag_stop:` is no finding, and one whose options come from a macro is checked too.
 - `fix` **Tagging lints ask the tagging code whether it tags** (`\tag_if_active:TF`), not only what `\DocumentMetadata` declared. A document that switches tagging off with `\tagpdfsetup` gets no tagging findings.

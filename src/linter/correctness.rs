@@ -612,7 +612,7 @@ fn undefined_control_sequences(report: &mut Report) {
     // Per name: where else the run defines it, the package that would define it, and the nearest
     // known name (a name used undefined many times is looked up once).
     let mut elsewheres: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
-    let mut fixes: crate::fixed::HashMap<Sym, Vec<Fix>> = crate::fixed::HashMap::default();
+    let mut fixes: crate::fixed::HashMap<Sym, Option<Fix>> = crate::fixed::HashMap::default();
     let mut nearest: crate::fixed::HashMap<Sym, Option<String>> = crate::fixed::HashMap::default();
     let local: crate::fixed::HashSet<Sym> =
         report.analysis.facts.defs.iter().filter(|d| !d.global).map(|d| d.name).collect();
@@ -641,13 +641,13 @@ fn undefined_control_sequences(report: &mut Report) {
         } else {
             (Severity::Error, format!("`{name}` is never defined in this run"))
         };
-        let loads = match severity == Severity::Error && elsewhere.is_none() {
-            true => fixes.entry(expansion.name).or_insert_with(|| load_fixes(report, raw)).clone(),
-            false => Vec::new(),
+        let fix = match severity == Severity::Error && elsewhere.is_none() {
+            true => fixes.entry(expansion.name).or_insert_with(|| load_fix(report, raw)).clone(),
+            false => None,
         };
-        match loads.is_empty() {
-            false => report.add_fixes_as(severity, expansion.span, &name, message, loads),
-            true => {
+        match fix {
+            Some(fix) => report.add_fix_as(severity, expansion.span, &name, message, fix),
+            None => {
                 // a spelling suggestion only where the document spells the name
                 let near = (severity == Severity::Error && report.index().origin(expansion.span.file) == "document")
                     .then(|| {
@@ -670,21 +670,15 @@ fn undefined_control_sequences(report: &mut Report) {
     }
 }
 
-/// How sure [`load_fixes`] is: the rules that offer it declare it.
+/// How sure [`load_fix`] is: the rules that offer it declare it.
 const LOAD_FIX: Applicability = Applicability::Unsafe;
 
-/// Loading the installed package that defines `name`, offered, never applied on its own. A
-/// package that defines it and all the first one defines fits too and comes first: xcolor before
-/// color for `\textcolor`.
-fn load_fixes(report: &Report, name: &str) -> Vec<Fix> {
-    let Some(package) = super::shared::providing_package(report.analysis, name) else { return Vec::new() };
-    let mut packages = super::shared::wider_packages(report.analysis, &package, name);
-    packages.push(package);
-    let fix = |p: String| {
-        let edits = report.edits().ensure_package(&p)?;
-        Some(Fix::new(format!("load `{p}`, which defines it"), LOAD_FIX, Some(edits)))
-    };
-    packages.into_iter().filter_map(fix).collect()
+/// Loading the installed package that defines `name`, offered, never applied
+/// on its own.
+fn load_fix(report: &Report, name: &str) -> Option<Fix> {
+    let package = super::shared::providing_package(report.analysis, name)?;
+    let edits = report.edits().ensure_package(&package)?;
+    Some(Fix::new(format!("load `{package}`, which defines it"), LOAD_FIX, Some(edits)))
 }
 
 /// Where the run defined a name it reads undefined elsewhere: inside an environment of the document
@@ -953,12 +947,7 @@ fn undefined_environments(report: &mut Report) {
             let edits = report.edits().replace_argument(span, &name, &other);
             Some(Fix::new(format!("did you mean `{other}`?"), Applicability::Unsafe, edits))
         };
-        let loads = load_fixes(report, &name);
-        if !loads.is_empty() {
-            report.add_fixes(span, &name, message, loads);
-            continue;
-        }
-        match near() {
+        match load_fix(report, &name).or_else(near) {
             Some(fix) => report.add_fix(span, &name, message, fix),
             None => report.add(span, &name, message, Some(format!("`\\newenvironment{{{name}}}{{…}}{{…}}`"))),
         }
