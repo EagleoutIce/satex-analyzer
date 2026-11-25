@@ -31,6 +31,22 @@ git tag -a vX.Y.Z -m "Release vX.Y.Z"
 
 Pushing the tag (`git push origin vX.Y.Z`) starts the release workflow: it checks that the tag matches `Cargo.toml`, builds every target, attaches the archives and a `SHA256SUMS` file, and uses `doc/release-notes/X.Y.Z.md` as the notes (GitHub's generated notes when that file is missing). A tag with a `-` (`v1.2.0-rc1`) is published as a prerelease.
 
+Before the tag, build every target from main without publishing:
+
+```bash
+gh workflow run release.yml --ref main -f tag=main -f publish=false
+```
+
+Only a tag builds the ARM, macOS and Windows binaries, so a target that fails to build or link shows here, and no tag is spent on it.
+
+A step that fails after the tag needs no new tag. Fix the workflow on main, then run it again for the tag:
+
+```bash
+gh workflow run release.yml --ref main -f tag=vX.Y.Z
+```
+
+Every step can repeat. The release keeps its files (same names are replaced), the image is pushed again, and the crate is skipped when crates.io already has the version.
+
 ## CI Process
 
 ### On Push or Pull Request

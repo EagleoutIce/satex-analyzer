@@ -7,6 +7,10 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+### Build and infrastructure
+
+- `fix` **A failed release step needs no new tag.** The release workflow runs again from main for an existing tag (`-f tag=vX.Y.Z`), and every step can repeat: the release keeps its files, the crate is published once. `-f tag=main -f publish=false` builds every target before tagging. The binaries no longer fail to download beside the container image's build record.
+
 ## v0.2.7 (2026-11-25)
 
 ### CLI

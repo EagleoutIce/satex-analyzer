@@ -4,10 +4,26 @@ on:
   push:
     tags:
       - 'v*'
+  # Run from main, so a fixed workflow needs no new tag:
+  #   -f tag=vX.Y.Z                  builds that tag again and publishes it (every step can repeat)
+  #   -f tag=main -f publish=false   builds every target only, before tagging
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag (or branch, without publishing) to build
+        required: true
+      publish:
+        description: Publish the release, the image and the crate
+        type: boolean
+        default: true
 
 permissions:
   contents: write
   actions: write
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+  PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
 
 jobs:
   check:
@@ -16,13 +32,17 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
       - name: Changelog has the release
+        if: env.PUBLISH == 'true'
         run: |
-          grep -q "^## ${{ github.ref_name }} " CHANGELOG.md || { echo "CHANGELOG.md has no section for ${{ github.ref_name }}: run scripts/changelog.py release"; exit 1; }
+          grep -q "^## $TAG " CHANGELOG.md || { echo "CHANGELOG.md has no section for $TAG: run scripts/changelog.py release"; exit 1; }
       - name: Tag matches Cargo.toml
+        if: env.PUBLISH == 'true'
         run: |
           CRATE=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
-          test "v$CRATE" = "${{ github.ref_name }}" || { echo "tag ${{ github.ref_name }} but Cargo.toml says $CRATE"; exit 1; }
+          test "v$CRATE" = "$TAG" || { echo "tag $TAG but Cargo.toml says $CRATE"; exit 1; }
 
   build:
     name: Build ${{ matrix.target }}
@@ -45,6 +65,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -78,8 +100,7 @@ jobs:
       - name: Get version
         id: version
         run: |
-          VERSION="${{ github.ref_name }}"
-          echo "version=${VERSION#v}" >> $GITHUB_OUTPUT
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
         shell: bash
 
       - name: Package (Unix)
@@ -122,14 +143,19 @@ jobs:
   release:
     name: Publish the release
     needs: build
+    if: ${{ github.event_name == 'push' || inputs.publish }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
 
+      # Only the binaries: the container job's build record (`*.dockerbuild`) does not extract.
       - uses: actions/download-artifact@v4
         with:
           path: dist
+          pattern: satex-*
           merge-multiple: true
 
       - name: Checksums
@@ -138,7 +164,7 @@ jobs:
       - name: Release notes
         id: notes
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           if [ -f "doc/release-notes/$VERSION.md" ]; then
             echo "path=doc/release-notes/$VERSION.md" >> "$GITHUB_OUTPUT"
           fi
@@ -146,8 +172,10 @@ jobs:
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
           files: dist/*
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          overwrite_files: true
+          prerelease: ${{ contains(env.TAG, '-') }}
           body_path: ${{ steps.notes.outputs.path }}
           generate_release_notes: ${{ steps.notes.outputs.path == '' }}
 
@@ -155,7 +183,7 @@ jobs:
       - name: Benchmark the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run bench.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$GITHUB_REF_NAME" -f version="$GITHUB_REF_NAME"
+        run: gh workflow run bench.yml --repo "$GITHUB_REPOSITORY" --ref main -f ref="$TAG" -f version="$TAG"
 
       # The site names the released version; github-pages deploys from main only.
       - name: Refresh the site
@@ -167,6 +195,7 @@ jobs:
   docker:
     name: Publish the container image
     needs: check
+    if: ${{ github.event_name == 'push' || inputs.publish }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -174,6 +203,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
 
       # GHCR takes lowercase names only.
       - name: Image name
@@ -195,10 +226,13 @@ jobs:
         with:
           images: ${{ steps.image.outputs.name }}
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
 
+      # No build record artifact: the release job downloads artifacts, and the record is no zip.
       - uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: true
@@ -210,7 +244,7 @@ jobs:
   crate:
     name: Publish to crates.io
     needs: release
-    if: ${{ !contains(github.ref_name, '-') }}
+    if: ${{ !contains(inputs.tag || github.ref_name, '-') && (github.event_name == 'push' || inputs.publish) }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -218,10 +252,23 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ env.TAG }}
+      # A repeated run finds the version published and stops (crates.io never takes it twice).
+      - name: Already on crates.io
+        id: published
+        run: |
+          CRATE=$(sed -n 's/^name = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          if curl -sf -A "$GITHUB_REPOSITORY release" "https://crates.io/api/v1/crates/$CRATE/${TAG#v}" > /dev/null; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: dtolnay/rust-toolchain@stable
+        if: steps.published.outputs.yes != 'true'
       - uses: rust-lang/crates-io-auth-action@v1
+        if: steps.published.outputs.yes != 'true'
         id: auth
       - name: Publish
+        if: steps.published.outputs.yes != 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: cargo publish --locked
