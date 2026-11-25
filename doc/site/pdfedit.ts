@@ -1794,6 +1794,8 @@ declare global {
     const shape = f.shapes.get(cmd), first = (v: string[] | undefined) => shape ? v?.[shape.g[0]!] : v?.[0];
     return { t: values.every(Boolean) ? `${shape ? shape.pre : ''}${values.map(first).join(', ')}${shape ? shape.post : ''}` : '?', sure: false };
   }
+  /** An environment's arguments after its `\\begin{name}`: brackets and braces (two levels nested), none between. */
+  const ENV_ARGS = /(?:\[[^\]]*\]|\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\})*/y;
   /** The pieces prose `raw` sets, as the echo lays them out: markup dropped, a word split where its context changes. Each
    * piece its text, whether a space stands before it (`gap`), a blank line (`par`), a `\\\\` (`brk`), and its context `ctx`: the command
    * whose braced argument holds it (`textbf` of `\\textbf{…}`), else the last command before it in its group (`bfseries`
@@ -1827,6 +1829,9 @@ declare global {
       }
       // `\\\\` (its `*` and `[len]` too) ends the row: the next piece starts the next one (ltspace.dtx `\\@normalcr`)
       if (brk) { if (cur.t || cur.brk || !out.length) next(false); cur.brk = true; continue; }
+      // an environment's arguments (`[ht]`, a tabular's `{l>{…}p{3.9cm}r}`) are read by its `\\begin`, never set as text:
+      // the brackets and braces right after it
+      if (/^\\begin/.test(x)) { ENV_ARGS.lastIndex = re.lastIndex; ENV_ARGS.exec(raw); re.lastIndex = ENV_ARGS.lastIndex; continue; }
       if (com || x[0] === '\\' && !arg && !cmd) continue;
       if (cmd) { const sp = /[ \t]*(?:\n(?![ \t]*\n))?[ \t]*/y; sp.lastIndex = re.lastIndex; sp.exec(raw); re.lastIndex = sp.lastIndex; }
       // a box the run set for the command alone (`\\TeX{}`): it reads no argument, its braces are a group of their own

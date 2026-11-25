@@ -9047,6 +9047,8 @@
       tikzFrame = 0;
       if (e.target.closest?.('.pdf-tikz, .pa-menu, .tikz-input')) return;
       if (e.target.closest?.('.pdf-tikz-bend, .pdf-size, .pdf-forest-add')) return;
+      // between a forest node and its toolbar the toolbar stays
+      if (forestKeeps(tikzPoint(e))) return;
       tikzClear('.pdf-tikz, .pdf-tikz-path, .pdf-tikz-bend, .pdf-size, .pdf-forest-add');
       for (const el of pdfBody.querySelectorAll('.pdf-tikz-hot')) el.classList.remove('pdf-tikz-hot');
       const pt = tikzPoint(e), hit = tikzHit(pt);
@@ -9449,6 +9451,13 @@
     if (paFacts.key !== key) paFacts = { key, got: lsp('satex/view', { textDocument: { uri: uri() }, position: tikzPos(editor.text(), at) }).then((vs) => (vs ?? []).find((v) => v.plugin === 'tikz')?.sections?.find((s) => s.kind === 'drawing')?.run ?? null).catch(() => null) };
     return paFacts.got;
   }
+  /** The forest plugin's view of the tree at offset `at` (its nodes, the run's anchors and strut key), asked once per text. */
+  let forestFacts = { key: null, got: null };
+  function forestFactsOf(at) {
+    const key = `${runKey()}@${at}`;
+    if (forestFacts.key !== key) forestFacts = { key, got: lsp('satex/view', { textDocument: { uri: uri() }, position: tikzPos(editor.text(), at) }).then((vs) => (vs ?? []).find((v) => v.plugin === 'forest')?.sections?.find((s) => s.kind === 'forest') ?? null).catch(() => null) };
+    return forestFacts.got;
+  }
   /** The texts of the open file's document: the file and, when the root's last run read it, the other files that run read.
    * Another example's `\usetikzlibrary` is not this document's. */
   const docTexts = () => {
@@ -9458,8 +9467,8 @@
   /** A node picked for a new edge: the next click on a node of the pages or the Typeset view goes to `tikzLink.done`. */
   let tikzLink = null;
   const tikzLinkEnd = () => { tikzLink = null; document.body.classList.remove('tikz-linking'); };
-  function tikzPick(prompt, done) {
-    tikzLink = { done, prompt };
+  function tikzPick(prompt, done, forest = false) {
+    tikzLink = { done, prompt, forest };
     document.body.classList.add('tikz-linking');
     toast(prompt, 10000);
   }
@@ -9467,10 +9476,13 @@
   addEventListener('pointerdown', (e) => {
     if (!tikzLink || e.button !== 0) return;
     e.preventDefault(); e.stopPropagation();
-    const n = pdfBody.contains(e.target) ? tikzHit(tikzPoint(e))?.p.n : typesetBody.contains(e.target) ? tsTikzAt(e)?.n : null, { done, prompt } = tikzLink;
+    const { done, prompt, forest } = tikzLink;
+    // a forest pick wants a forest node (`forestAt`), else a TikZ node
+    const n = forest ? (pdfBody.contains(e.target) ? forestAt(tikzPoint(e)) : typesetBody.contains(e.target) ? tsForestAt(e)?.f : null)
+      : pdfBody.contains(e.target) ? tikzHit(tikzPoint(e))?.p.n : typesetBody.contains(e.target) ? tsTikzAt(e)?.n : null;
     tikzLinkEnd();
     toast.off(prompt);
-    if (n?.kind === 'node') done(n); else toast('No node there: no edge written');
+    if (forest ? n : n?.kind === 'node') done(n); else toast('No node there: no edge written');
   }, true);
   addEventListener('keydown', (e) => { if (tikzLink && e.key === 'Escape') { tikzLinkEnd(); toast('No edge written'); } }, true);
   /** previews.json's pictures (`arrow:-Stealth`: TeX's drawing of the tip), read once; none when the worker has no such file. */
@@ -9508,7 +9520,7 @@
   /** The menu of target `t` at screen point (x, y): the run's facts of a picture waited for a moment, then the plugins' groups. */
   async function paOpen(x, y, t, more = []) {
     const text = editor.text(), at = t.n?.from ?? t.e?.from;
-    const ctx = { text, all: docTexts(), x, y, facts: null, kernel: kernelDate, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, grid: tikzGrid, file: state.file, fonts: fontOffers, scratch: (b) => scratchOpen(b.file, b.from, b.to), insert: insertAt,
+    const ctx = { text, all: docTexts(), x, y, facts: null, kernel: kernelDate, write: (edits) => paWrite(text, edits), toast, pick: tikzPick, forestLink, grid: tikzGrid, file: state.file, fonts: fontOffers, scratch: (b) => scratchOpen(b.file, b.from, b.to), insert: insertAt,
       colAlign: (i, k, a, w, h) => { pdfColMenu = null; pdfColAlign({ dataset: { t: i, k, a, ...(w != null ? { w } : {}), ...(h ? { h } : {}) } }); },
       tableOp: (i, op) => { pdfColMenu = null; pdfTableOp(i, op); } };
     // the block around what was clicked, for a scratch slice of it
@@ -9520,6 +9532,7 @@
     else if (t.block?.file === state.file) t = { ...t, at: off(t.block.from), end: off(t.block.to) + (lines[t.block.to - 1]?.length ?? 0) };
     ctx.caret = (o) => { editor.select([o, o]); editor.refocus?.(); };
     if (at != null) { const late = new Promise((ok) => setTimeout(() => ok(null), 400)); [ctx.facts, ctx.previews] = await Promise.all([Promise.race([paFactsOf(at), late]), Promise.race([paPreviews(), late])]); }
+    else if (t.f) ctx.facts = await Promise.race([forestFactsOf(t.f.from), new Promise((ok) => setTimeout(() => ok(null), 400))]);
     if (editor.text() !== text) return null;
     return PA.open(x, y, paTitle(t), [...PA.groups(t, ctx, configSet), ...more]);
   }
@@ -9722,13 +9735,35 @@
     const f = forestAt(pt), w = f && pdfWordUnder(pt[0], pt[1], pt[2]), img = pt[4];
     if (!w) return;
     const [pw, ph] = pageSize(img), el = Object.assign(document.createElement('span'), { className: 'pdf-forest-add' });
-    el.style.cssText = `left:${(w[3] + 2) / pw * 100}%;top:${w[2] / ph * 100}%`;
+    el.style.cssText = `left:${(w[3] + 1) / pw * 100}%;top:${(w[2] + w[4]) / 2 / ph * 100}%`;
     el.innerHTML = forestButtons(f, true);
     img.parentElement.append(el);
-    forestHover = f;
+    // the bridge: the word and the toolbar with a margin, in page units; the pointer crossing it keeps the toolbar
+    const r = el.getBoundingClientRect(), ir = img.getBoundingClientRect(), u = pw / ir.width, m = 6 * u;
+    const box = [w[1] - m, Math.min(w[2], (r.top - ir.top) * u) - m, (r.right - ir.left) * u + m, Math.max(w[4], (r.bottom - ir.top) * u) + m];
+    forestHover = { ...f, img, box };
   }
-  /** The + buttons of forest node `f`: a child, a sibling, the drag handle (`drag`: offered). */
-  const forestButtons = (f, drag) => `<button type="button" data-add="child" title="Add a child below ${escape(f.n.content || 'this node')}">+↓</button>${FOREST.parentOf(f.t, f.n) ? `<button type="button" data-add="sibling" title="Add a sibling after ${escape(f.n.content || 'this node')}">+→</button>${drag ? `<button type="button" data-add="drag" class="pdf-forest-drag" title="Drag ${escape(f.n.content || 'this node')} with its subtree onto another node: its left part puts it before, its right part after, its middle makes it a child">⠿</button>` : ''}` : ''}`;
+  /** Whether page point `pt` is in the hovered forest node's bridge: the toolbar stays. */
+  const forestKeeps = (pt) => { const b = forestHover?.box; return !!(b && pt && pt[4] === forestHover.img && pt[1] >= b[0] && pt[1] <= b[2] && pt[2] >= b[1] && pt[2] <= b[3] && pdfBody.querySelector('.pdf-forest-add')); };
+  /** The toolbar of forest node `f`: a child, a sibling, moves among its siblings, a line to another node, delete, the drag handle (`drag`: offered). */
+  const forestButtons = (f, drag) => {
+    const c = escape(f.n.content || 'this node'), p = FOREST.parentOf(f.t, f.n), k = p ? p.children.indexOf(f.n) : -1;
+    const b = (add, label, title, off = false, cls = '') => `<button type="button" data-add="${add}"${cls ? ` class="${cls}"` : ''} title="${title}" aria-label="${title}"${off ? ' disabled' : ''}>${label}</button>`;
+    return b('child', '+↓', `Add a child below ${c}`) + (p ? b('sibling', '+→', `Add a sibling after ${c}`) + b('left', '←', `Move ${c} before its left sibling`, k === 0) + b('right', '→', `Move ${c} after its right sibling`, k === p.children.length - 1) : '')
+      + b('link', '⤳', `Draw a line from ${c} to another node: click it next`) + (p ? b('delete', '✕', f.n.children.length ? `Delete ${c} with its subtree` : `Delete ${c}`, false, 'pdf-forest-del') : '')
+      + (p && drag ? b('drag', '⠿', `Drag ${c} with its subtree onto another node: its left part puts it before, its right part after, its middle makes it a child`, false, 'pdf-forest-drag') : '');
+  };
+  /** A line from forest node `f` to the node clicked next (forest widget `link`), drawn after the tree; one undo step. */
+  function forestLink(f) {
+    const text = editor.text();
+    tikzPick(`Click the node the line from ${f.n.content || 'this node'} goes to (Escape: none)`, (g) => {
+      const b = g.from === f.from && forestOrder(f.t.root)[forestOrder(g.t.root).indexOf(g.n)];
+      if (editor.text() !== text || !b || b === f.n) return toast('Not another node of this tree: no line written');
+      FOREST.link(f.t, f.n, b);
+      FOREST.settle(f.t);
+      paWrite(text, [{ from: f.from, to: f.to, now: FOREST.emit(f.t) }]);
+    }, true);
+  }
   // a press on a + button, on the pages or over the Typeset view: the tree written with the new node
   addEventListener('pointerdown', (e) => {
     const b = e.target.closest?.('.pdf-forest-add button, .ts-forest-add button'), f = forestHover;
@@ -9736,8 +9771,12 @@
     e.preventDefault(); e.stopPropagation();
     const text = editor.text();
     if (text.slice(f.from, f.to) !== f.body) return;
-    if (b.dataset.add === 'drag') return forestDrag(e, f, text);
-    if (b.dataset.add === 'child') FOREST.addChild(f.n); else FOREST.addSibling(f.t, f.n);
+    const add = b.dataset.add;
+    if (add === 'drag') return forestDrag(e, f, text);
+    tikzClear('.pdf-forest-add'); for (const el of document.querySelectorAll('.ts-forest-add')) el.remove();
+    if (add === 'link') return forestLink(f);
+    const done = add === 'child' ? FOREST.addChild(f.n) : add === 'sibling' ? FOREST.addSibling(f.t, f.n) : add === 'delete' ? FOREST.remove(f.t, f.n) : FOREST.shift(f.t, f.n, add === 'left' ? -1 : 1);
+    if (!done) return;
     f.n.dirty = true;
     FOREST.settle(f.t);
     tikzClear('.pdf-forest-add'); for (const el of document.querySelectorAll('.ts-forest-add')) el.remove();
@@ -9746,15 +9785,20 @@
   // the Typeset view's sketch: the same + buttons beside a forest node's text
   typesetBody.addEventListener('pointermove', (e) => {
     if (e.target.closest?.('.ts-forest-add')) return;
+    // between the text and its toolbar (their box, 6px around) the toolbar stays
+    const kept = document.querySelector('.ts-forest-add'), k = kept?.box;
+    if (k && e.clientX >= k[0] - 6 && e.clientX <= k[2] + 6 && e.clientY >= k[1] - 6 && e.clientY <= k[3] + 6) return;
     const t = e.target.closest?.('.ts-sketch text'), f = t && tsForestAt(e)?.f;
     for (const el of document.querySelectorAll('.ts-forest-add')) if (!f || el.dataset.key !== `${f.from}:${f.n.content}`) el.remove();
     if (!f || document.querySelector('.ts-forest-add')) return;
     forestHover = f;
     const r = t.getBoundingClientRect(), el = Object.assign(document.createElement('span'), { className: 'ts-forest-add' });
     el.dataset.key = `${f.from}:${f.n.content}`;
-    el.style.cssText = `left:${r.right + 3}px;top:${r.top - 2}px`;
+    el.style.cssText = `left:${r.right + 2}px;top:${r.top - 2}px`;
     el.innerHTML = forestButtons(f, false);
     document.body.append(el);
+    const q = el.getBoundingClientRect();
+    el.box = [r.left, Math.min(r.top, q.top), q.right, Math.max(r.bottom, q.bottom)];
   });
   typesetBody.addEventListener('pointerleave', (e) => { if (!e.relatedTarget?.closest?.('.ts-forest-add')) for (const el of document.querySelectorAll('.ts-forest-add')) el.remove(); });
   /** The nodes of a tree in the order they are written. */
@@ -10240,6 +10284,11 @@
       if (pdfCaret && entry.file === state.file && PE.shortTitle(editor.text(), entry.head, 0)) pdfCaret.pending = pdfShortTitle(pdfCaret, entry.head);
       return;
     }
+    // a contents line's number or page (`2`, `4`): generated, never the source line SyncTeX names (`\tableofcontents`)
+    if (list) return toast('Not typed here: a contents line\'s number and page are generated. Type on its title');
+    // a bibliography row: its text is written in the `.bib` entry
+    const gen = word && pdfGenBox(page, word);
+    if (gen) return pdfBibAt(page, x, word, gen);
     // a click between lines or in the margin: say why no caret came; an image's own glyphs are the image's
     // an empty table cell: its place in the source
     if (!word && pdfCellCaret(page, x, y)) return;
@@ -10309,6 +10358,56 @@
     if (!e) return null;
     const text = e[0] === state.file ? editor.text() : state.texts[e[0]];
     return { file: e[0], line: text.slice(0, e[1]).split('\n').length, span: [e[1], e[2]], head: e[3] };
+  }
+  /** The SyncTeX box of a bibliography (`.bbl`) line a word of page `page` is set on, null if none. */
+  const pdfGenBox = (page, word) => pdfBoxesOn(page).find((b) => /\.bbl$/.test(b.file) && Math.abs(b.y - word[4]) <= 4) ?? null;
+  /** The project's texts as now: the open file's from the editor. */
+  const pdfTexts = () => ({ ...state.texts, [state.file]: editor.text() });
+  /** Text as a list sets it: commands and braces dropped, spaces joined. */
+  const pdfShownText = (t) => t.replace(/\\[A-Za-z@]+\*?\s*/g, '').replace(/\\(.)/g, '$1').replace(/[{}]/g, '').replace(/~/g, ' ').replace(/\s+/g, ' ').trim().normalize('NFKC');
+  /** The `.bbl` the build wrote (its SyncTeX name `file`), as text: asked once per build. */
+  const pdfBblOf = new WeakMap();
+  async function pdfBbl(file) {
+    const b = pdf, name = (b.outputs ?? []).map((o) => o.name).find((n) => file.endsWith(n) || n.endsWith(file.split('/').pop()));
+    if (!pdfBblOf.has(b)) pdfBblOf.set(b, name ? fetch(b.blobs?.[name] ?? `${COMPILE}/${b.base}${name}`).then((r) => (r.ok ? r.text() : null)).catch(() => null) : Promise.resolve(null));
+    return pdfBblOf.get(b);
+  }
+  /** The `}` closing the `{` at `i` of `t`, -1 if none. */
+  const pdfBraceEnd = (t, i) => { for (let d = 0, j = i; j < t.length; j++) { if (t[j] === '\\') { j++; continue; } if (t[j] === '{') d++; else if (t[j] === '}' && --d === 0) return j; } return -1; };
+  /** The `.bib` entries of the project: key, file, the entry's span and its fields, each [name, from, to] of its value. */
+  function pdfBibEntries() {
+    const out = [];
+    for (const [file, text] of Object.entries(pdfTexts())) {
+      if (typeof text !== 'string' || !/\.bib$/.test(file)) continue;
+      for (const m of text.matchAll(/@(\w+)\s*\{\s*([^,\s]+)\s*,/g)) {
+        if (/^(comment|string|preamble)$/i.test(m[1])) continue;
+        const fields = [], end = text.indexOf('\n@', m.index + 1) < 0 ? text.length : text.indexOf('\n@', m.index + 1);
+        for (const f of text.slice(m.index, end).matchAll(/(\w+)\s*=\s*([{"]?)/g)) {
+          const a = m.index + f.index + f[0].length;
+          const b = f[2] === '{' ? pdfBraceEnd(text, a - 1) : f[2] === '"' ? text.indexOf('"', a) : a + /^[^,}\s]*/.exec(text.slice(a))[0].length;
+          if (b >= a) fields.push([f[1].toLowerCase(), a, b]);
+        }
+        out.push({ key: m[2], file, fields });
+      }
+    }
+    return out;
+  }
+  /** A click on a bibliography row: the caret goes into the `.bib` field the clicked word is written in, of the entry
+   * the build's `.bbl` sets there (the last `\bibitem{key}` at or before its SyncTeX line); where no field spells it
+   * (a style's own words), the bibliography manager opens on the entry. */
+  async function pdfBibAt(page, x, word, box) {
+    const bbl = await pdfBbl(box.file), entries = pdfBibEntries(), bare = word[5].normalize('NFKC').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '');
+    const key = bbl && [...bbl.split('\n').slice(0, box.line).join('\n').matchAll(/\\bibitem\s*(?:\[[^\]]*\])?\s*\{([^}]*)\}/g)].at(-1)?.[1];
+    // without the `.bbl`: the entry spelling most of the row's words
+    const row = pdfWordsOn(page).filter((w) => Math.abs(w[4] - word[4]) < 1).map((w) => w[5].normalize('NFKC').replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(Boolean);
+    const score = (e) => { const t = pdfTexts()[e.file], all = pdfShownText(e.fields.map(([, a, b]) => t.slice(a, b)).join(' ')); return row.filter((w) => all.includes(w)).length; };
+    const e = key ? entries.find((x) => x.key === key) : entries.map((x) => [x, score(x)]).filter(([, s]) => s > 0).sort((p, q) => q[1] - p[1])[0]?.[0];
+    if (!e) return toast(key ? `Not typed here: no .bib entry ${key} in your files` : 'Not typed here: no .bib entry of your files sets this');
+    // the field spelling the word, in any case (styles lowercase titles): the source's spelling is typed into
+    const text = pdfTexts()[e.file], re = bare && new RegExp(`(?<![\\p{L}\\p{N}\\\\])${bare.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\p{L}\\p{N}])`, 'iu');
+    const f = re && e.fields.map(([, a, b]) => [a, b, re.exec(text.slice(a, b))]).find((x) => x[2]);
+    if (!f) { toast(`“${word[5]}” is set by the bibliography style: edit ${e.key} here`); return manage('bibliography', { q: e.key }); }
+    return caretPut({ view: 'pdf', page, word, entry: true }, e.file, pdfPos(text, f[0]).line + 1, f[2][0], Math.min(pdfK(page, x, word), bare.length), () => 0, () => null, false, [f[0], f[1]]);
   }
   /** The SyncTeX box of a `.toc`, `.lof` or `.lot` line a word of page `page` is set on, null if none. */
   const pdfListBox = (page, word) => {
@@ -10383,9 +10482,14 @@
     const ws = pdfWordsOn(page), fl = pdfFootLine(page), band = fl ? ws.filter((w) => Math.abs(w[4] - fl[0]) < 1) : [];
     const spot = third(x), cell = band.filter((w) => third((w[1] + w[3]) / 2) === spot), ref = cell[0] ?? band[0] ?? word ?? ws.at(-1);
     if (!ref) return;
-    const num = band.map((w) => w[5].trim()).find((t) => /^(\d+|[ivxlcdm]+|[IVXLCDM]+)$/.test(t)) ?? String(page), font = pdfFontOf(img, ref);
+    const font = pdfFontOf(img, ref);
     const pkg0 = s.header?.package ?? null, letterOf = (p) => (p === 'scrlayer-scrpage' ? 'ico' : 'LCR')[spot], text = editor.text();
     const setup = self.satexViews.page.footSetup(s, spot, !!pkg0 && !!PE.footArg(text, pkg0, letterOf(pkg0)));
+    // a footer set up that this page prints nothing of (`\\thispagestyle{empty}`, a title page): its cell is not here
+    const arg0 = !setup.nodes.length && PE.footArg(text, setup.package, setup.letter);
+    if (arg0 && !band.length && PE.footShown(text.slice(...arg0), String(page)).trim()) return toast(`Not typed here: page ${page} prints no footer (its page style sets none)`);
+    // the number as the page prints it; none printed where the footer is set up already (never the page's index)
+    const num = band.map((w) => w[5].trim()).find((t) => /^(\d+|[ivxlcdm]+|[IVXLCDM]+)$/.test(t)) ?? (arg0 ? '' : String(page));
     // the number clicked: the caret before or after its command, else at the cell's end
     const onNum = word && cell.includes(word) && word[5].trim() === num, after = onNum && pdfK(page, x, word) > 0;
     const place = (t) => {
@@ -10424,10 +10528,13 @@
     const all = arg ? PE.footShown(g.text.slice(...arg), f.num) : f.shown, upto = arg ? PE.footShown(g.text.slice(arg[0], Math.min(Math.max(g.at, arg[0]), arg[1])), f.num) : f.shown.slice(0, f.k);
     const px = img.getBoundingClientRect().height / ph, ctx = pdfEchoCtx ??= document.createElement('canvas').getContext('2d'), size = f.font.size;
     ctx.font = `${size}px ${f.font.family}`;
-    const width = (t) => pdfTextWidth(ctx, f.font, t, size), W = width(all), x0 = f.spot === 0 ? f.l : f.spot === 2 ? f.r - W : (f.l + f.r - W) / 2;
+    // the cell as the page set it (nothing typed yet): the caret on the page's own glyphs, no echo over them (it drew a
+    // second number beside the first: `23` for `2`)
+    const width = (t) => pdfTextWidth(ctx, f.font, t, size), W = width(all), same = all === f.shown && f.cover.length > 0;
+    const x0 = same ? f.cover[0][1] : f.spot === 0 ? f.l : f.spot === 2 ? f.r - W : (f.l + f.r - W) / 2;
     const top = f.base - 0.75 * size, cov = f.cover, a = Math.min(x0, ...cov.map((w) => w[1])) - 1, b = Math.max(x0 + W, ...cov.map((w) => w[3])) + 1;
     // the cell as the page set it hidden while it differs, the text as written over it
-    if (arg && (all !== f.shown || cov.length)) img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${a / pw * 100}%;top:${(top - 1) / ph * 100}%;width:${(b - a) / pw * 100}%;height:${(size + 2) / ph * 100}%;font:${size * px}px/1 ${f.font.family}"><i style="left:${(x0 - a) / (b - a) * 100}%;width:${W / (b - a) * 100}%">${escape(all)}</i></span>`);
+    if (arg && !same) img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-echo" style="left:${a / pw * 100}%;top:${(top - 1) / ph * 100}%;width:${(b - a) / pw * 100}%;height:${(size + 2) / ph * 100}%;font:${size * px}px/1 ${f.font.family}"><i style="left:${(x0 - a) / (b - a) * 100}%;width:${W / (b - a) * 100}%">${escape(all)}</i></span>`);
     img.parentElement.insertAdjacentHTML('beforeend', `<span class="pdf-caret" style="left:${(x0 + width(upto)) / pw * 100}%;top:${top / ph * 100}%;height:${size / ph * 100}%"></span>`);
   }
   /** A click on empty page space in Type mode (PE.blankPlace over the page's lines): a line's end or start, the
@@ -11251,7 +11358,9 @@
     let w, cx, mathBox;
     // the build is the text: else the change is echoed (below), also one after the caret (an arrow key moved it back,
     // a key deleted at a word's end: the page still shows the deleted glyphs)
-    if (!open && P >= g.at && B === g.text) {
+    // a change past the caret's paragraph (a table's column spec the widget wrote) is no text of its row: the paragraph
+    // stands as built (else the change's arguments were echoed after it as prose: `runs. [ht] l>p3.9cmr`)
+    if (!open && P >= g.at && (B === g.text || P >= PE.paragraph(g.text, g.at)[1])) {
       // the build is the text up to the caret: the caret in the word that holds it, else before the next one
       const t = para.find((t) => t.s <= g.at && g.at <= t.e), next = para.find((t) => t.s >= g.at), prev = para.findLast((t) => t.e <= g.at);
       // where the click put it, on the build it clicked, while no key moved it: the clicked glyph's own box, never

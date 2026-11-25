@@ -129,6 +129,12 @@ test('prose: the context of a command argument or a group declaration', () => {
   assert.equal(prose('{a \\bfseries b} c'), 'a _b:bfseries _c');
   assert.equal(prose('a \\foo b'), 'a _b:foo');
 });
+// Intuition: an environment's arguments are read by its `\begin`, never set. Pins the thesis's table (user 2026-11-25):
+// the echo of `runs.` ran on into the float and showed `runs. [ht] l>p3.9cmr`.
+test('prose: an environment\'s arguments set nothing', () => {
+  assert.equal(prose('runs.\n\\begin{table}[ht]\n\\centering\n\\begin{tabular}{l>{\\raggedleft\\arraybackslash}p{3.9cm}r}\nDoc'), 'runs. _Doc:centering');
+  assert.equal(prose('\\begin{center} x \\end{center}'), ' _x _');
+});
 // Intuition: TeX skips the spaces after a control word (one line end too, never a blank line), and a symbol command
 // sets its glyph. Pins title-markup: ` a\S $x_1` echoed as `a x` (a space, no §), the caret 6 px short of the build's.
 test('prose: a control word eats its spaces, a symbol sets its glyph', () => {

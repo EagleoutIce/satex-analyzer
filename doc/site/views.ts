@@ -2464,6 +2464,58 @@ const satexViews = (() => {
       t.pre = rest ? `${lead}for tree={${text}}, ${rest}` : `${t.root.place ?? '\n'}for tree={${text}}`;
     }
   }
+  // a node's keys by name: `k=v` items of its options
+  const keyOf = (o: string) => o.split('=')[0]!.trim();
+  /** Key `k` of node `n`: its value ('' bare), null when not set. */
+  const valOf = (n: TNode, k: string) => { const o = n.opts.find((x) => keyOf(x) === k); return o == null ? null : o.includes('=') ? o.slice(o.indexOf('=') + 1).trim() : ''; };
+  /** Sets key `k` of node `n` to `v` (null: the key goes). */
+  const setKey = (n: TNode, k: string, v: string | null) => { n.opts = [...n.opts.filter((o) => keyOf(o) !== k), ...v == null ? [] : [`${k}=${v}`]]; n.dirty = true; };
+  const order = (n: TNode): TNode[] => [n, ...n.children.flatMap(order)];
+  /** The label of the edge into `n`, as forest writes it on the child: `edge label={node[midway, side]{text}}`. */
+  const EDGE_LABEL = /^\s*node\s*\[([^\]]*)\]\s*\{([^]*)\}\s*$/;
+  const edgeLabel = (n: TNode) => { const m = EDGE_LABEL.exec((valOf(n, 'edge label') ?? '').replace(/^\{([^]*)\}$/, '$1')); return m ? { text: m[2]!, side: splitTop(m[1]!).find((k) => k !== 'midway') ?? '' } : null; };
+  const setEdgeLabel = (n: TNode, text: string, side: string) => setKey(n, 'edge label', text.trim() ? `{node[${['midway', side].filter(Boolean).join(', ')}]{${text}}}` : null);
+  /** Node `n`'s name: its `name` key, else one made from its text, unique in the tree and among `taken` (the run's), written on it. */
+  function nameFor(t: Tree, n: TNode, taken: string[] = []) {
+    const own = valOf(n, 'name');
+    if (own) return own.replace(/^\{(.*)\}$/, '$1');
+    const all = [...taken, ...order(t.root).map((x) => valOf(x, 'name') ?? '')], base = n.content.replace(/\\[a-zA-Z]+/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '') || 'node';
+    let name = base;
+    for (let k = 2; all.includes(name); k++) name = `${base}${k}`;
+    setKey(n, 'name', name);
+    return name;
+  }
+  /** The lines drawn after the tree between named nodes (`\draw[->] (a) -- (b);`): each one's place in `post`, options and ends. */
+  const LINK = /\\draw\s*(?:\[([^\]]*)\])?\s*\(([^().\s]+)(?:\.[^)]*)?\)\s*(?:--|to\b(?:\s*\[[^\]]*\])?)\s*\(([^().\s]+)(?:\.[^)]*)?\)\s*;/g;
+  const linksOf = (t: Tree) => [...t.post.matchAll(LINK)].map((m) => ({ from: m.index!, to: m.index! + m[0].length, opts: m[1] ?? '', a: m[2]!, b: m[3]! }));
+  /** A line from node `a` to `b` (TikZ options `opts`) drawn on top of the tree: forest runs the code after the tree in its picture. */
+  function link(t: Tree, a: TNode, b: TNode, taken: string[] = [], opts = '->') {
+    const x = nameFor(t, a, taken), y = nameFor(t, b, taken), tail = t.post.match(/\s*$/)![0];
+    t.post = `${t.post.slice(0, t.post.length - tail.length)}\n  \\draw[${opts}] (${x}) -- (${y});${tail || '\n'}`;
+  }
+  const unlink = (t: Tree, k: number) => { const l = linksOf(t)[k]; if (l) t.post = t.post.slice(0, l.from).replace(/\n[ \t]*$/, '') + t.post.slice(l.to); };
+  /** Adds item `item` to the preamble's key list. */
+  const preAdd = (t: Tree, item: string) => { t.pre = !t.pre.trim() ? `${t.root.place ?? '\n'}${item}` : /,\s*$/.test(t.pre) ? `${t.pre} ${item}` : `${t.pre}, ${item}`; };
+  /** The braces of `where level=N{…}{…}` in the preamble: start of the item, its first group's inside, the item's end; null without one. */
+  function whereLevel(pre: string, lvl: number) {
+    const m = new RegExp(`where\\s+level\\s*=\\s*${lvl}\\s*\\{`).exec(pre);
+    if (!m) return null;
+    const close = (i: number) => { for (let d = 1; i < pre.length; i++) { if (pre[i] === '\\') i++; else if (pre[i] === '{') d++; else if (pre[i] === '}' && !--d) return i; } return -1; };
+    const a = m.index + m[0].length, b = close(a), c = b < 0 ? -1 : pre.slice(b + 1).match(/^\s*\{/)?.[0].length ?? -1, e = c < 0 ? b + 1 : close(b + 1 + c) + 1;
+    return b < 0 || e <= 0 ? null : { item: m.index, keys: [a, b] as [number, number], end: e };
+  }
+  /** The nodes on level `lvl` styled with `keys` (`where level=lvl{keys}{}`); empty keys drop the item. */
+  function setWhereLevel(t: Tree, lvl: number, keys: string) {
+    const w = whereLevel(t.pre, lvl);
+    if (w && keys.trim()) t.pre = t.pre.slice(0, w.keys[0]) + keys + t.pre.slice(w.keys[1]);
+    else if (w) t.pre = (t.pre.slice(0, w.item).replace(/,\s*$/, '') + t.pre.slice(w.end).replace(/^\s*,\s*/, t.pre.slice(0, w.item).trim() ? ', ' : '')).replace(/^\s*$/, '');
+    else if (keys.trim()) preAdd(t, `where level=${lvl}{${keys}}{}`);
+  }
+  /** The keys of `for tree` as a list, and setting key `key` there on or off. */
+  const forTreeKeys = (t: Tree) => { const f = forTree(t.pre); return f ? splitTop(t.pre.slice(...f)) : []; };
+  const forTreeToggle = (t: Tree, key: string, on: boolean) => setForTree(t, [...forTreeKeys(t).filter((k) => k !== key), ...on ? [key] : []].join(', '));
+  /** Where an edge meets a node box of half width `w` and half height `h` at anchor `a` (forest's default: `dflt`), as an offset. */
+  const treeAnchor = (a: string | null, w: number, h: number, dflt: string) => { const s = a || dflt; return [/east/.test(s) ? w : /west/.test(s) ? -w : 0, /north/.test(s) ? -h : /south/.test(s) ? h : 0]; };
   // presets of the tree dialog: a preset names option sets (each a choice of keys, '' none) and the styles that
   // define the keys; it is on when a tree uses its keys, or started from its template
   // a group's arc between its first and last edge, 3mm below the parent (calc comes with forest)
@@ -2518,7 +2570,8 @@ const satexViews = (() => {
     walk(root, 0);
     return out;
   }
-  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf };
+  const forestFns = { splitTop, head, parse: treeParse, emit: treeEmit, settle, fresh, outlineIn, outlineOut, move, forTree, setForTree, layout: treeLayout, PRESETS, presetOf, optOf, setOpt: setPresetOpt, addChild, addSibling, remove, shift, constraintsOf, setConstraints, parentOf,
+    valOf, setKey, edgeLabel, setEdgeLabel, nameFor, linksOf, link, unlink, whereLevel, setWhereLevel, forTreeKeys, forTreeToggle };
 
   function forest(s: Rec, view: Rec, ctx: ViewCtx) {
     const root = el('div', 'tv-draw tv-forest');
@@ -2531,11 +2584,20 @@ const satexViews = (() => {
     const ran = () => { const order: TNode[] = []; const pre = (n: TNode) => { order.push(n); n.children.forEach(pre); }; pre(t.root);
       return (s.nodes ?? []).length === order.length && s.nodes.every((r: Rec, k: number) => r.content === order[k]!.content) ? new Map<TNode, Rec>(order.map((n, k): [TNode, Rec] => [n, s.nodes[k]])) : new Map<TNode, Rec>(); };
     let run = ran();
-    let sel = t.root, dragging: TNode | null = null;
+    // the selection: a node, else the edge into `edge`, else line `line` drawn after the tree; `linking`: a line's start, its end picked next
+    let sel = t.root, dragging: TNode | null = null, edge: TNode | null = null, line: number | null = null, linking: TNode | null = null, level = 1;
+    const unselect = () => { edge = null; line = null; };
     // undo: the shared history of the tree's data; a step back selects the root
-    const H = self.satexDialogs.history(() => t, (v: Tree) => { t = v; sel = t.root; run = ran(); draw(); });
+    const H = self.satexDialogs.history(() => t, (v: Tree) => { t = v; sel = t.root; unselect(); run = ran(); draw(); });
     const changed = () => H.changed;
     const svg = svgEl('svg', { class: 'tv-canvas', role: 'img', 'aria-label': 'tree' });
+    // the selected node's actions float beside it over the canvas
+    const stage = el('div', 'tv-forest-stage'), bar = el('div', 'tv-forest-bar');
+    bar.setAttribute('role', 'toolbar');
+    bar.ariaLabel = 'node actions';
+    stage.append(svg, bar);
+    // the names the run gave the nodes: a new name never takes one
+    const runNames = () => [...run.values()].map((r) => String(r.name ?? ''));
     const form = el('div', 'tv-forest-form');
     const status = el('span', 'tv-muted');
     const touch = () => { H.settle(); draw(); };
@@ -2561,6 +2623,7 @@ const satexViews = (() => {
       return labelled(label, box);
     };
     const at = (e: { clientX: number; clientY: number }) => { const p = svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY; return p.matrixTransform(svg.getScreenCTM()!.inverse()); };
+    const depthOf = (x: TNode): number => { const p = parentOf(t, x); return p ? depthOf(p) + 1 : 0; };
     function drawTree() {
       const fm = presetOf(t);
       // the preset's look at once (`fm feature`: sans serif, tight corners), before any node has a kind
@@ -2578,8 +2641,28 @@ const satexViews = (() => {
       const w = Math.max(8, Math.max(...xs) - Math.min(...xs) + 2), h = Math.max(4, Math.max(...ys) - Math.min(...ys) + 1.2);
       const box = [(Math.max(...xs) + Math.min(...xs) - w) / 2, -Math.max(...ys) - 0.6, w, h];
       svg.setAttribute('viewBox', box.join(' '));
-      const out = [];
-      for (const p of pos) for (const c of p.n.children) out.push(svgEl('line', { class: 'tv-tree-edge', x1: p.x, y1: -p.y + 0.2, x2: by.get(c)!.x, y2: -by.get(c)!.y - 0.2 }));
+      const out: SVGElement[] = [];
+      // an edge from the parent's `parent anchor` to the child's `child anchor` (forest: south and north when the tree grows down); a click selects it
+      const end = (n: TNode, k: string, dflt: string) => { const q = by.get(n)!, [dx, dy] = treeAnchor(valOf(n, k), wide(n) / 2, 0.2, dflt); return [q.x + dx, -q.y + dy]; };
+      for (const p of pos) for (const c of p.n.children) {
+        const [x1, y1] = end(p.n, 'parent anchor', 'south'), [x2, y2] = end(c, 'child anchor', 'north'), g = svgEl('g', { class: `tv-edge${edge === c ? ' on' : ''}`, 'data-child': c.content });
+        g.append(svgEl('line', { class: 'tv-tree-edge', x1, y1, x2, y2 }), svgEl('line', { class: 'tv-hit', x1, y1, x2, y2, 'stroke-width': 0.22 }));
+        const lab = edgeLabel(c);
+        if (lab) g.append(Object.assign(svgEl('text', { class: 'tv-edge-label', x: (x1 + x2) / 2 + (lab.side === 'left' ? -0.25 : lab.side === 'right' ? 0.25 : 0), y: (y1 + y2) / 2 }), { textContent: lab.text }));
+        g.onpointerdown = (e) => { e.stopPropagation(); unselect(); edge = c; draw(); };
+        out.push(g);
+      }
+      // the lines drawn after the tree between named nodes, dashed, an arrow where they end
+      const named = (x: string) => pos.find((p) => (valOf(p.n, 'name') ?? run.get(p.n)?.name) === x);
+      linksOf(t).forEach((l, k) => {
+        const a = named(l.a), b = named(l.b);
+        if (!a || !b) return;
+        const g = svgEl('g', { class: `tv-edge tv-tree-link${line === k ? ' on' : ''}` }), d = `M${a.x} ${-a.y} L${b.x} ${-b.y}`;
+        g.append(svgEl('path', { d, ...(/>/.test(l.opts) ? { 'marker-end': 'url(#tv-tree-tip)' } : {}) }), svgEl('path', { class: 'tv-hit', d, 'stroke-width': 0.22 }));
+        g.onpointerdown = (e) => { e.stopPropagation(); unselect(); line = k; draw(); };
+        out.push(g);
+      });
+      out.unshift(Object.assign(svgEl('defs'), { innerHTML: '<marker id="tv-tree-tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker>' }));
       // a feature model's marks as its styles draw them: a circle where an edge meets the child, an arc under a group
       if (fm) for (const p of pos) {
         const kind = optOf(fm, p.n, 'kind'), group = optOf(fm, p.n, 'group'), kids = p.n.children.map((c) => by.get(c)!);
@@ -2597,7 +2680,12 @@ const satexViews = (() => {
         g.append(svgEl('rect', { x: p.x - w / 2, y: -p.y - 0.2, width: w, height: 0.4, rx: fm ? 0.035 : 0.08 }), Object.assign(svgEl('text', { x: p.x, y: -p.y }), { textContent: label }));
         const name = run.get(p.n)?.name;
         if (name) g.append(Object.assign(svgEl('title'), { textContent: `name: ${name}` }));
-        g.onpointerdown = (e) => { e.stopPropagation(); sel = p.n; dragging = p.n; try { svg.setPointerCapture(e.pointerId); } catch { /* synthetic */ } draw(); };
+        g.onpointerdown = (e) => {
+          e.stopPropagation();
+          // a line being drawn ends at the node pressed
+          if (linking) { const a = linking; linking = null; if (a !== p.n) { link(t, a, p.n, runNames()); line = linksOf(t).length - 1; edge = null; touch(); } else draw(); return; }
+          sel = p.n; unselect(); dragging = p.n; try { svg.setPointerCapture(e.pointerId); } catch { /* synthetic */ } draw();
+        };
         g.dataset.x = String(p.x); g.dataset.w = String(w);
         out.push(g);
         p.g = g;
@@ -2614,33 +2702,75 @@ const satexViews = (() => {
       };
       svg.replaceChildren(...out);
     }
+    /** The selected node's toolbar beside it over the canvas (left of it at the canvas' right edge); none while an edge or line is selected. */
+    function placeBar() {
+      const g = svg.querySelector('.tv-node.on');
+      bar.hidden = !g || edge != null || line != null;
+      if (bar.hidden || !stage.isConnected) return;
+      const r = g!.getBoundingClientRect(), box = stage.getBoundingClientRect(), right = r.right - box.left + 4;
+      bar.style.left = `${right + bar.offsetWidth > box.width ? Math.max(0, r.left - box.left - 4 - bar.offsetWidth) : right}px`;
+      bar.style.top = `${r.top - box.top + r.height / 2}px`;
+    }
     function draw() {
       drawTree();
       const n = sel, parent = parentOf(t, n), fm = presetOf(t);
-      form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
+      // the toolbar: the tree around the selected node, one undo step each
+      const act = (f: () => TNode | null) => () => { const to = f(); if (to) { sel = to; touch(); } };
+      const tool = (label: string, title: string, f: () => void, off = false) => { const b = el('button', 'tv-tool', esc(label)); b.type = 'button'; b.title = title; b.ariaLabel = title; b.disabled = off; b.onclick = f; bar.append(b); };
+      bar.replaceChildren();
+      tool('+↓', 'Add child', act(() => addChild(n)));
+      if (parent) {
+        const k = parent.children.indexOf(n);
+        tool('+→', 'Add sibling', act(() => addSibling(t, n)));
+        tool('←', 'Move before its left sibling', act(() => shift(t, n, -1)), k === 0);
+        tool('→', 'Move after its right sibling', act(() => shift(t, n, 1)), k === parent.children.length - 1);
+      }
+      tool('⤳', 'Draw a line to another node: click it next', () => { linking = n; status.textContent = `click the node the line from ${n.content || 'this node'} goes to`; });
+      // a subtree goes as one undoable step; the status says what went
+      if (parent) tool('✕', n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node',
+        () => { act(() => remove(t, n))(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; });
+      requestAnimationFrame(placeBar);
+      const label = (x: TNode) => x.content.replace(/^\{(.*)\}$/, '$1') || '(empty)';
+      const up = edge && parentOf(t, edge), lk = line == null ? null : linksOf(t)[line];
+      if (edge && up) {
+        // an edge: where it leaves the parent (all its edges) and meets the child, the run's anchors of their shapes; its label
+        const c = edge, lab = edgeLabel(c), anchors = (now: string | null) => ['', ...new Set([...s.anchors ?? [], ...now ? [now] : []])];
+        form.replaceChildren(el('h4', 'tv-h', esc(`Selected edge ${label(up)} → ${label(c)}`)),
+          choice('leaves at', anchors(valOf(up, 'parent anchor')), valOf(up, 'parent anchor') ?? '', (k) => setKey(up, 'parent anchor', k || null), { '': `default (parent anchor of ${label(up)})` }),
+          choice('arrives at', anchors(valOf(c, 'child anchor')), valOf(c, 'child anchor') ?? '', (k) => setKey(c, 'child anchor', k || null), { '': 'default (child anchor)' }),
+          field('label', lab?.text ?? '', (v: string) => setEdgeLabel(c, v, edgeLabel(c)?.side ?? lab?.side ?? 'left'), ['tex']),
+          choice('label side', ['left', 'right', 'above', 'below', 'auto'], lab?.side || 'left', (k) => { const now = edgeLabel(c); if (now) setEdgeLabel(c, now.text, k); }));
+      } else if (lk) {
+        const k = line!;
+        form.replaceChildren(el('h4', 'tv-h', esc(`Selected line ${lk.a} → ${lk.b}`)),
+          field('options', lk.opts, (v: string) => { const l = linksOf(t)[k]; if (l) t.post = `${t.post.slice(0, l.from)}\\draw[${v}] (${l.a}) -- (${l.b});${t.post.slice(l.to)}`; }));
+        const row = el('div', 'tv-actions');
+        button(row, 'Delete line', () => { unlink(t, k); line = null; touch(); });
+        form.append(row);
+      } else form.replaceChildren(el('h4', 'tv-h', 'Selected node'),
         field('content', n.content, (v: string) => { n.content = v; n.dirty = true; }, ['tex']),
         field('options', n.opts.join(', '), (v: string) => { n.opts = splitTop(v); n.dirty = true; }));
-      if (fm) {
+      if (fm && !edge && line == null) {
         const P = PRESETS[fm];
         if (parent) form.append(choice('feature', P.node.kind, optOf(fm, n, 'kind'), (k) => setPresetOpt(fm, n, 'kind', k), P.labels));
         form.append(choice('kind', P.node.abstract, optOf(fm, n, 'abstract'), (k) => setPresetOpt(fm, n, 'abstract', k), { ...P.labels, '': 'concrete' }));
         if (n.children.length > 1) form.append(choice('children', P.group.group, optOf(fm, n, 'group'), (k) => setPresetOpt(fm, n, 'group', k), { ...P.labels, '': 'and (each on its own)' }));
       }
-      const row = el('div', 'tv-actions');
-      const act = (f: () => TNode | null) => () => { const to = f(); if (to) { sel = to; touch(); } };
-      button(row, 'Add child', act(() => addChild(n)));
-      if (parent) {
-        const k = parent.children.indexOf(n);
-        button(row, 'Add sibling', act(() => addSibling(t, n)));
-        button(row, '←', act(() => shift(t, n, -1)), 'Move before its left sibling').disabled = k === 0;
-        button(row, '→', act(() => shift(t, n, 1)), 'Move after its right sibling').disabled = k === parent.children.length - 1;
-        // a subtree goes as one undoable step; the status says what went
-        button(row, 'Delete', () => { act(() => remove(t, n))(); const k = size(n) - 1; if (k) status.textContent = `deleted ${n.content || 'a node'} and ${k} below it: Ctrl+Z brings them back`; },
-          n.children.length ? `Delete this node and the ${size(n) - 1} below it (Ctrl+Z undoes)` : 'Delete this node');
-      }
-      form.append(row, el('h4', 'tv-h', 'Every node (for tree)'));
+      form.append(el('h4', 'tv-h', 'Every node (for tree)'));
       const ft = forTree(t.pre);
       form.append(field('for tree', ft ? t.pre.slice(...ft) : '', (v: string) => setForTree(t, v)));
+      // TikZ's strut key from the run (tikz plugin `strut_key`): every node as high and deep as a line
+      if (s.strut) {
+        const box = Object.assign(el('input'), { type: 'checkbox', checked: forTreeKeys(t).includes(s.strut), ariaLabel: 'strut every node' });
+        box.onchange = () => { forTreeToggle(t, s.strut, box.checked); touch(); };
+        form.append(labelled('strut', box));
+      }
+      // the nodes of one level styled (`where level=N{keys}{}`): the levels forest computed, else the tree's depth
+      const levels = [...new Set(order(t.root).map((x) => run.get(x)?.level ?? depthOf(x)))].filter((l) => l >= 0).sort((a, b) => a - b);
+      if (!levels.includes(level)) level = levels.at(-1) ?? 0;
+      const w = whereLevel(t.pre, level);
+      form.append(choice('level', levels.map(String), String(level), (k) => { level = +k; }, Object.fromEntries(levels.map((l) => [String(l), l ? `level ${l}` : 'level 0 (root)']))),
+        field(`level ${level} keys`, w ? t.pre.slice(...w.keys) : '', (v: string) => setWhereLevel(t, level, v)));
       // a preset: its keys on every node, its styles written with the tree
       form.append(choice('preset', ['', ...Object.keys(PRESETS)], fm ?? '', (p) => {
         const f = forTree(t.pre), now = f ? splitTop(t.pre.slice(...f)) : [], every = Object.values(PRESETS).map((x: Rec) => x.every);
@@ -2680,7 +2810,7 @@ const satexViews = (() => {
       return S.write(ctx, out, (m) => { status.textContent = m; });
     };
     const { el: foot, apply: write } = footer(root, ctx, { status, apply: writeIt, label: s.wrap ? 'Insert tree' : 'Apply', H, tools: true });
-    root.append(svg, ...start.childElementCount ? [start] : [], form, out);
+    root.append(stage, ...start.childElementCount ? [start] : [], form, out);
     if (s.note) root.append(el('div', 'tv-text', ctx.markdown(s.note)));
     root.append(foot);
     draw();
@@ -3571,8 +3701,12 @@ button.tv-spec-value { cursor: pointer; } button.tv-spec-value:hover, button.tv-
 .tv-path { fill: none; stroke: var(--tv-muted); stroke-width: .03; stroke-dasharray: .1 .07; }
 .tv-kept pre { margin: .15rem 0; padding: .3rem .5rem; border-radius: 6px; background: var(--tv-sunk); font-size: .75rem; white-space: pre-wrap; color: var(--tv-muted); }
 .tv-mermaid summary { cursor: pointer; font-size: .82rem; color: var(--tv-muted); } .tv-mermaid textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; margin: .4rem 0; }
-.tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-node.dirty rect { stroke: var(--tv-accent); }
-.tv-forest { height: auto; grid-template-rows: none; } .tv-forest > .tv-canvas { height: clamp(8rem, 30vh, 22rem); min-height: 0; }
+.tv-tree-edge { stroke: currentColor; stroke-width: .02; } .tv-tree-link path:not(.tv-hit) { stroke-dasharray: .08 .05; } .tv-edge text.tv-edge-label { font: .22px var(--serif, Georgia, serif); }
+.tv-forest-stage { position: relative; } .tv-forest-stage > .tv-canvas { display: block; height: clamp(8rem, 30vh, 22rem); }
+.tv-forest-bar { position: absolute; transform: translateY(-50%); display: flex; gap: 2px; padding: 2px; z-index: 2; background: var(--tv-bg); border: 1px solid var(--tv-border); border-radius: 6px; box-shadow: 0 2px 6px rgb(0 0 0 / .18); }
+.tv-forest-bar[hidden] { display: none; } .tv-forest-bar .tv-tool { min-width: 1.6rem; height: 1.5rem; padding: 0 .3rem; font-size: .8rem; line-height: 1; border: 0; border-radius: 4px; background: transparent; color: var(--tv-fg); cursor: pointer; }
+.tv-forest-bar .tv-tool:hover:not(:disabled), .tv-forest-bar .tv-tool:focus-visible { background: color-mix(in srgb, var(--tv-accent) 18%, transparent); } .tv-forest-bar .tv-tool:disabled { opacity: .4; cursor: default; } .tv-node.dirty rect { stroke: var(--tv-accent); }
+.tv-forest { height: auto; grid-template-rows: none; }
 .tv-forest-form { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: .4rem .6rem; align-items: center; }
 .tv-forest-form > .tv-h, .tv-forest-form > .tv-actions, .tv-forest-form > .tv-kept { grid-column: 1 / -1; } .tv-forest-form > .tv-h { margin: .5rem 0 0; } .tv-forest-form > .tv-h:first-child { margin-top: 0; }
 .tv-forest-form > .tv-row { display: contents; } .tv-forest-form > .tv-row > span { grid-column: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .tv-forest-form .sd-err { grid-column: 2; }

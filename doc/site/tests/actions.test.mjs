@@ -403,9 +403,16 @@ test('forest and table rows', withStore(() => {
   const F = self.satexViews.forest, body = '\n[Car [Engine, circle] [Body]]\n', t = F.parse(body), n = t.root.children[0];
   const text = `\\begin{forest}${body}\\end{forest}`, f = { from: 14, to: 14 + body.length, body, t, n };
   const c = ctxOf(text), gs = PA.groups({ kind: 'forest-node', f }, c);
-  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label + (i.on ? '*' : ''))), ['Rectangle', 'Rounded rectangle', 'Circle*', 'Frame', 'Add child', 'Add sibling', 'Delete', 'Edit text…', 'Transform to feature model']);
+  assert.deepEqual(gs.flatMap((g) => g.items.map((i) => i.label + (i.on ? '*' : ''))), ['Rectangle', 'Rounded rectangle', 'Circle*', 'Frame', 'Add child', 'Add sibling', 'Delete', 'Edit text…',
+    'Leaves Car at', 'Arrives at Engine at', 'Add label…', 'Style level 1…', 'Transform to feature model']);
   gs[2].items[0].run();
   assert.match(edit(text, c.writes[0]), /\[Engine, circle\s*\[new\]\]/);
+  // the edge's anchors from the run's list, on the parent and the child
+  const e = ctxOf(text);
+  e.facts = { anchors: ['north', 'east'] };
+  const t2 = F.parse(body), edge = PA.groups({ kind: 'forest-node', f: { ...f, t: t2, n: t2.root.children[0] } }, e).find((g) => g.title === 'Edge from parent').items;
+  edge[0].items.find((i) => i.label === 'east').run();
+  assert.match(edit(text, e.writes[0]), /\[Car, parent anchor=east/);
   const col = PA.groups({ kind: 'table-column', t: 0, k: 1, col: { spec: [1, 2], align: 'r' } }, c);
   assert.deepEqual(col[0].items.map((i) => i.label[0] + (i.on ? '*' : '')), ['l', 'c', 'r*']);
   col[0].items[1].run();

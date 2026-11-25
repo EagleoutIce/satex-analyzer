@@ -865,6 +865,8 @@ async function forestScenario(p, sc) {
     const b = await p.until(`(() => { const b = document.querySelector('#play-pdf .pdf-forest-add [data-add=${sc.plus}], .ts-forest-add [data-add=${sc.plus}]'); if (!b) return null; const r = b.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`, 4000);
     if (!b) { res.fails.push(`no + ${sc.plus} button on hover${sc.ts ? ` (sketch texts ${await p.eval(`JSON.stringify([...document.querySelectorAll('#typeset-body .ts-sketch text')].map((t) => t.textContent))`)}, under the pointer ${await p.eval(`(() => { const e = document.elementFromPoint(${x}, ${y}); return e ? e.tagName + '.' + e.getAttribute('class') + ' in ' + e.parentElement?.tagName + '.' + e.parentElement?.getAttribute('class') : null; })()`)}, errors ${await p.eval('JSON.stringify(self.__errs ?? [])')})` : ''}`); await shot(p, res, 'noplus'); return res; }
     const text0 = await p.eval(`satexHealth().text`);
+    // `glide`: the pointer crosses the gap between the text and the button as a hand does, a frame per step
+    if (sc.glide) for (let k = 1; k <= 12; k++) { await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x + (b[0] - x) * k / 12, y: y + (b[1] - y) * k / 12 }); await sleep(20); }
     await p.s('Input.dispatchMouseEvent', { type: 'mouseMoved', x: b[0], y: b[1] });
     await sleep(80);
     if (sc.plus === 'drag') {

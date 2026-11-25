@@ -18,7 +18,9 @@ declare global {
   interface PaCtx {
     text: string; all: string; x: number; y: number; facts: Rec | null;
     write(edits: (PaEdit | null)[]): Promise<boolean> | void; toast(msg: string): void; caret?(at: number): void;
-    pick(prompt: string, done: (n: TikzNode) => void): void; colAlign(t: number, k: number, a: string, w?: string, h?: string): void; tableOp?(t: number, op: { what: string; act: string; at: number; to?: number }): void;
+    pick(prompt: string, done: (n: TikzNode) => void): void;
+    /** A line from forest node target `f` to the node clicked next, drawn after its tree. */
+    forestLink?(f: Rec): void; colAlign(t: number, k: number, a: string, w?: string, h?: string): void; tableOp?(t: number, op: { what: string; act: string; at: number; to?: number }): void;
     scratch?(b: ScBlock): void;
     /** Writes Insert's `kind` (refactor.ts `inserts`) at target `t`'s place and opens its widget. */
     insert?(kind: string, t: PaTarget): void;
@@ -687,12 +689,35 @@ declare global {
         { title: 'Style', inline: true, items: [{ label: 'Frame', on: has('draw'), run: () => write(() => { n.opts = has('draw') ? n.opts.filter((o: string) => key(o) !== 'draw') : [...n.opts, 'draw']; }) }] },
         { title: 'Tree', inline: true, items: [{ label: 'Add child', run: () => write(() => { FOREST.addChild(n); }) },
           ...(parent ? [{ label: 'Add sibling', run: () => write(() => { FOREST.addSibling(tree, n); }) }, { label: n.children.length ? 'Delete with its subtree' : 'Delete', run: () => write(() => { FOREST.remove(tree, n); }) }] : [])] },
-        { title: 'Text', inline: true, items: [{ label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.content, 'the text of the node', (v) => write(() => { n.content = v; })) }] },
+        { title: 'Text', inline: true, items: [{ label: 'Edit text…', run: () => ask(ctx.x, ctx.y, n.content, 'the text of the node', (v) => write(() => { n.content = v; })) },
+          ...(ctx.forestLink ? [{ label: 'Draw a line to…', hint: 'click the other node', run: () => ctx.forestLink!(t.f) }] : [])] },
+        ...(parent ? [{ title: 'Edge from parent', items: edgeRows(ctx, parent, n, write) }] : []),
+        { title: 'Every node', items: [
+          // the run's strut key (forest plugin), toggled in `for tree`
+          ...(ctx.facts?.strut ? [{ label: 'Strut every node', on: FOREST.forTreeKeys(tree).includes(ctx.facts.strut), run: () => write(() => { FOREST.forTreeToggle(tree, ctx.facts!.strut, !FOREST.forTreeKeys(tree).includes(ctx.facts!.strut)); }) }] : []),
+          ((lvl: number) => { const w = FOREST.whereLevel(tree.pre, lvl), now = w ? tree.pre.slice(...w.keys) : '';
+            return { label: `Style level ${lvl}…`, hint: now || 'where level', run: () => ask(ctx.x, ctx.y, now, `the keys of every node on level ${lvl} (draw, fill=…)`, (v) => write(() => { FOREST.setWhereLevel(tree, lvl, v); }), true) }; })(depth(tree.root, n)),
+        ] },
         ...(FOREST.presetOf(tree) ? [] : [{ title: 'Preset', inline: true, items: [{ label: 'Transform to feature model', run: () => toPreset(ctx, t.f, 'feature model') }] }]),
         ...(FOREST.presetOf(tree) === 'feature model' && styleBody(ctx.all, 'fm feature') ? [{ title: 'Feature model look', items: fmLookRows(ctx) }] : []),
       ];
     },
   });
+  /** A forest node's depth below `root` (its `level`), -1 when not under it. */
+  const depth = (root: Rec, n: Rec): number => root === n ? 0 : root.children.reduce((d: number, c: Rec) => d >= 0 ? d : ((k) => k < 0 ? -1 : k + 1)(depth(c, n)), -1);
+  /** The edge into forest node `n` from `parent`: where it leaves the parent (all its edges) and arrives, the anchors of the
+   * run's shapes (forest plugin `anchors`), and its label (`edge label`) with its side. */
+  function edgeRows(ctx: PaCtx, parent: Rec, n: Rec, write: (change: () => unknown) => void): PaItem[] {
+    const FOREST = self.satexViews.forest, list: string[] = ctx.facts?.anchors ?? [], lab = FOREST.edgeLabel(n);
+    const anchorRows = (x: Rec, key: string): PaItem[] => [{ label: 'default', on: FOREST.valOf(x, key) == null, run: () => write(() => { FOREST.setKey(x, key, null); }) },
+      ...list.map((a) => ({ label: a, on: FOREST.valOf(x, key) === a, run: () => write(() => { FOREST.setKey(x, key, a); }) })),
+      custom(ctx, 'Angle or other…', 'an anchor name or an angle in degrees', FOREST.valOf(x, key) ?? '', (v) => write(() => { FOREST.setKey(x, key, v.trim() || null); }))];
+    return [{ label: `Leaves ${parent.content || 'the parent'} at`, hint: 'parent anchor', items: anchorRows(parent, 'parent anchor') },
+      { label: `Arrives at ${n.content || 'the node'} at`, hint: 'child anchor', items: anchorRows(n, 'child anchor') },
+      { label: lab ? 'Edit label…' : 'Add label…', run: () => ask(ctx.x, ctx.y, lab?.text ?? '', 'the label on the edge', (v) => write(() => { FOREST.setEdgeLabel(n, v, lab?.side || 'left'); })) },
+      ...(lab ? [{ label: 'Label side', items: ['left', 'right', 'above', 'below', 'auto'].map((sd) => ({ label: sd, on: lab.side === sd, run: () => write(() => { FOREST.setEdgeLabel(n, lab.text, sd); }) })) },
+        { label: 'Remove label', run: () => write(() => { FOREST.setEdgeLabel(n, '', ''); }) }] : [])];
+  }
   /** The body of style `name`'s definition in `text` (`name/.style={…}`): its range inside the braces, null when not there. */
   function styleBody(text: string, name: string): [number, number] | null {
     const m = new RegExp(`(^|[,{\\s])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*/\\.style\\s*=\\s*\\{`).exec(text);

@@ -1,8 +1,8 @@
 //! Drawings: in a `tikzpicture` the run met, "Edit drawing…" opens a canvas (`views.js`
 //! `drawing`). The run gives the nodes it made, with the shape, center and size pgf stored for
 //! each (`pgf@sh@ns@`, `pgf@sh@np@`, `pgf@sh@nt@`); the dialog parses the picture's text, edits
-//! nodes and arrows and writes back the text it did not touch as it was. On a blank line of the
-//! document body, "New drawing…" and "Insert tikzpicture".
+//! nodes and arrows and writes back the text it did not touch as it was. In a picture, "Strut every
+//! node"; on a blank line of the document body, "New drawing…" and "Insert tikzpicture".
 
 use super::{Cx, Hit, TypePlugin, rewrite_rooted};
 use crate::analysis::machine::Analysis;
@@ -42,8 +42,11 @@ impl TypePlugin for Tikz {
         cfg.tikz.enabled
     }
 
-    /// Outside a picture, on a blank line of the body: a picture to start from.
+    /// In a picture: its nodes strutted. Outside, on a blank line of the body: a picture to start from.
     fn actions(&self, cx: &Cx, _hit: &Hit) -> Vec<CodeAction> {
+        if let Some(p) = super::body(cx.analysis, cx.doc, cx.path, cx.pos.line, ENV, true) {
+            return strut(cx, &p).into_iter().collect();
+        }
         let Some(new) = super::blank(cx, ENV, "tikz") else { return Vec::new() };
         let node = Node { body: format!("  {TEMPLATE}"), ..snapshot::new_env(ENV, new.at.start, "tikz") };
         let Ok((edits, notes, roots)) = snapshot::printed(cx.analysis, cx.doc, cx.file(), &[node]) else {
@@ -86,6 +89,28 @@ impl TypePlugin for Tikz {
     fn lenses(&self, analysis: &Analysis, doc: &Text, path: &str) -> Vec<CodeLens> {
         super::env_lenses(analysis, doc, path, ENV, "Edit drawing…", "tikz")
     }
+}
+
+/// TikZ's key setting `\strut` first in a node's text, so every node of a line has its height and
+/// depth: offered when the run defines both the key and `\strut`.
+pub(super) fn strut_key(a: &Analysis) -> Option<&'static str> {
+    let key = "execute at begin node";
+    (a.defined("strut") && a.defined(&format!("pgfk@/tikz/{key}/.@cmd"))).then_some("execute at begin node=\\strut")
+}
+
+/// "Strut every node": the strut key in the picture's `every node` style, unless its options strut already.
+fn strut(cx: &Cx, p: &super::Body) -> Option<CodeAction> {
+    let key = strut_key(cx.analysis)?;
+    let doc = cx.doc;
+    let body = doc.offset(to_pos(doc, p.range.start))?..doc.offset(to_pos(doc, p.range.end))?;
+    let mut node = snapshot::env(doc, doc.body()[..body.start].rfind(&format!("\\begin{{{ENV}}}"))?, body, true)?;
+    let keys = node.args.first_mut()?.keys.as_mut()?;
+    if keys.iter().any(|k| k.value.as_deref().is_some_and(|v| v.contains("\\strut"))) {
+        return None;
+    }
+    keys.push(snapshot::Key { key: "every node/.append style".into(), value: Some(format!("{{{key}}}")) });
+    let (edits, ..) = snapshot::printed(cx.analysis, doc, cx.file(), &[node]).ok()?;
+    Some(super::rewrite(cx, "Strut every node".into(), snapshot::lsp_edits(doc, edits)))
 }
 
 /// What the run declared that a canvas offers: arrow tips (each with TeX's picture once drawn),

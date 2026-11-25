@@ -5,7 +5,7 @@
 // object with one verb:
 //   { text } the root's text set at once · { editor: needle, before } a click into the editor after (with `before`, at)
 //   the first `needle` · { type } keys typed one by one · { key } a named key · { chord: 'b', mods = 2 } Ctrl+key
-//   { paste } text inserted as one paste · { pdf: word, at: 'end'|'start'|'mid', clicks = 1 } a click on a page word
+//   { paste } text inserted as one paste · { pdf: word, at: 'end'|'start'|'mid', clicks = 1, page } a click on a page word
 //   (Type mode, after a build) · { ts: text } a click at the end of `text` in the Typeset view, Type mode on
 //   { select: word } a mouse drag over a page word · { js: expr } the page's answer kept (`expect: [{ js: regex }]`)
 //   · { watch: target, ms } the first text of `target` as it changes · { drag: word, dx, dy } a mouse drag from a page word
@@ -87,7 +87,7 @@ export async function user(p, sc) {
       else if (a.chord) { await d.key(a.chord, { ctrl: (a.mods ?? 2) & 2, shift: (a.mods ?? 2) & 8 }); }
       else if (a.paste != null) await p.s('Input.insertText', { text: a.paste });
       else if (a.pdf) {
-        const w = await d.word({ word: a.pdf, nth: a.nth ?? 0, scroll: [120, 200] });
+        const w = await d.word({ word: a.pdf, nth: a.nth ?? 0, ...(a.page && { page: a.page }), scroll: [120, 200] });
         if (!w) throw new Error(`no page word ${J(a.pdf)}`);
         const x = a.at === 'start' ? w[0] + 0.6 : a.at === 'mid' ? (w[0] + w[2]) / 2 : w[2] - 0.6 * w[6], y = (w[1] + w[3]) / 2;
         for (let c = 1; c <= (a.clicks ?? 1); c++) await p.mouse(x, y, c);

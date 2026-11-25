@@ -5252,6 +5252,63 @@ fn forest_plugin_new_tree_and_off() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// In a tree: each node's level as forest computed it, the anchors of its nodes' shape (never pgf's
+/// own `border`), and "Strut every node" adding TikZ's strut key to the tree's `for tree` once.
+/// Pins the edge editor's anchor list and the level styles: both come from the run, not a table.
+#[test]
+fn forest_plugin_levels_anchors_and_strut() {
+    let (mut server, uri, dir) = open_set("forest-strut", TREE, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let views = at(&mut server, &uri, "satex/view", 5, 3);
+    let tree = &views.as_array().unwrap().iter().find(|v| v["plugin"] == "forest").expect("a tree")["sections"][0];
+    let levels: Vec<i64> = tree["nodes"].as_array().unwrap().iter().filter_map(|n| n["level"].as_i64()).collect();
+    assert_eq!(levels, [0, 1, 1], "{tree}");
+    let anchors: Vec<&str> = tree["anchors"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+    assert!(
+        anchors.contains(&"north") && anchors.contains(&"south east") && !anchors.contains(&"border"),
+        "{anchors:?}"
+    );
+    assert_eq!(tree["strut"], "execute at begin node=\\strut", "{tree}");
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 5, 3);
+    let strut = actions.as_array().unwrap().iter().find(|a| a["title"] == "Strut every node").expect("a strut action");
+    let now = applied(TREE, &uri, &strut["edit"], &[]);
+    assert!(now.contains("for tree={draw, execute at begin node=\\strut}\n  [VP"), "{now}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    // a tree without a preamble gets a `for tree` line; a strutted one is offered nothing
+    let bare = TREE.replace("  for tree={draw}\n", "");
+    let (mut server, uri, dir) = open_set("forest-strut-bare", &bare, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 4, 3);
+    let strut = actions.as_array().unwrap().iter().find(|a| a["title"] == "Strut every node").expect("a strut action");
+    let now = applied(&bare, &uri, &strut["edit"], &[]);
+    assert!(now.contains("\\begin{forest}\n  for tree={execute at begin node=\\strut}\n  [VP"), "{now}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+    let (mut server, uri, dir) = open_set("forest-strut-done", &now, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 5, 3);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 5, 3);
+    assert!(!actions.as_array().unwrap().iter().any(|a| a["title"] == "Strut every node"), "{actions}");
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// "Strut every node" in a picture: TikZ's strut key in its `every node` style, the options kept.
+#[test]
+fn tikz_plugin_struts_every_node() {
+    let (mut server, uri, dir) = open_set("tikz-strut", PICTURE, &[]);
+    let _ = at(&mut server, &uri, "textDocument/hover", 4, 3);
+    let actions = at(&mut server, &uri, "textDocument/codeAction", 4, 3);
+    let strut = actions.as_array().unwrap().iter().find(|a| a["title"] == "Strut every node").expect("a strut action");
+    let now = applied(PICTURE, &uri, &strut["edit"], &[]);
+    assert!(
+        now.contains("\\begin{tikzpicture}[x=1cm, every node/.append style={execute at begin node=\\strut}]"),
+        "{now}"
+    );
+    server.shutdown();
+    std::fs::remove_dir_all(dir).ok();
+}
+
 const PICTURE: &str = "\\documentclass{article}\n\\usepackage{tikz}\n\\begin{document}\n\\begin{tikzpicture}[x=1cm]\n  \\node[draw] (a) at (0,0) {Start};\n  \\node[draw, circle] (b) at (3,1) {End};\n  \\draw[->] (a) -- (b);\n  \\foreach \\i in {1,2} { \\node (c\\i) at (\\i,-2) {\\i}; }\n\\end{tikzpicture}\n\n\\end{document}\n";
 
 /// "Edit drawing…": a lens on the picture, a view with its body and the nodes the run made,
