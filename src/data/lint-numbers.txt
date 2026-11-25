@@ -159,3 +159,4 @@ C070 unknown-bibliography-entry-type
 C071 broken-bibliography-crossref
 S069 ignored-bibliography-field
 S070 spelled-out-macro
+# released v0.2.6: the 152 numbered lines above never change (fnv 0a475aeb30a1ef9f)

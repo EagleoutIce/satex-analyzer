@@ -7,6 +7,8 @@ Maintained with `scripts/changelog.py` (`draft`, `check`, `links`, `release`, se
 
 ## Unreleased
 
+## v0.2.6 (2026-11-25)
+
 ### Site
 
 - `feat` **The playground's examples compile without a download.** The site build runs each example with pdfLaTeX and ships every TeX Live file the build reads, fonts too, beside the playground. Compile in the browser now asks the site first and the package server only for the rest. What TeX Live lacks (a font's `.vf`) is asked of nobody, and an example whose build looks for a missing file is reported by the build.
