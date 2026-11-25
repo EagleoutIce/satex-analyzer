@@ -1130,9 +1130,9 @@ redefines the name gets its own meaning back.
 [usrguide]: https://ctan.org/pkg/usrguide
 [expl3]: https://ctan.org/pkg/expl3
 [texdimens]: https://ctan.org/pkg/texdimens
-[expl3-code]: https://github.com/latex3/latex3/tree/0838953eace80b804cd47e8a5ee7ff37f8b8b6e0/l3kernel
+[expl3-code]: https://github.com/latex3/latex3/tree/bc7ca317785ef42dd283fec61e30d66976128327/l3kernel
 [plain]: https://ctan.org/pkg/plain
-[latex.ltx]: https://github.com/latex3/latex2e/tree/e25ede91997c7e7980bcaeef2a971c60de86dbac/base
+[latex.ltx]: https://github.com/latex3/latex2e/tree/151dcbe3f84fe911f3f36a22be7da2ec4e04e028/base
 
 <!-- tex.web modules. Re-pin with `python3 scripts/tex-web-links.py --update SEMANTICS.md`;
      `--check` (run in CI) fails if these have drifted from the current upstream commit. -->
